@@ -10,7 +10,7 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] Teste de carga UDP local (`examples/loopback.rs`)
 - [x] `fluxo-capture`: Desktop Duplication, recuperação de ACCESS_LOST, cópia para RAM
 - [x] `fluxo-bench`: listar monitores, medir FPS da captura, screenshot BMP
-- [ ] **Validar no seu PC:** compilar e rodar `fluxo-bench bench` com um vídeo/jogo a 60 fps
+- [x] **Validar no seu PC:** compilar e rodar `fluxo-bench bench` com um vídeo/jogo a 60 fps
 
 ## Fase 2 — Encode e transmissão (próxima)
 

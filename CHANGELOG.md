@@ -5,6 +5,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Corrigido
+- Build: habilitada a feature `Win32_Graphics_Gdi` do crate `windows`,
+  necessária para `IDXGIOutput::GetDesc`.
+
+### Medido
+- Captura 1080p na RTX 5050 com vídeo YouTube 60 fps (15 s): 68,9 fps médio,
+  regime estável 62–63 fps, intervalo p50 16,6 ms / p99 22,3 ms, 1 frame
+  perdido, 0 perdas de acesso. Fase 1 validada.
+
 ## [0.1.0] — 2026-10-29
 
 ### Adicionado
