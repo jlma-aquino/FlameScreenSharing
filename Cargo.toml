@@ -10,7 +10,9 @@ members = [
     "crates/fluxo-proto",
     "crates/fluxo-capture",
     "crates/fluxo-encode",
+    "crates/fluxo-net",
     "apps/fluxo-bench",
+    "apps/fluxo-host",
 ]
 
 [workspace.package]
@@ -24,6 +26,7 @@ license = "MIT"
 fluxo-proto = { path = "crates/fluxo-proto" }
 fluxo-capture = { path = "crates/fluxo-capture" }
 fluxo-encode = { path = "crates/fluxo-encode" }
+fluxo-net = { path = "crates/fluxo-net" }
 
 windows = { version = "0.61", features = [
     "Win32_Foundation",

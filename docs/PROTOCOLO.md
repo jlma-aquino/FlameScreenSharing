@@ -20,20 +20,28 @@ CHANGELOG.
 | 12 | 1 | `flags` | Bit 0: keyframe. Bits 1–7 reservados (enviar 0, ignorar ao ler). |
 | 13 | 1 | reservado | Enviar 0, ignorar ao ler. |
 | 14 | 2 | `payload_len` | Bytes de payload. Deve ser igual a `tamanho do datagrama − 20`. |
-| 16 | 4 | `timestamp_us` | Momento da captura em µs no relógio do host (32 bits, volta a cada ~71 min). |
+| 16 | 4 | `timestamp_us` | Momento da captura em µs: relógio de parede (UTC) truncado para 32 bits, volta a cada ~71 min (`fluxo_net::clock_us`). |
 | 20 | N | payload | Dados. |
 
 ## 2. Tipos de pacote
 
 ### Video (`kind = 1`)
-Um pedaço de um frame codificado (H.264/HEVC/AV1 em formato Annex B, a
-definir na fase 2). Todos os fragmentos de um frame têm o mesmo `frame_id`,
-`frag_count`, `flags` e `timestamp_us`.
+Um pedaço de um frame codificado em **H.264 Annex B** (NALs com prefixo
+`00 00 00 01`; keyframes trazem SPS/PPS). Todos os fragmentos de um frame têm
+o mesmo `frame_id`, `frag_count`, `flags` e `timestamp_us`.
 
 ### Ping (`kind = 2`) / Pong (`kind = 3`)
-Medição de RTT. Quem recebe um Ping responde com um Pong copiando
-`frame_id` e `timestamp_us`. RTT = relógio atual − `timestamp_us` do Pong.
-`frag_index`/`frag_count` = 0, payload vazio.
+Medição de RTT, nos **dois sentidos** (host e cliente pingam a cada 500 ms).
+Quem recebe um Ping responde com um Pong copiando `frame_id` e
+`timestamp_us`. RTT = relógio atual − `timestamp_us` do Pong, com aritmética
+de 32 bits (`clock_diff_us`). `frag_index`/`frag_count` = 0, payload vazio.
+
+## 2.1. Endereços (provisório, até o handshake da fase 5)
+
+- O host envia para um `IP:porta` informado à mão.
+- O cliente aceita o primeiro endereço que mandar um pacote válido e ignora
+  os outros; após 2 s sem pacotes dele, aceita um novo (host reiniciado) e
+  zera a remontagem.
 
 ## 3. Fragmentação (emissor)
 

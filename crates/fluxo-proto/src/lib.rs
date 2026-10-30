@@ -1,7 +1,7 @@
 //! # fluxo-proto
 //!
 //! Protocolo de rede do Fluxo. Este crate **não faz I/O**: ele só transforma
-//! bytes. Quem abre sockets e envia pacotes é a camada de transporte (futuro
+//! bytes. Quem abre sockets e envia pacotes é a camada de transporte (o
 //! crate `fluxo-net`). Isso deixa a lógica 100% testável sem rede.
 //!
 //! ## Peças

@@ -16,6 +16,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   (`nvenc/gen_layout.c`), em vez de transcrito à mão.
 - `fluxo-bench`: comandos `encoders` e `encode` (opções `--encoder`,
   `--mbps`, `--fps`, `--keyframe-a-cada`, `--verificar`).
+- `fluxo-net`: `VideoSender` (fila + thread de envio com pacing por token
+  bucket, 2,5× o bitrate, rajadas de 10 pacotes) e `VideoReceiver` (thread de
+  recepção com remontagem e fila de frames). Ping/Pong nos dois sentidos com
+  RTT suavizado; relógio `clock_us` para medir o trânsito captura → chegada.
+  Só std, sem `unsafe`, testado com sockets reais em 127.0.0.1.
+- `apps/fluxo-host`: captura → encode → rede, com keyframe periódico,
+  recriação do encoder ao mudar a resolução e estatísticas por segundo.
+- `fluxo-bench receber`: receptor provisório até a fase 3 (grava o `.h264`
+  a partir do primeiro keyframe; `--verificar` decodifica tudo).
 
 ### Alterado
 - `fluxo-capture`: device D3D11 criado com `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`
@@ -33,6 +42,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   frame, keyframe de 39 KB; Media Foundation 2,0 / 3,4 ms, keyframe ~170 KB.
   Todos os frames decodificam no decoder do Windows; PSNR de luminância
   48,8 dB (RGB ~32 dB, limitado pelo 4:2:0 em texto colorido).
+- Transmissão na mesma máquina (fluxo-host → fluxo-bench receber, NVENC
+  20 Mbps): 488 de 488 frames recebidos e decodificados, 0 perdidos;
+  captura → frame completo no receptor p50 2,9 ms, p99 7,1 ms.
 
 ## [0.1.0] — 2026-10-29
 

@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "fluxo-capture",
  "fluxo-encode",
+ "fluxo-net",
  "windows",
 ]
 
@@ -24,6 +25,22 @@ version = "0.1.0"
 dependencies = [
  "fluxo-capture",
  "windows",
+]
+
+[[package]]
+name = "fluxo-host"
+version = "0.1.0"
+dependencies = [
+ "fluxo-capture",
+ "fluxo-encode",
+ "fluxo-net",
+]
+
+[[package]]
+name = "fluxo-net"
+version = "0.1.0"
+dependencies = [
+ "fluxo-proto",
 ]
 
 [[package]]

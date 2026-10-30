@@ -23,9 +23,13 @@ pub struct Decoder {
     plane_height: u32,
     stride: u32,
     out_size: u32,
+    /// Converter cada frame para BGRA (para PSNR). Desligado, `decode` só
+    /// conta: devolve um `Vec` vazio por frame decodificado.
+    pub convert: bool,
 }
 
 impl Decoder {
+    /// `width`/`height` = 0: tamanho desconhecido, lido do próprio H.264.
     pub fn new(width: u32, height: u32) -> Result<Self, Erro> {
         // SAFETY: inicialização padrão de um MFT síncrono de software.
         unsafe {
@@ -38,7 +42,9 @@ impl Decoder {
             let t = MFCreateMediaType()?;
             t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
             t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
-            t.SetUINT64(&MF_MT_FRAME_SIZE, (width as u64) << 32 | height as u64)?;
+            if width > 0 && height > 0 {
+                t.SetUINT64(&MF_MT_FRAME_SIZE, (width as u64) << 32 | height as u64)?;
+            }
             mft.SetInputType(0, &t, 0)?;
             let mut me = Self {
                 mft,
@@ -47,11 +53,24 @@ impl Decoder {
                 plane_height: height,
                 stride: width,
                 out_size: 0,
+                convert: true,
             };
-            me.choose_output()?;
+            // Sem tamanho conhecido, o tipo de saída só existe depois do
+            // primeiro keyframe (chega como STREAM_CHANGE em drain_outputs).
+            if let Err(e) = me.choose_output() {
+                if width > 0 {
+                    return Err(e);
+                }
+            }
             me.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
             Ok(me)
         }
+    }
+
+    /// Tamanho visível dos frames decodificados (0×0 até o primeiro keyframe,
+    /// se criado sem tamanho).
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
     }
 
     /// Escolhe saída NV12 e lê a geometria real do buffer.
@@ -63,8 +82,22 @@ impl Decoder {
                 if t.GetGUID(&MF_MT_SUBTYPE)? == MFVideoFormat_NV12 {
                     self.mft.SetOutputType(0, &t, 0)?;
                     let size = t.GetUINT64(&MF_MT_FRAME_SIZE).unwrap_or(0);
-                    self.plane_height = ((size & 0xFFFF_FFFF) as u32).max(self.height);
-                    self.stride = t.GetUINT32(&MF_MT_DEFAULT_STRIDE).unwrap_or(self.width);
+                    let (fw, fh) = ((size >> 32) as u32, size as u32);
+                    // O tamanho visível vem do próprio H.264 (1080 linhas
+                    // dentro de um buffer de 1088).
+                    let mut area = [0u8; 16];
+                    let (vw, vh) = match t.GetBlob(&MF_MT_MINIMUM_DISPLAY_APERTURE, &mut area, None) {
+                        Ok(()) => (
+                            i32::from_ne_bytes([area[8], area[9], area[10], area[11]]) as u32,
+                            i32::from_ne_bytes([area[12], area[13], area[14], area[15]]) as u32,
+                        ),
+                        Err(_) => (fw, fh),
+                    };
+                    if vw > 0 && vh > 0 {
+                        (self.width, self.height) = (vw, vh);
+                    }
+                    self.plane_height = fh.max(self.height);
+                    self.stride = t.GetUINT32(&MF_MT_DEFAULT_STRIDE).unwrap_or(fw.max(self.width));
                     self.out_size = self.mft.GetOutputStreamInfo(0)?.cbSize;
                     return Ok(());
                 }
@@ -128,6 +161,10 @@ impl Decoder {
             }
             let Some(sample) = sample else { continue };
             // SAFETY: Lock/Unlock pareados; lemos dentro do tamanho travado.
+            if !self.convert {
+                frames.push(Vec::new());
+                continue;
+            }
             let bgra = unsafe {
                 let buffer = sample.ConvertToContiguousBuffer()?;
                 let mut p = std::ptr::null_mut();

@@ -61,14 +61,27 @@ monitor capturado. Como interpretar a saída:
 Windows e mede a fidelidade. Como interpretar:
 [modulos/fluxo-bench.md](modulos/fluxo-bench.md).
 
-## 6. Testar o protocolo de rede
+## 6. Testar a transmissão
+
+Em dois terminais (ou dois PCs, trocando `127.0.0.1` pelo IP de quem recebe):
+
+```powershell
+.\target\release\fluxo-bench.exe receber --porta 9000 --segundos 30 --verificar
+.\target\release\fluxo-host.exe --destino 127.0.0.1:9000 --segundos 35
+```
+
+Na primeira vez o Windows pode pedir para liberar o `fluxo-bench` no
+firewall: para receber de outro PC, permita em "Redes privadas". Como ler a
+saída: [modulos/fluxo-host.md](modulos/fluxo-host.md).
+
+## 7. Testar o protocolo de rede
 
 ```powershell
 cargo run -p fluxo-proto --release --example loopback -- --segundos 5 --mbps 20
 cargo run -p fluxo-proto --release --example loopback -- --segundos 5 --mbps 20 --perda 0.5
 ```
 
-## 7. Ver a documentação do código
+## 8. Ver a documentação do código
 
 ```powershell
 cargo doc --workspace --no-deps --open

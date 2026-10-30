@@ -1,0 +1,146 @@
+//! Testes com sockets de verdade em 127.0.0.1: host e cliente no mesmo processo.
+
+use std::time::{Duration, Instant};
+
+use fluxo_net::{clock_us, ReceiverConfig, SenderConfig, VideoReceiver, VideoSender};
+
+/// Conteúdo reconhecível: cada frame tem bytes derivados do seu número.
+fn frame(n: usize, len: usize) -> Vec<u8> {
+    (0..len).map(|i| (n * 31 + i * 7) as u8).collect()
+}
+
+fn par(pacing_bps: u64, ping: Duration) -> (VideoReceiver, VideoSender) {
+    let rx = VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            ping_interval: ping,
+            queue_frames: 64,
+            ..ReceiverConfig::default()
+        },
+    )
+    .expect("bind");
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            pacing_bps,
+            ping_interval: ping,
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
+    .expect("connect");
+    (rx, tx)
+}
+
+#[test]
+fn frames_chegam_inteiros_e_em_ordem() {
+    let (rx, tx) = par(200_000_000, Duration::from_millis(500));
+    let tamanhos: Vec<usize> = (0..30)
+        .map(|n| if n % 10 == 0 { 120_000 } else { 30_000 + n * 100 })
+        .collect();
+    for (n, &len) in tamanhos.iter().enumerate() {
+        tx.send_frame(frame(n, len), n % 10 == 0, clock_us()).unwrap();
+    }
+
+    let mut recebidos = Vec::new();
+    let limite = Instant::now() + Duration::from_secs(5);
+    while recebidos.len() < tamanhos.len() && Instant::now() < limite {
+        if let Some(f) = rx.recv_frame(Duration::from_millis(100)).unwrap() {
+            recebidos.push(f);
+        }
+    }
+
+    assert_eq!(recebidos.len(), tamanhos.len(), "stats: {:?}", rx.stats());
+    for (n, f) in recebidos.iter().enumerate() {
+        assert_eq!(f.frame.data, frame(n, tamanhos[n]), "frame {n} corrompido");
+        assert_eq!(f.frame.keyframe, n % 10 == 0);
+        assert!(!f.frame.preceded_by_loss);
+        // Mesma máquina: o trânsito é positivo e pequeno.
+        assert!(
+            (0..1_000_000).contains(&f.transit_us),
+            "trânsito {} µs",
+            f.transit_us
+        );
+    }
+    let s = tx.stats();
+    assert_eq!(s.frames_sent, 30);
+    assert_eq!(s.send_errors, 0);
+}
+
+#[test]
+fn pacing_espalha_o_frame_no_tempo() {
+    // 10 Mbps = 1,25 MB/s. Um frame de 150 KB, menos a rajada inicial de
+    // ~12 KB, precisa de ~110 ms para sair.
+    let (rx, tx) = par(10_000_000, Duration::from_secs(10));
+    tx.send_frame(frame(0, 150_000), true, clock_us()).unwrap();
+    let f = rx.recv_frame(Duration::from_secs(2)).unwrap().expect("frame");
+    assert_eq!(f.frame.data.len(), 150_000);
+
+    let ms = tx.stats().last_frame_send_ms;
+    assert!((90.0..400.0).contains(&ms), "frame levou {ms:.1} ms para sair");
+}
+
+#[test]
+fn rtt_medido_nos_dois_lados() {
+    let (rx, tx) = par(0, Duration::from_millis(20));
+    // O cliente só conhece o host depois do primeiro pacote.
+    tx.send_frame(frame(0, 1_000), true, clock_us()).unwrap();
+    let limite = Instant::now() + Duration::from_secs(3);
+    while (tx.stats().rtt.samples < 3 || rx.stats().rtt.samples < 3) && Instant::now() < limite {
+        let _ = rx.recv_frame(Duration::from_millis(20));
+    }
+    let (h, c) = (tx.stats(), rx.stats());
+    assert!(h.rtt.samples >= 3, "host: {h:?}");
+    assert!(c.rtt.samples >= 3, "cliente: {c:?}");
+    assert!(h.rtt.smoothed_ms < 50.0 && c.rtt.smoothed_ms < 50.0);
+    assert!(c.pings_answered >= 3 && h.pings_answered >= 3);
+}
+
+#[test]
+fn destruir_o_sender_envia_o_que_estava_na_fila() {
+    let (rx, tx) = par(50_000_000, Duration::from_secs(10));
+    for n in 0..5 {
+        tx.send_frame(frame(n, 40_000), n == 0, clock_us()).unwrap();
+    }
+    drop(tx); // espera a fila esvaziar
+    let mut n = 0;
+    while rx.recv_frame(Duration::from_millis(300)).unwrap().is_some() {
+        n += 1;
+    }
+    assert_eq!(n, 5);
+}
+
+#[test]
+fn host_novo_e_aceito_depois_do_timeout() {
+    let rx = VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            peer_timeout: Duration::from_millis(200),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    let cfg = SenderConfig::for_bitrate(20_000_000);
+    {
+        let a = VideoSender::connect("127.0.0.1:0", rx.local_addr(), cfg.clone()).unwrap();
+        for n in 0..3 {
+            a.send_frame(frame(n, 5_000), n == 0, clock_us()).unwrap();
+        }
+    }
+    for _ in 0..3 {
+        rx.recv_frame(Duration::from_secs(1))
+            .unwrap()
+            .expect("frame do host A");
+    }
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Host "reiniciado": outra porta, numeração de frames do zero.
+    let b = VideoSender::connect("127.0.0.1:0", rx.local_addr(), cfg).unwrap();
+    b.send_frame(frame(0, 5_000), true, clock_us()).unwrap();
+    let f = rx
+        .recv_frame(Duration::from_secs(1))
+        .unwrap()
+        .expect("frame do host B");
+    assert_eq!(f.frame.data, frame(0, 5_000));
+    assert_eq!(rx.stats().peer_changes, 1);
+}

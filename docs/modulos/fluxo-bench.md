@@ -2,7 +2,7 @@
 
 **Caminho:** `apps/fluxo-bench` · **Plataforma:** Windows
 
-Ferramenta de linha de comando para validar captura e encode isoladamente.
+Ferramenta de linha de comando para validar captura, encode e rede isoladamente.
 
 ## Arquivos
 
@@ -10,7 +10,8 @@ Ferramenta de linha de comando para validar captura e encode isoladamente.
 |---|---|
 | `src/main.rs` | Parsing de argumentos e os comandos `listar`, `bench`, `screenshot` |
 | `src/encode.rs` | Comandos `encoders` e `encode` |
-| `src/verificar.rs` | `encode --verificar`: decoder H.264 do Windows, PSNR, NV12→BGRA |
+| `src/receber.rs` | Comando `receber` (receptor provisório do fluxo-host) |
+| `src/verificar.rs` | `--verificar`: decoder H.264 do Windows, PSNR, NV12→BGRA |
 | `src/bmp.rs` | Gravação de BMP 32 bits sem dependências |
 
 ## Comandos
@@ -23,6 +24,7 @@ fluxo-bench encoders   [--monitor N]
 fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
                        [--saida arquivo.h264] [--verificar]
+fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
 ```
 
 ## Lendo o resultado do `bench`
@@ -77,3 +79,18 @@ Também salva o último frame como `<saida>.original.bmp` e
 `<saida>.decodificado.bmp` para comparar no olho. A cópia para a RAM deixa
 o loop mais lento: use `--verificar` para conferir qualidade, não para medir
 tempo.
+
+## `receber`
+
+Receptor provisório até existir o `fluxo-client` (fase 3): escuta numa porta
+UDP (`--porta`, padrão 9000), recebe o vídeo do [fluxo-host](fluxo-host.md),
+grava em `recebido.h264` a partir do primeiro keyframe e mostra estatísticas.
+`--segundos` conta a partir do primeiro frame recebido (0 = até Ctrl+C).
+
+| Linha | Significado | Esperado |
+|---|---|---|
+| trânsito captura→chegada | Do momento da captura no host até o frame completo aqui | Mesma máquina: p50 < 5 ms. Entre PCs: só confiável com relógios sincronizados |
+| frames perdidos na rede | Frames que nunca chegaram inteiros | 0 em rede cabeada |
+| descartados na fila | O próprio receptor não leu a tempo | 0 |
+| RTT | Ida e volta medida por ping | LAN cabeada < 1 ms |
+| decodificados (com `--verificar`) | Frames aceitos pelo decoder H.264 do Windows | todos |

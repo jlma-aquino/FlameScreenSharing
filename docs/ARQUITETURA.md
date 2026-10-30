@@ -23,6 +23,11 @@ Cada estágio roda na **sua própria thread**, ligado ao próximo por uma fila
 curta (1–2 itens). Se um estágio atrasa, o anterior **descarta** frames em vez
 de acumular: em streaming ao vivo, fila longa = latência alta.
 
+**Hoje (fase 2):** no host, captura e encode dividem uma thread (o encode é
+síncrono e leva ~2,5 ms); a rede tem duas threads próprias (envio com pacing
+e pings). No cliente provisório (`fluxo-bench receber`), uma thread de rede
+remonta os frames e a principal os grava/decodifica.
+
 ## 2. Crates e responsabilidades
 
 | Crate | Faz | Não faz | Plataforma |
@@ -30,9 +35,10 @@ de acumular: em streaming ao vivo, fila longa = latência alta.
 | `fluxo-proto` | Formato de pacote, fragmentação, remontagem, sequência | Nenhum I/O | Qualquer |
 | `fluxo-capture` | Captura frames da tela como textura D3D11 | Encode, rede | Windows (stub nos outros) |
 | `fluxo-encode` | Textura → H.264 via GPU (NVENC ou Media Foundation) | Captura | Windows (tipos em qualquer) |
-| `fluxo-net` *(fase 2)* | Sockets UDP, pacing, RTT, NAT traversal | Formato dos bytes | Qualquer |
+| `fluxo-net` | Sockets UDP, pacing, RTT (NAT traversal na fase 5) | Formato dos bytes | Qualquer |
 | `fluxo-decode` *(fase 3)* | Bytes → textura via GPU | Rede | Windows |
-| `apps/fluxo-host`, `apps/fluxo-client` *(fase 3)* | Juntam tudo | — | Windows |
+| `apps/fluxo-host` | Captura → encode → rede | Decode, tela | Windows |
+| `apps/fluxo-client` *(fase 3)* | Rede → decode → tela | Captura | Windows |
 
 **Regra de dependência:** crates de baixo nível nunca dependem de crates de
 alto nível. `fluxo-proto` não depende de nada; `apps/*` dependem de tudo.
@@ -58,11 +64,15 @@ CPU. Por isso:
 |---|---|---|
 | Captura | 1–2 ms | Desktop Duplication entrega assim que o compositor desenha |
 | Encode | 3–6 ms | Preset de baixa latência, sem B-frames. Medido: 2,3 ms p50 / 2,8 ms p99 (NVENC, RTX 5050, 1080p) |
-| Rede (LAN) | 1–3 ms | Internet: + metade do ping |
+| Rede (LAN) | 1–3 ms | Internet: + metade do ping. Pacing: ~1–6 ms por frame de 20–40 KB |
 | Remontagem | ~0 ms | Entrega ao chegar o último fragmento |
 | Decode | 2–4 ms | Hardware |
 | Apresentação | 0–16 ms | Depende de vsync; modo sem vsync reduz |
 | **Total** | **~10–35 ms** | Parsec/Moonlight ficam nessa faixa |
+
+**Medido até agora** (mesma máquina, RTX 5050, 1080p, 20 Mbps): captura →
+frame completo no receptor em **p50 2,9 ms, p99 7,1 ms** (encode + pacing +
+rede local). Faltam decode e apresentação (fase 3).
 
 ## 5. Rede: por que UDP próprio (resumo do ADR-003)
 
@@ -71,7 +81,8 @@ seguintes (*head-of-line blocking*). Para vídeo ao vivo é melhor **pular** o
 frame quebrado e seguir. Usamos UDP com nosso protocolo
 ([PROTOCOLO.md](PROTOCOLO.md)) e vamos adicionando, por fase:
 
-1. ✅ Fragmentação e remontagem com descarte de frames velhos.
+1. ✅ Fragmentação e remontagem com descarte de frames velhos; envio com
+   pacing e medição de RTT (`fluxo-net`).
 2. ⏳ Pedido de keyframe quando um frame se perde.
 3. ⏳ FEC (correção de erro): pacotes extras que reconstroem perdas sem
    esperar retransmissão. O teste de loopback mostra a necessidade: 0,5% de
@@ -82,7 +93,7 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
 
 ## 6. Tratamento de erros
 
-- Cada crate tem seu enum de erro (`ProtoError`, `CaptureError`) com
+- Cada crate tem seu enum de erro (`ProtoError`, `CaptureError`, `EncodeError`, `NetError`) com
   mensagens em português e `impl std::error::Error`.
 - Erros **esperados** em operação normal não são falhas: tela parada
   (`Ok(None)`), acesso perdido na troca de resolução (`AccessLost`, recriado
@@ -93,6 +104,6 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
 
 - Objetos COM/D3D11 ficam na thread que os criou. `DesktopCapturer` não é
   `Send` de propósito.
-- Todo `unsafe` fica dentro de `fluxo-capture` (e futuramente encode/decode),
-  em blocos pequenos, com comentário explicando a invariante.
-  `fluxo-proto` não tem nenhum `unsafe`.
+- Todo `unsafe` fica dentro de `fluxo-capture` e `fluxo-encode` (e
+  futuramente decode), em blocos pequenos, com comentário explicando a
+  invariante. `fluxo-proto` e `fluxo-net` não têm nenhum `unsafe`.

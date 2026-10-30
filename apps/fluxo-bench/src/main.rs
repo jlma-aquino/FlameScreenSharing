@@ -11,6 +11,7 @@
 //! fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
 //!                        [--mbps M] [--fps F] [--keyframe-a-cada S] [--saida arquivo.h264]
 //!                        [--verificar]
+//! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
 //! ```
 //!
 //! Detalhes e como interpretar os números: `docs/modulos/fluxo-bench.md`.
@@ -18,6 +19,8 @@
 mod bmp;
 #[cfg(windows)]
 mod encode;
+#[cfg(windows)]
+mod receber;
 #[cfg(windows)]
 mod verificar;
 
@@ -40,6 +43,7 @@ struct Opts {
     fps: u32,
     keyframe_a_cada: f64,
     verificar: bool,
+    porta: u16,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -53,6 +57,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         fps: 60,
         keyframe_a_cada: 5.0,
         verificar: false,
+        porta: 9000,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -63,6 +68,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--saida" => o.saida = Some(valor()?.clone()),
             "--copiar-cpu" => o.copiar_cpu = true,
             "--verificar" => o.verificar = true,
+            "--porta" => o.porta = valor()?.parse().map_err(|_| "porta inválida")?,
             "--encoder" => o.encoder = valor()?.parse()?,
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
             "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
@@ -84,12 +90,15 @@ Comandos:
   screenshot [opções]         salva um frame como imagem BMP
   encoders   [opções]         mostra quais encoders funcionam nesta máquina
   encode     [opções]         captura + encode: mede tempos e grava um .h264
+  receber    [opções]         recebe o vídeo do fluxo-host, mede e grava um .h264
 
 Opções:
   --monitor N           índice do monitor (padrão 0; veja 'listar')
-  --segundos S          duração do bench/encode (padrão 10)
+  --segundos S          duração do bench/encode/receber (padrão 10; no receber,
+                        conta a partir do primeiro frame; 0 = sem fim)
   --copiar-cpu          no bench, também copia cada frame para a RAM e mede o custo
-  --saida ARQ           arquivo de saída (padrão captura.bmp / captura.h264)
+  --saida ARQ           arquivo de saída (padrão captura.bmp / captura.h264 /
+                        recebido.h264)
   --encoder E           auto, nvenc ou mf (padrão auto: NVENC em NVIDIA,
                         senão Media Foundation)
   --mbps M              bitrate alvo do encode (padrão 20)
@@ -97,7 +106,9 @@ Opções:
   --keyframe-a-cada S   no encode, força um keyframe a cada S segundos para
                         medir o custo (padrão 5; 0 = só o primeiro)
   --verificar           no encode, decodifica cada frame com o decoder do
-                        Windows, mede o PSNR e salva o último frame em BMP
+                        Windows, mede o PSNR e salva o último frame em BMP;
+                        no receber, confere que todo frame decodifica
+  --porta P             porta UDP do receber (padrão 9000)
 
 Dica: com a tela parada o Windows não gera frames. Durante bench/encode,
 deixe um vídeo ou jogo rodando a 60 fps no monitor capturado.";
@@ -126,6 +137,8 @@ fn main() -> ExitCode {
         "encoders" => encode::cmd_encoders(&opts),
         #[cfg(windows)]
         "encode" => encode::cmd_encode(&opts),
+        #[cfg(windows)]
+        "receber" => receber::cmd_receber(&opts),
         "ajuda" | "--help" | "-h" => {
             println!("{AJUDA}");
             Ok(())

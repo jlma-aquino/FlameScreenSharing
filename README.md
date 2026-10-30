@@ -4,9 +4,10 @@ Streaming de tela **P2P** de baixa latência para Windows, escrito em Rust.
 Meta: **1080p a 60 fps** (com espaço para 1440p/4K e 120 fps) e latência de
 ponta a ponta abaixo de **40 ms em rede local**.
 
-> **Status:** Fase 2 em andamento — captura, encode H.264 por hardware
-> (NVENC ou Media Foundation) e protocolo de rede prontos e testados.
-> Ainda não transmite vídeo pela rede. Veja o [ROADMAP](docs/ROADMAP.md).
+> **Status:** Fase 2 quase completa — o `fluxo-host` captura, codifica em
+> H.264 por hardware (NVENC ou Media Foundation) e transmite por UDP. Ainda
+> não há cliente com tela (fase 3): o vídeo é recebido e verificado pelo
+> `fluxo-bench receber`. Veja o [ROADMAP](docs/ROADMAP.md).
 
 ## Como funciona (resumo)
 
@@ -33,9 +34,11 @@ fluxo/
 ├── crates/                 bibliotecas, uma responsabilidade cada
 │   ├── fluxo-proto/        protocolo de rede (puro Rust, sem I/O, 100% testável)
 │   ├── fluxo-capture/      captura de tela via DXGI Desktop Duplication
-│   └── fluxo-encode/       encoder H.264 por hardware: NVENC ou Media Foundation
+│   ├── fluxo-encode/       encoder H.264 por hardware: NVENC ou Media Foundation
+│   └── fluxo-net/          transporte UDP: pacing, remontagem, RTT
 ├── apps/                   executáveis
-│   └── fluxo-bench/        CLI para testar e medir captura e encode
+│   ├── fluxo-host/         transmite a tela (captura → encode → rede)
+│   └── fluxo-bench/        CLI para testar e medir captura, encode e rede
 └── docs/
     ├── ARQUITETURA.md      desenho do sistema, threads, orçamento de latência
     ├── PROTOCOLO.md        formato dos pacotes byte a byte
@@ -58,6 +61,13 @@ cargo build --release
 .\target\release\fluxo-bench.exe encoders
 .\target\release\fluxo-bench.exe encode --segundos 10 --verificar
 cargo test --workspace
+```
+
+Transmitir (dois terminais, ou dois PCs trocando `127.0.0.1` pelo IP de quem recebe):
+
+```powershell
+.\target\release\fluxo-bench.exe receber --porta 9000 --segundos 30 --verificar
+.\target\release\fluxo-host.exe --destino 127.0.0.1:9000
 ```
 
 ## Documentação de código

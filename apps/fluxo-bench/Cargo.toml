@@ -1,6 +1,6 @@
 [package]
 name = "fluxo-bench"
-description = "Ferramenta de linha de comando para testar e medir a captura de tela do Fluxo."
+description = "Ferramenta de linha de comando para testar e medir captura, encode e rede do Fluxo."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,8 @@ license.workspace = true
 [dependencies]
 fluxo-capture = { workspace = true }
 fluxo-encode = { workspace = true }
+fluxo-net = { workspace = true }
 
-# Só para `encode --verificar` (decoder H.264 do Windows).
+# Só para `--verificar` (decoder H.264 do Windows).
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

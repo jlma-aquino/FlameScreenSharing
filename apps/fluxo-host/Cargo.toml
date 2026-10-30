@@ -1,0 +1,12 @@
+[package]
+name = "fluxo-host"
+description = "Host do Fluxo: captura a tela, codifica em H.264 e transmite por UDP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fluxo-capture = { workspace = true }
+fluxo-encode = { workspace = true }
+fluxo-net = { workspace = true }

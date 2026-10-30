@@ -24,8 +24,11 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [ ] Validar `--encoder mf` num PC com GPU AMD e num com Intel
 - [ ] Media Foundation: keyframes ignoram o VBV de 1 frame no MFT da NVIDIA (~170 KB);
       investigar como limitar o tamanho em cada fabricante
-- [ ] `fluxo-net`: socket UDP, envio com *pacing* (espalhar pacotes no intervalo do frame), Ping/Pong
-- [ ] `apps/fluxo-host`: captura → encode → rede, linha de comando
+- [x] `fluxo-net`: socket UDP, envio com *pacing* (token bucket, 2,5× o bitrate), Ping/Pong nos dois sentidos
+- [x] `apps/fluxo-host`: captura → encode → rede, linha de comando
+- [x] `fluxo-bench receber`: receptor provisório (mede trânsito, perdas, RTT; grava e verifica o `.h264`)
+- [ ] Teste ponta a ponta com vídeo a 60 fps tocando (mesma máquina e entre dois PCs)
+- [ ] Limitar o host ao `--fps` em monitores de 144/165 Hz sem perder a imagem final de uma animação
 
 ## Fase 3 — Cliente e primeira imagem na tela
 

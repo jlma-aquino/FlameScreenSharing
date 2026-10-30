@@ -1,0 +1,11 @@
+[package]
+name = "fluxo-net"
+description = "Transporte UDP do Fluxo: envio de frames com pacing, recepção com remontagem e medição de RTT."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Só std + fluxo-proto: roda e é testado em qualquer sistema operacional.
+[dependencies]
+fluxo-proto = { workspace = true }
