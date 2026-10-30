@@ -51,6 +51,7 @@ dependencies = [
  "fluxo-capture",
  "fluxo-encode",
  "fluxo-net",
+ "windows",
 ]
 
 [[package]]

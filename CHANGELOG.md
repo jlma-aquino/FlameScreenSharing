@@ -41,6 +41,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - `fluxo-net`: fila de frames prontos do receptor passou de 16 para 120;
   com 16, um travamento de ~0,3 s do cliente a ~160 fps descartou 242
   frames (cada descarte estraga a imagem até o próximo keyframe).
+- `fluxo-host`: `--fps` agora é um limite de verdade. Capturas acima do
+  limite (monitores de 144/165 Hz) viram pendentes — cópia na GPU — e saem
+  no próximo horário de uma grade de `1/fps`, sem perder a imagem final de
+  uma animação. Medido com o cliente na tela capturada: de 162 fps / ~60 Mbps
+  para 59,8 fps / 15 Mbps.
 
 ### Corrigido
 - Build: habilitada a feature `Win32_Graphics_Gdi` do crate `windows`,

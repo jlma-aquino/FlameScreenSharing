@@ -29,8 +29,8 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] `fluxo-bench receber`: receptor provisório (mede trânsito, perdas, RTT; grava e verifica o `.h264`)
 - [x] Teste ponta a ponta com vídeo a 60 fps na mesma máquina (900/900 frames, trânsito p99 7,6 ms)
 - [ ] Teste ponta a ponta entre dois PCs na rede local (cabo e Wi-Fi)
-- [ ] Limitar o host ao `--fps` em monitores de 144/165 Hz sem perder a imagem final de uma animação
-      (comprovado no teste do cliente: com a janela do cliente na tela capturada, o host chegou a 162 fps e 60 Mbps)
+- [x] Limitar o host ao `--fps` em monitores de 144/165 Hz sem perder a imagem final de uma animação
+      (antes: 162 fps e ~60 Mbps com o cliente na tela capturada; depois: 59,8 fps, 15 Mbps)
 
 ## Fase 3 — Cliente e primeira imagem na tela (em andamento)
 

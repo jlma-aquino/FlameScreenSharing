@@ -10,3 +10,6 @@ license.workspace = true
 fluxo-capture = { workspace = true }
 fluxo-encode = { workspace = true }
 fluxo-net = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

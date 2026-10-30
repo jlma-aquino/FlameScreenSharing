@@ -36,21 +36,38 @@ máquina (127.0.0.1) funciona mesmo sem permitir.
 
 | Campo | Significado | Bom |
 |---|---|---|
-| fps | Frames codificados e enviados | ~60 com vídeo/jogo |
+| fps | Frames codificados e enviados | ~60 com vídeo/jogo; nunca acima de `--fps` |
+| capturas adiadas | Capturas que chegaram antes do horário (limite de fps) | 0 com fonte de 60 Hz; ~100/s com animação a 165 Hz |
 | Mbps | Bitrate real | ≤ `--mbps` |
 | encode | Tempo médio de conversão + encode | < 5 ms |
 | envio | Tempo do primeiro ao último pacote do último frame (pacing) | < 10 ms |
 | fila | Frames esperando a rede | 0–1; crescendo = rede não dá conta |
 | RTT | Ida e volta medida por ping | LAN cabeada < 1 ms; Wi-Fi 2–10 ms |
 
+## Limite de fps (`src/limite.rs`)
+
+Em monitores de 144/165 Hz a captura entrega mais frames que o `--fps`.
+Codificar todos multiplica o bitrate (medido: 162 fps e ~60 Mbps com 20 de
+alvo); descartar os excedentes perderia a imagem final de uma animação.
+
+- Os envios seguem uma grade de horários a cada `1/fps`. Captura no horário
+  (ou até 10% de intervalo antes) sai na hora.
+- Captura adiantada vira **pendente**: uma cópia na GPU (microssegundos).
+  Uma captura mais nova substitui a pendente; no horário seguinte, a
+  pendente sai — a última imagem sempre chega.
+- A espera pela captura seguinte é limitada ao horário da pendente.
+
+Custo: quando a tela muda mais rápido que o limite, a imagem espera em média
+meio intervalo (~8 ms a 60 fps). Com conteúdo a 60 fps nada é adiado.
+
+Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
+15 Mbps, 1372 capturas adiadas em 14 s, 0 frames perdidos.
+
 ## Decisões provisórias
 
 - **Destino manual.** Sem descoberta nem NAT (fase 5).
 - **Keyframe periódico** a cada 2 s (`--keyframe-a-cada`), para um receptor
   que entrar depois conseguir começar. Vira pedido do cliente na fase 4.
-- **Sem limite de fps.** Num monitor de 144/165 Hz, animações geram mais de
-  60 frames por segundo e o host codifica todos. Limitar exige guardar o
-  último frame para não perder a imagem final de uma animação (no roadmap).
 - **Captura e encode na mesma thread.** O encode é síncrono e leva ~2,5 ms,
   então separar ainda não compensa; a rede já tem as suas threads.
 - **Mudança de resolução** recria o encoder (o novo começa com keyframe).
