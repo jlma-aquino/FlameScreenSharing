@@ -15,6 +15,8 @@
 //!
 //! Detalhes e como ler a saída: `docs/modulos/fluxo-host.md`.
 
+// Só o host Windows usa; os testes da lógica de tempo rodam em qualquer sistema.
+#[cfg(any(windows, test))]
 mod limite;
 
 use std::process::ExitCode;

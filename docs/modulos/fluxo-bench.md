@@ -83,10 +83,15 @@ tempo.
 
 ## `receber`
 
-Receptor provisório até existir o `fluxo-client` (fase 3): escuta numa porta
-UDP (`--porta`, padrão 9000), recebe o vídeo do [fluxo-host](fluxo-host.md),
-grava em `recebido.h264` a partir do primeiro keyframe e mostra estatísticas.
-`--segundos` conta a partir do primeiro frame recebido (0 = até Ctrl+C).
+Receptor sem janela: escuta numa porta UDP (`--porta`, padrão 9000), recebe
+o vídeo do [fluxo-host](fluxo-host.md), grava em `recebido.h264` a partir do
+primeiro keyframe e mostra estatísticas. `--segundos` conta a partir do
+primeiro frame recebido (0 = até Ctrl+C).
+
+É o único comando que **roda também em Linux/macOS** (usa só o `fluxo-net`):
+serve para testar a rede com um segundo PC que não seja Windows. Lá,
+`--verificar` não existe; abra o `.h264` gravado com `ffplay` ou VLC. Como
+compilar: seção "Receptor em Linux" de [COMPILAR.md](../COMPILAR.md).
 
 | Linha | Significado | Esperado |
 |---|---|---|

@@ -20,7 +20,6 @@
 mod bmp;
 #[cfg(windows)]
 mod encode;
-#[cfg(windows)]
 mod receber;
 #[cfg(windows)]
 mod verificar;
@@ -141,7 +140,6 @@ fn main() -> ExitCode {
         "encode" => encode::cmd_encode(&opts),
         #[cfg(windows)]
         "decode" => encode::cmd_decode(&opts),
-        #[cfg(windows)]
         "receber" => receber::cmd_receber(&opts),
         "ajuda" | "--help" | "-h" => {
             println!("{AJUDA}");

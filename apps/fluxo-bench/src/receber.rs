@@ -1,5 +1,10 @@
-//! Comando `receber`: o lado cliente provisório (até existir o fluxo-client
-//! na fase 3). Recebe o vídeo do `fluxo-host`, mede e grava em `.h264`.
+//! Comando `receber`: recebe o vídeo do `fluxo-host`, mede e grava em
+//! `.h264`, sem janela.
+//!
+//! É o único comando que roda **fora do Windows** (só usa o `fluxo-net`):
+//! serve para testar a rede com um segundo PC Linux/macOS como receptor.
+//! Lá, `--verificar` não existe (o decoder é do Windows); confira o arquivo
+//! gravado com `ffplay` ou VLC.
 
 use std::error::Error;
 use std::fs::File;
@@ -8,8 +13,39 @@ use std::time::{Duration, Instant};
 
 use fluxo_net::{ReceiverConfig, VideoReceiver};
 
+#[cfg(windows)]
 use crate::verificar::Decoder;
 use crate::Opts;
+
+/// Fora do Windows não há decoder: `--verificar` vira um aviso.
+#[cfg(not(windows))]
+struct Decoder;
+
+#[cfg(not(windows))]
+impl Decoder {
+    fn decode(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
+        Ok(Vec::new())
+    }
+    fn finish(&mut self) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
+        Ok(Vec::new())
+    }
+    fn size(&self) -> (u32, u32) {
+        (0, 0)
+    }
+}
+
+#[cfg(windows)]
+fn abrir_decoder() -> Result<Option<Decoder>, Box<dyn Error>> {
+    let mut d = Decoder::new(0, 0)?;
+    d.convert = false; // só contar: converter custaria CPU e atrasaria a recepção
+    Ok(Some(d))
+}
+
+#[cfg(not(windows))]
+fn abrir_decoder() -> Result<Option<Decoder>, Box<dyn Error>> {
+    println!("(--verificar só existe no Windows; confira o arquivo gravado com ffplay ou VLC)");
+    Ok(None)
+}
 
 pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let rx = VideoReceiver::bind(("0.0.0.0", o.porta), ReceiverConfig::default())?;
@@ -27,11 +63,7 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     }
 
     let mut decoder = match o.verificar {
-        true => {
-            let mut d = Decoder::new(0, 0)?;
-            d.convert = false; // só contar: converter custaria CPU e atrasaria a recepção
-            Some(d)
-        }
+        true => abrir_decoder()?,
         false => None,
     };
     let mut arquivo = BufWriter::new(File::create(&saida)?);

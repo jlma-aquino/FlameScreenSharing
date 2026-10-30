@@ -36,6 +36,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - `fluxo-bench decode`: captura → encode → decode, mede o decoder isolado.
 
 ### Alterado
+- `fluxo-bench receber` compila e roda em Linux/macOS (só depende do
+  `fluxo-net`), para testar a rede com um segundo PC que não seja Windows;
+  `--verificar` continua só no Windows. Workspace inteiro sem avisos no
+  `cargo check --target x86_64-unknown-linux-gnu`.
 - `fluxo-capture`: device D3D11 criado com `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`
   (com fallback sem a flag), exigido pela conversão NV12 e pelo Media Foundation.
 - `fluxo-net`: fila de frames prontos do receptor passou de 16 para 120;

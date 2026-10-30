@@ -89,6 +89,41 @@ Só o decoder, sem rede:
 .\target\release\fluxo-bench.exe decode --segundos 10
 ```
 
+### Receptor em Linux (segundo PC sem Windows)
+
+O `fluxo-bench receber` compila e roda em Linux. Serve para medir a rede de
+verdade (perdas, RTT, bitrate) com o host no Windows.
+
+1. **Copiar o projeto** sem a pasta `target` (gigante e só serve no Windows).
+   No Windows, com o pendrive em `E:`:
+   ```powershell
+   git clone "C:\caminho\do\ScreenSharing Project" E:\fluxo
+   ```
+2. **No Linux**, instalar compilador C e Rust (uma vez):
+   ```bash
+   sudo apt install build-essential        # Debian/Ubuntu/Mint
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   source "$HOME/.cargo/env"
+   ```
+3. Copiar `fluxo` do pendrive para a pasta pessoal e compilar só o bench:
+   ```bash
+   cp -r /media/$USER/<pendrive>/fluxo ~/fluxo && cd ~/fluxo
+   cargo build --release -p fluxo-bench
+   ```
+4. Descobrir o IP do notebook (`hostname -I`) e, se o firewall estiver
+   ativo, liberar a porta: `sudo ufw allow 9000/udp`.
+5. Receber (Linux) e transmitir (Windows):
+   ```bash
+   ./target/release/fluxo-bench receber --porta 9000 --segundos 30
+   ```
+   ```powershell
+   .\target\release\fluxo-host.exe --destino <IP do notebook>:9000 --segundos 35
+   ```
+6. Conferir a imagem: `ffplay recebido.h264` (ou abrir no VLC).
+
+O "trânsito" medido entre dois PCs depende dos relógios estarem
+sincronizados (NTP); o RTT e as perdas são confiáveis sempre.
+
 ## 7. Testar o protocolo de rede
 
 ```powershell
