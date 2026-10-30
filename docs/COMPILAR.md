@@ -47,14 +47,28 @@ Durante o `bench`, deixe um vídeo do YouTube em 60 fps ou um jogo rodando no
 monitor capturado. Como interpretar a saída:
 [modulos/fluxo-bench.md](modulos/fluxo-bench.md).
 
-## 5. Testar o protocolo de rede
+## 5. Testar o encoder
+
+```powershell
+.\target\release\fluxo-bench.exe encoders
+.\target\release\fluxo-bench.exe encode --segundos 10
+.\target\release\fluxo-bench.exe encode --segundos 10 --encoder mf
+.\target\release\fluxo-bench.exe encode --segundos 5 --verificar
+```
+
+`encoders` mostra quais backends funcionam no PC. `encode` grava
+`captura.h264` (abre no VLC). `--verificar` decodifica tudo com o decoder do
+Windows e mede a fidelidade. Como interpretar:
+[modulos/fluxo-bench.md](modulos/fluxo-bench.md).
+
+## 6. Testar o protocolo de rede
 
 ```powershell
 cargo run -p fluxo-proto --release --example loopback -- --segundos 5 --mbps 20
 cargo run -p fluxo-proto --release --example loopback -- --segundos 5 --mbps 20 --perda 0.5
 ```
 
-## 6. Ver a documentação do código
+## 7. Ver a documentação do código
 
 ```powershell
 cargo doc --workspace --no-deps --open
@@ -69,3 +83,5 @@ cargo doc --workspace --no-deps --open
 | `bench` mostra ~0–5 fps | Tela parada. Abra um vídeo/jogo. |
 | `acesso à captura perdido` aparecendo | Normal ao trocar resolução, abrir UAC ou alternar jogo em tela cheia exclusiva; a captura se recria sozinha. |
 | Erro de compilação dentro de `fluxo-capture/src/dxgi.rs` | Possível diferença de versão do crate `windows`. Copie a mensagem de erro completa para corrigirmos. |
+| `encoders` mostra `[--] nvenc ... driver suporta a API NVENC até X` | Driver NVIDIA antigo: atualize para 531 ou mais novo (ou use `--encoder mf`). |
+| `encoders` mostra `[--] mf ... nenhum encoder H.264 de hardware` | Driver de vídeo sem encoder (VM, driver genérico da Microsoft): instale o driver do fabricante. |

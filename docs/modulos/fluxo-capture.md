@@ -32,7 +32,9 @@ D3D11 na GPU. Por que essa API: ADR-002 em [DECISOES.md](../DECISOES.md).
    `Frame` empresta o capturador com `&mut` e libera no `Drop` — o compilador
    impede segurar dois.
 2. **Device na GPU certa.** A duplicação precisa de um device criado no
-   mesmo adapter do monitor; `new()` cuida disso.
+   mesmo adapter do monitor; `new()` cuida disso. O device é criado com
+   `D3D11_CREATE_DEVICE_VIDEO_SUPPORT` (exigido pelo `fluxo-encode`); se o
+   driver recusar, cai para um device sem a flag.
 3. **ACCESS_LOST é normal.** Troca de resolução, UAC, tela de bloqueio, jogo
    em tela cheia exclusiva. O capturador marca e recria na próxima chamada.
 4. **Liberar rápido.** Segurar o frame atrasa o próximo. Copie a textura se

@@ -1,0 +1,16 @@
+[package]
+name = "fluxo-encode"
+description = "Encoder de vídeo H.264 por hardware do Fluxo: NVENC e Media Foundation (Windows)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Como no fluxo-capture: os tipos de configuração compilam (e são testados) em
+# qualquer sistema; os backends só existem no Windows.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
+# Só para o exemplo da documentação (captura → encode).
+[target.'cfg(windows)'.dev-dependencies]
+fluxo-capture = { workspace = true }

@@ -8,3 +8,8 @@ license.workspace = true
 
 [dependencies]
 fluxo-capture = { workspace = true }
+fluxo-encode = { workspace = true }
+
+# Só para `encode --verificar` (decoder H.264 do Windows).
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

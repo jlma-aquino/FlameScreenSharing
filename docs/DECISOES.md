@@ -72,7 +72,7 @@ por fase.
 
 ## ADR-004 — Encoder: hardware, começando por FFmpeg
 
-**Status:** Proposto (decidir no início da fase 2)
+**Status:** Substituído por ADR-006 (2026-10-29)
 
 **Contexto.** Encode por CPU (x264) em 1080p60 custa caro e adiciona latência.
 As GPUs têm encoders dedicados: NVENC (NVIDIA), AMF (AMD), QuickSync (Intel).
@@ -103,6 +103,40 @@ mínimo de 1280 do IPv6. Mesma escolha do QUIC.
 - ➕ Funciona em praticamente qualquer rede, inclusive VPNs e túneis.
 - ➖ ~2–4% a mais de pacotes que com 1400 bytes. Em LAN dá para subir via
   configuração no futuro (descoberta de MTU).
+
+---
+
+## ADR-006 — Encoder: NVENC direto + Media Foundation, escolhível
+
+**Status:** Aceito (2026-10-29)
+
+**Contexto.** O host principal tem NVIDIA (RTX 5050), mas o Fluxo precisa
+rodar em PCs com AMD e Intel. O ADR-004 propunha FFmpeg para cobrir todos,
+mas compilar FFmpeg com bindings Rust no Windows exige libclang, DLLs extras
+e um build frágil.
+
+**Decisão.** Crate `fluxo-encode` com uma trait `Encoder` e dois backends:
+
+| Backend | GPUs | Uso |
+|---|---|---|
+| `nvenc` | NVIDIA | Padrão em NVIDIA. API C do driver (`nvEncodeAPI64.dll`), versão 12.1. |
+| `mf` | NVIDIA, AMD, Intel | Media Foundation: MFT de hardware do fabricante (AMF, QuickSync, NVENC). |
+
+Escolha por `--encoder auto|nvenc|mf` (futuramente também em arquivo de
+configuração; a linha de comando vence). `auto` usa NVENC em placas NVIDIA e
+cai para Media Foundation se ele falhar, informando o motivo.
+
+**Consequências.**
+- ➕ Zero dependências novas: o NVENC vem com o driver e o Media Foundation
+  com o Windows; bindings via crate `windows` e FFI própria.
+- ➕ Os dois backends rodam na RTX 5050 — dá para comparar lado a lado.
+- ➕ NVENC direto expõe intra-refresh e controle fino de VBV (fase 4).
+- ➖ Bindings do NVENC escritos à mão; o layout é conferido contra o
+  cabeçalho oficial (`crates/fluxo-encode/nvenc/`) por um programa C.
+- ➖ MFTs de hardware variam por fabricante e driver; AMD/Intel só são
+  testados de verdade em máquinas com essas placas.
+- 🔁 Se o Media Foundation for lento ou limitado em AMD/Intel, adicionar
+  backends `amf`/`qsv` diretos atrás da mesma trait.
 
 ---
 

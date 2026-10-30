@@ -1,29 +1,45 @@
 //! # fluxo-bench
 //!
-//! Ferramenta de linha de comando para validar a captura de tela antes de
+//! Ferramenta de linha de comando para validar captura e encode antes de
 //! existir o resto do pipeline.
 //!
 //! ```text
 //! fluxo-bench listar
 //! fluxo-bench bench      [--monitor N] [--segundos S] [--copiar-cpu]
 //! fluxo-bench screenshot [--monitor N] [--saida arquivo.bmp]
+//! fluxo-bench encoders   [--monitor N]
+//! fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
+//!                        [--mbps M] [--fps F] [--keyframe-a-cada S] [--saida arquivo.h264]
+//!                        [--verificar]
 //! ```
 //!
 //! Detalhes e como interpretar os números: `docs/modulos/fluxo-bench.md`.
 
 mod bmp;
+#[cfg(windows)]
+mod encode;
+#[cfg(windows)]
+mod verificar;
 
+use std::error::Error;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use fluxo_capture::{enable_dpi_awareness, list_monitors, CaptureError, DesktopCapturer};
+use fluxo_encode::BackendChoice;
 
 /// Opções aceitas pelos comandos.
 struct Opts {
     monitor: usize,
     segundos: f64,
     copiar_cpu: bool,
-    saida: String,
+    /// Arquivo de saída; cada comando tem seu padrão.
+    saida: Option<String>,
+    encoder: BackendChoice,
+    mbps: f64,
+    fps: u32,
+    keyframe_a_cada: f64,
+    verificar: bool,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -31,7 +47,12 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         monitor: 0,
         segundos: 10.0,
         copiar_cpu: false,
-        saida: "captura.bmp".into(),
+        saida: None,
+        encoder: BackendChoice::Auto,
+        mbps: 20.0,
+        fps: 60,
+        keyframe_a_cada: 5.0,
+        verificar: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -39,8 +60,15 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         match a.as_str() {
             "--monitor" => o.monitor = valor()?.parse().map_err(|_| "monitor inválido")?,
             "--segundos" => o.segundos = valor()?.parse().map_err(|_| "segundos inválido")?,
-            "--saida" => o.saida = valor()?.clone(),
+            "--saida" => o.saida = Some(valor()?.clone()),
             "--copiar-cpu" => o.copiar_cpu = true,
+            "--verificar" => o.verificar = true,
+            "--encoder" => o.encoder = valor()?.parse()?,
+            "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
+            "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
+            "--keyframe-a-cada" => {
+                o.keyframe_a_cada = valor()?.parse().map_err(|_| "keyframe-a-cada inválido")?
+            }
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
     }
@@ -48,20 +76,30 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
 }
 
 const AJUDA: &str = "\
-fluxo-bench — testes de captura do Fluxo
+fluxo-bench — testes de captura e encode do Fluxo
 
 Comandos:
   listar                      lista os monitores disponíveis
   bench      [opções]         mede quantos frames por segundo a captura entrega
   screenshot [opções]         salva um frame como imagem BMP
+  encoders   [opções]         mostra quais encoders funcionam nesta máquina
+  encode     [opções]         captura + encode: mede tempos e grava um .h264
 
 Opções:
-  --monitor N     índice do monitor (padrão 0; veja 'listar')
-  --segundos S    duração do bench (padrão 10)
-  --copiar-cpu    no bench, também copia cada frame para a RAM e mede o custo
-  --saida ARQ     arquivo do screenshot (padrão captura.bmp)
+  --monitor N           índice do monitor (padrão 0; veja 'listar')
+  --segundos S          duração do bench/encode (padrão 10)
+  --copiar-cpu          no bench, também copia cada frame para a RAM e mede o custo
+  --saida ARQ           arquivo de saída (padrão captura.bmp / captura.h264)
+  --encoder E           auto, nvenc ou mf (padrão auto: NVENC em NVIDIA,
+                        senão Media Foundation)
+  --mbps M              bitrate alvo do encode (padrão 20)
+  --fps F               fps informado ao encoder (padrão 60)
+  --keyframe-a-cada S   no encode, força um keyframe a cada S segundos para
+                        medir o custo (padrão 5; 0 = só o primeiro)
+  --verificar           no encode, decodifica cada frame com o decoder do
+                        Windows, mede o PSNR e salva o último frame em BMP
 
-Dica: com a tela parada o Windows não gera frames. Durante o bench,
+Dica: com a tela parada o Windows não gera frames. Durante bench/encode,
 deixe um vídeo ou jogo rodando a 60 fps no monitor capturado.";
 
 fn main() -> ExitCode {
@@ -80,10 +118,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let resultado = match cmd.as_str() {
-        "listar" => cmd_listar(),
-        "bench" => cmd_bench(&opts),
-        "screenshot" => cmd_screenshot(&opts),
+    let resultado: Result<(), Box<dyn Error>> = match cmd.as_str() {
+        "listar" => cmd_listar().map_err(Into::into),
+        "bench" => cmd_bench(&opts).map_err(Into::into),
+        "screenshot" => cmd_screenshot(&opts).map_err(Into::into),
+        #[cfg(windows)]
+        "encoders" => encode::cmd_encoders(&opts),
+        #[cfg(windows)]
+        "encode" => encode::cmd_encode(&opts),
         "ajuda" | "--help" | "-h" => {
             println!("{AJUDA}");
             Ok(())
@@ -243,6 +285,7 @@ fn cmd_screenshot(o: &Opts) -> Result<(), CaptureError> {
     // Tentamos por até 2 s, ignorando updates só de cursor.
     let limite = Instant::now() + Duration::from_secs(2);
     let mut buf = Vec::new();
+    let saida = o.saida.as_deref().unwrap_or("captura.bmp");
     while Instant::now() < limite {
         if let Some(mut frame) = cap.next_frame(200)? {
             if !frame.info().desktop_updated {
@@ -250,11 +293,11 @@ fn cmd_screenshot(o: &Opts) -> Result<(), CaptureError> {
             }
             let img = frame.copy_to_cpu(&mut buf)?;
             drop(frame);
-            let arquivo = std::fs::File::create(&o.saida)
+            let arquivo = std::fs::File::create(saida)
                 .and_then(|f| bmp::write_bmp32(std::io::BufWriter::new(f), img.width, img.height, &buf));
             return match arquivo {
                 Ok(()) => {
-                    println!("Salvo {} ({}x{})", o.saida, img.width, img.height);
+                    println!("Salvo {saida} ({}x{})", img.width, img.height);
                     Ok(())
                 }
                 Err(e) => Err(CaptureError::NotAvailable(format!(

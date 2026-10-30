@@ -4,8 +4,9 @@ Streaming de tela **P2P** de baixa latência para Windows, escrito em Rust.
 Meta: **1080p a 60 fps** (com espaço para 1440p/4K e 120 fps) e latência de
 ponta a ponta abaixo de **40 ms em rede local**.
 
-> **Status:** Fase 1 — captura de tela e protocolo de rede prontos e testados.
-> Ainda não transmite vídeo. Veja o [ROADMAP](docs/ROADMAP.md).
+> **Status:** Fase 2 em andamento — captura, encode H.264 por hardware
+> (NVENC ou Media Foundation) e protocolo de rede prontos e testados.
+> Ainda não transmite vídeo pela rede. Veja o [ROADMAP](docs/ROADMAP.md).
 
 ## Como funciona (resumo)
 
@@ -13,10 +14,10 @@ ponta a ponta abaixo de **40 ms em rede local**.
  HOST (quem compartilha)                          CLIENTE (quem assiste)
  ┌──────────┐  ┌──────────┐  ┌────────────┐       ┌────────────┐  ┌──────────┐  ┌────────┐
  │ Captura  │─►│ Encoder  │─►│ Protocolo  │─UDP─► │ Protocolo  │─►│ Decoder  │─►│  Tela  │
- │  (DXGI)  │  │ (NVENC/  │  │ fragmenta  │  P2P  │  remonta   │  │ (D3D11)  │  │        │
- │   GPU    │  │ AMF/QSV) │  │            │       │            │  │          │  │        │
+ │  (DXGI)  │  │ (NVENC   │  │ fragmenta  │  P2P  │  remonta   │  │ (D3D11)  │  │        │
+ │   GPU    │  │  ou MF)  │  │            │       │            │  │          │  │        │
  └──────────┘  └──────────┘  └────────────┘       └────────────┘  └──────────┘  └────────┘
-   ✅ pronto     ⏳ fase 2      ✅ pronto            ✅ pronto       ⏳ fase 3      ⏳ fase 3
+   ✅ pronto     ✅ pronto      ✅ pronto            ✅ pronto       ⏳ fase 3      ⏳ fase 3
 ```
 
 O frame nunca sai da GPU no host: a captura entrega uma textura, o encoder de
@@ -31,9 +32,10 @@ fluxo/
 ├── CHANGELOG.md            o que mudou em cada versão
 ├── crates/                 bibliotecas, uma responsabilidade cada
 │   ├── fluxo-proto/        protocolo de rede (puro Rust, sem I/O, 100% testável)
-│   └── fluxo-capture/      captura de tela via DXGI Desktop Duplication
+│   ├── fluxo-capture/      captura de tela via DXGI Desktop Duplication
+│   └── fluxo-encode/       encoder H.264 por hardware: NVENC ou Media Foundation
 ├── apps/                   executáveis
-│   └── fluxo-bench/        CLI para testar e medir a captura
+│   └── fluxo-bench/        CLI para testar e medir captura e encode
 └── docs/
     ├── ARQUITETURA.md      desenho do sistema, threads, orçamento de latência
     ├── PROTOCOLO.md        formato dos pacotes byte a byte
@@ -53,6 +55,8 @@ cargo build --release
 .\target\release\fluxo-bench.exe listar
 .\target\release\fluxo-bench.exe bench --segundos 10
 .\target\release\fluxo-bench.exe screenshot --saida teste.bmp
+.\target\release\fluxo-bench.exe encoders
+.\target\release\fluxo-bench.exe encode --segundos 10 --verificar
 cargo test --workspace
 ```
 

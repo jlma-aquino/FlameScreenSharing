@@ -9,6 +9,7 @@ resolver = "2"
 members = [
     "crates/fluxo-proto",
     "crates/fluxo-capture",
+    "crates/fluxo-encode",
     "apps/fluxo-bench",
 ]
 
@@ -22,6 +23,7 @@ license = "MIT"
 [workspace.dependencies]
 fluxo-proto = { path = "crates/fluxo-proto" }
 fluxo-capture = { path = "crates/fluxo-capture" }
+fluxo-encode = { path = "crates/fluxo-encode" }
 
 windows = { version = "0.61", features = [
     "Win32_Foundation",
@@ -31,6 +33,12 @@ windows = { version = "0.61", features = [
     "Win32_Graphics_Dxgi_Common",
     # Necessário para IDXGIOutput::GetDesc (DXGI_OUTPUT_DESC contém um HMONITOR).
     "Win32_Graphics_Gdi",
+    # fluxo-encode: Media Foundation, COM, VARIANT (ICodecAPI) e LoadLibrary (NVENC).
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
     "Win32_UI_HiDpi",
 ] }
 

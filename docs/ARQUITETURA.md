@@ -29,7 +29,7 @@ de acumular: em streaming ao vivo, fila longa = latência alta.
 |---|---|---|---|
 | `fluxo-proto` | Formato de pacote, fragmentação, remontagem, sequência | Nenhum I/O | Qualquer |
 | `fluxo-capture` | Captura frames da tela como textura D3D11 | Encode, rede | Windows (stub nos outros) |
-| `fluxo-encode` *(fase 2)* | Textura → H.264/HEVC/AV1 via GPU | Captura | Windows |
+| `fluxo-encode` | Textura → H.264 via GPU (NVENC ou Media Foundation) | Captura | Windows (tipos em qualquer) |
 | `fluxo-net` *(fase 2)* | Sockets UDP, pacing, RTT, NAT traversal | Formato dos bytes | Qualquer |
 | `fluxo-decode` *(fase 3)* | Bytes → textura via GPU | Rede | Windows |
 | `apps/fluxo-host`, `apps/fluxo-client` *(fase 3)* | Juntam tudo | — | Windows |
@@ -44,9 +44,11 @@ Um frame 1080p BGRA tem 1920 × 1080 × 4 = **8,3 MB**. A 60 fps são
 CPU. Por isso:
 
 1. `DesktopCapturer` devolve `ID3D11Texture2D` (na GPU).
-2. O encoder (NVENC/AMF/QuickSync) aceita textura D3D11 como entrada,
-   **usando o mesmo `ID3D11Device`** da captura (`DesktopCapturer::d3d_device()`).
-3. A GPU converte BGRA → NV12 e comprime. Só ~40 KB por frame vão para a CPU.
+2. O encoder (NVENC direto, ou AMF/QuickSync/NVENC via Media Foundation)
+   aceita textura D3D11 como entrada, **usando o mesmo `ID3D11Device`** da
+   captura (`DesktopCapturer::d3d_device()`).
+3. A GPU converte BGRA → NV12 (Video Processor do D3D11, BT.709 limitado) e
+   comprime. Só ~40 KB por frame vão para a CPU.
 
 `Frame::copy_to_cpu` existe apenas para debug e screenshots.
 
@@ -55,7 +57,7 @@ CPU. Por isso:
 | Etapa | Alvo | Observação |
 |---|---|---|
 | Captura | 1–2 ms | Desktop Duplication entrega assim que o compositor desenha |
-| Encode | 3–6 ms | Preset de baixa latência, sem B-frames |
+| Encode | 3–6 ms | Preset de baixa latência, sem B-frames. Medido: 2,3 ms p50 / 2,8 ms p99 (NVENC, RTX 5050, 1080p) |
 | Rede (LAN) | 1–3 ms | Internet: + metade do ping |
 | Remontagem | ~0 ms | Entrega ao chegar o último fragmento |
 | Decode | 2–4 ms | Hardware |

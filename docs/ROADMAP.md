@@ -12,14 +12,18 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] `fluxo-bench`: listar monitores, medir FPS da captura, screenshot BMP
 - [x] **Validar no seu PC:** compilar e rodar `fluxo-bench bench` com um vídeo/jogo a 60 fps
 
-## Fase 2 — Encode e transmissão (próxima)
+## Fase 2 — Encode e transmissão (em andamento)
 
-- [ ] Decidir backend de encoder (ADR-004) conforme a GPU
-- [ ] `fluxo-encode`: trait `Encoder` + primeiro backend de hardware
+- [x] Decidir backend de encoder → ADR-006: NVENC direto + Media Foundation, `--encoder auto|nvenc|mf`
+- [x] `fluxo-encode`: trait `Encoder` + backends NVENC e Media Foundation
   - entrada: textura D3D11 do capturador, mesmo device
-  - saída: H.264 Annex B, preset baixa latência, sem B-frames, GOP longo
+  - saída: H.264 Annex B, preset baixa latência, sem B-frames, GOP infinito
   - bitrate configurável (alvo inicial 20 Mbps em 1080p60)
-- [ ] `fluxo-bench encode`: medir tempo de encode por frame e salvar `.h264` (abre no VLC/ffplay)
+- [x] `fluxo-bench encode`: medir tempo de encode por frame e salvar `.h264` (abre no VLC/ffplay)
+- [x] `fluxo-bench encode --verificar`: decodificar com o decoder do Windows e medir PSNR
+- [ ] Validar `--encoder mf` num PC com GPU AMD e num com Intel
+- [ ] Media Foundation: keyframes ignoram o VBV de 1 frame no MFT da NVIDIA (~170 KB);
+      investigar como limitar o tamanho em cada fabricante
 - [ ] `fluxo-net`: socket UDP, envio com *pacing* (espalhar pacotes no intervalo do frame), Ping/Pong
 - [ ] `apps/fluxo-host`: captura → encode → rede, linha de comando
 
@@ -52,4 +56,6 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [ ] Áudio (WASAPI loopback + Opus)
 - [ ] Cursor desenhado no cliente (latência menor de ponteiro)
 - [ ] HEVC/AV1, 1440p/4K, 120 fps
+- [ ] H.264 4:4:4 (NVENC) para texto colorido nítido — o 4:2:0 limita o PSNR RGB a ~32 dB em área de trabalho
+- [ ] Encoder por software (fallback para VMs/PCs sem encoder de hardware)
 - [ ] Interface gráfica
