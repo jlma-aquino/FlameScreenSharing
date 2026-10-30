@@ -28,7 +28,8 @@ pub const MAGIC: u16 = 0x464C;
 ///
 /// - 1: Video, Ping, Pong.
 /// - 2: + KeyframeRequest.
-pub const PROTOCOL_VERSION: u8 = 2;
+/// - 3: + Parity (FEC) e o byte 13 do cabeçalho vira `fec_group`.
+pub const PROTOCOL_VERSION: u8 = 3;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 pub const FLAG_KEYFRAME: u8 = 0b0000_0001;
@@ -47,6 +48,10 @@ pub enum PacketKind {
     /// Cliente → host: "perdi a referência, mande um keyframe". `frame_id`
     /// = número do pedido, `timestamp_us` = relógio de quem pediu.
     KeyframeRequest = 4,
+    /// Paridade XOR de um grupo de fragmentos de vídeo (FEC, ver [`crate::fec`]).
+    /// `frame_id`, `frag_count`, `flags` e `timestamp_us` iguais aos do
+    /// frame; `frag_index` = número do grupo; `fec_group` = fragmentos por grupo.
+    Parity = 5,
 }
 
 impl PacketKind {
@@ -56,6 +61,7 @@ impl PacketKind {
             2 => Some(Self::Ping),
             3 => Some(Self::Pong),
             4 => Some(Self::KeyframeRequest),
+            5 => Some(Self::Parity),
             _ => None,
         }
     }
@@ -68,6 +74,7 @@ impl PacketKind {
             frag_index: 0,
             frag_count: 0,
             flags: 0,
+            fec_group: 0,
             payload_len: 0,
             timestamp_us,
         }
@@ -131,6 +138,9 @@ pub struct PacketHeader {
     pub frag_count: u16,
     /// Bits de flags. Ver [`FLAG_KEYFRAME`].
     pub flags: u8,
+    /// Só em [`PacketKind::Parity`]: quantos fragmentos cada grupo de FEC
+    /// cobre. 0 nos outros tipos.
+    pub fec_group: u8,
     /// Tamanho do payload que vem logo após o cabeçalho.
     pub payload_len: u16,
     /// Momento da captura do frame em microssegundos (relógio do host,
@@ -158,7 +168,7 @@ impl PacketHeader {
         b[8..10].copy_from_slice(&self.frag_index.to_be_bytes());
         b[10..12].copy_from_slice(&self.frag_count.to_be_bytes());
         b[12] = self.flags;
-        b[13] = 0; // reservado
+        b[13] = self.fec_group;
         b[14..16].copy_from_slice(&self.payload_len.to_be_bytes());
         b[16..20].copy_from_slice(&self.timestamp_us.to_be_bytes());
     }
@@ -199,6 +209,7 @@ impl PacketHeader {
             frag_index: be16(8),
             frag_count: be16(10),
             flags: datagram[12],
+            fec_group: datagram[13],
             payload_len: be16(14),
             timestamp_us: be32(16),
         };
@@ -211,6 +222,17 @@ impl PacketHeader {
             });
         }
         if kind == PacketKind::Video && (header.frag_count == 0 || header.frag_index >= header.frag_count) {
+            return Err(ProtoError::BadFragment {
+                index: header.frag_index,
+                count: header.frag_count,
+            });
+        }
+        if kind == PacketKind::Parity
+            && (header.frag_count == 0
+                || header.fec_group == 0
+                || header.frag_index >= crate::fec::group_count(header.frag_count, header.fec_group)
+                || actual < crate::fec::PARITY_HEADER_LEN)
+        {
             return Err(ProtoError::BadFragment {
                 index: header.frag_index,
                 count: header.frag_count,
@@ -232,6 +254,7 @@ mod tests {
             frag_index: 3,
             frag_count: 10,
             flags: FLAG_KEYFRAME,
+            fec_group: 0,
             payload_len: 0,
             timestamp_us: 123_456,
         }

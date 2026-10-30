@@ -24,6 +24,7 @@
 //!
 //! A especificação byte a byte está em `docs/PROTOCOLO.md`.
 
+pub mod fec;
 pub mod fragment;
 pub mod packet;
 pub mod reassembly;

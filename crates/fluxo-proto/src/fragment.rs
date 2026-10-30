@@ -26,6 +26,8 @@ use crate::DEFAULT_MAX_PAYLOAD;
 pub struct Fragmenter {
     max_payload: usize,
     next_frame_id: u32,
+    /// Fragmentos por grupo de FEC; 0 = sem FEC.
+    fec_group: u8,
 }
 
 impl Fragmenter {
@@ -41,12 +43,32 @@ impl Fragmenter {
         Self {
             max_payload,
             next_frame_id: 0,
+            fec_group: 0,
         }
     }
 
     /// Começa a numeração a partir de `id` (útil para IDs aleatórios por sessão).
     pub fn with_first_frame_id(mut self, id: u32) -> Self {
         self.next_frame_id = id;
+        self
+    }
+
+    /// Liga o FEC: depois de cada `group` fragmentos de dados sai um pacote
+    /// de paridade ([`crate::fec`]). 0 desliga. Custo: `1/group` a mais de
+    /// pacotes (10 → 10%).
+    ///
+    /// ```
+    /// use fluxo_proto::{Fragmenter, PacketHeader, PacketKind};
+    ///
+    /// let mut frag = Fragmenter::new(1000).with_fec_group(10);
+    /// let (_, pacotes) = frag.fragment(&vec![1u8; 25_000], false, 0).unwrap();
+    /// // 25 de dados + 3 paridades (grupos de 10, 10 e 5).
+    /// assert_eq!(pacotes.len(), 28);
+    /// let (h, _) = PacketHeader::decode(&pacotes[10]).unwrap();
+    /// assert_eq!((h.kind, h.frag_index), (PacketKind::Parity, 0));
+    /// ```
+    pub fn with_fec_group(mut self, group: u8) -> Self {
+        self.fec_group = group;
         self
     }
 
@@ -74,8 +96,12 @@ impl Fragmenter {
         let count = frame.len().div_ceil(self.max_payload).max(1);
         let frag_count = u16::try_from(count).map_err(|_| ProtoError::PayloadTooLarge(frame.len()))?;
 
-        let mut packets = Vec::with_capacity(count);
+        let flags = if keyframe { FLAG_KEYFRAME } else { 0 };
+        let group = self.fec_group;
+        let mut packets = Vec::with_capacity(count + crate::fec::group_count(frag_count, group) as usize);
         let mut chunks = frame.chunks(self.max_payload);
+        // Payloads do grupo de FEC em andamento.
+        let mut grupo: Vec<&[u8]> = Vec::with_capacity(group as usize);
         for frag_index in 0..frag_count {
             let payload = chunks.next().unwrap_or(&[]);
             let header = PacketHeader {
@@ -83,11 +109,28 @@ impl Fragmenter {
                 frame_id,
                 frag_index,
                 frag_count,
-                flags: if keyframe { FLAG_KEYFRAME } else { 0 },
+                flags,
+                fec_group: 0,
                 payload_len: 0, // preenchido por encode_with_payload
                 timestamp_us,
             };
             packets.push(header.encode_with_payload(payload)?);
+
+            if group > 0 {
+                grupo.push(payload);
+                // A paridade sai logo depois do seu grupo, para a
+                // reconstrução poder acontecer o quanto antes.
+                if grupo.len() == group as usize || frag_index + 1 == frag_count {
+                    let paridade = PacketHeader {
+                        kind: PacketKind::Parity,
+                        frag_index: frag_index / group as u16,
+                        fec_group: group,
+                        ..header
+                    };
+                    packets.push(paridade.encode_with_payload(&crate::fec::parity(&grupo))?);
+                    grupo.clear();
+                }
+            }
         }
 
         // Só avança o ID se tudo deu certo.

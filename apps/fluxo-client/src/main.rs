@@ -277,8 +277,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         mostrados as f64 / total.max(0.001)
     );
     println!(
-        "  perdidos na rede: {} | erros de decode: {erros_decode} | descartados na fila: {}",
-        s.reassembly.frames_lost, s.frames_dropped
+        "  perdidos na rede: {} | reconstruídos pelo FEC: {} fragmentos | erros de decode: {erros_decode} | descartados na fila: {}",
+        s.reassembly.frames_lost, s.reassembly.fec_recovered, s.frames_dropped
     );
     println!(
         "  recuperação:      {perdas} perdas, {} keyframes pedidos; imagem congelada média {:.1} ms, máx {:.1} ms",

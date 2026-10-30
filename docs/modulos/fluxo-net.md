@@ -49,6 +49,20 @@ O modelo é de "dívida": o pacote sai se o saldo não está negativo e então
 desconta seu tamanho. Assim pacotes maiores que o balde nunca travam e a taxa
 média é exata.
 
+## FEC
+
+`SenderConfig::fec_group` (padrão 10) liga a paridade XOR do `fluxo-proto`:
+1 pacote extra a cada 10, e o `Reassembler` do cliente reconstrói uma perda
+por grupo sem pedir nada ao host. `ReassemblerStats::fec_recovered` conta as
+reconstruções. O pacing já leva em conta os pacotes extras.
+
+Medido com o exemplo `loopback` (300 frames, 20 Mbps):
+
+| Perda | Sem FEC | Grupos de 10 (+10%) | Grupos de 5 (+20%) |
+|---|---|---|---|
+| 1% | 68% dos frames inteiros | 98,7% | — |
+| 3% | 35% | 85% | 91% |
+
 ## Pedido de keyframe
 
 - Cliente: `VideoReceiver::request_keyframe()` manda um `KeyframeRequest` ao

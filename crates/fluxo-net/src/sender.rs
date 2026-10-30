@@ -27,12 +27,16 @@ pub struct SenderConfig {
     /// **Só para testes:** fração dos pacotes de vídeo descartados de
     /// propósito antes do envio (0.01 = 1%), simulando uma rede ruim.
     pub simulated_loss: f64,
+    /// FEC: fragmentos por grupo de paridade (0 = sem FEC). Com 10, ~10% a
+    /// mais de pacotes, e uma perda por grupo é reconstruída no cliente sem
+    /// pedir nada ao host. Ver `fluxo_proto::fec`.
+    pub fec_group: u8,
 }
 
 impl SenderConfig {
     /// Configuração para um vídeo com este bitrate: pacing a 2,5× o
     /// bitrate (folga para keyframes e variações), rajadas de 10 pacotes,
-    /// ping a cada 500 ms, sem perda simulada.
+    /// ping a cada 500 ms, FEC com grupos de 10, sem perda simulada.
     pub fn for_bitrate(bitrate_bps: u64) -> Self {
         Self {
             max_payload: DEFAULT_MAX_PAYLOAD,
@@ -40,6 +44,7 @@ impl SenderConfig {
             burst_packets: 10,
             ping_interval: Duration::from_millis(500),
             simulated_loss: 0.0,
+            fec_group: 10,
         }
     }
 }
@@ -255,7 +260,7 @@ impl Rng {
 }
 
 fn send_loop(socket: UdpSocket, jobs: mpsc::Receiver<Job>, cfg: SenderConfig, shared: Arc<Shared>) {
-    let mut frag = Fragmenter::new(cfg.max_payload);
+    let mut frag = Fragmenter::new(cfg.max_payload).with_fec_group(cfg.fec_group);
     let packet_size = cfg.max_payload + fluxo_proto::HEADER_LEN;
     let mut pacer = Pacer::new(
         shared.pacing_bps.load(Ordering::Relaxed),
@@ -399,7 +404,7 @@ fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
                 shared.keyframe_requested.store(true, Ordering::Relaxed);
                 shared.with_stats(|s| s.keyframe_requests += 1);
             }
-            PacketKind::Video => {} // o host não recebe vídeo
+            PacketKind::Video | PacketKind::Parity => {} // o host não recebe vídeo
         }
     }
 }

@@ -40,10 +40,14 @@ Opções:
   --segundos S          encerra depois de S segundos (padrão 0 = até Ctrl+C)
   --porta-local P       porta UDP de saída (padrão: automática)
   --simular-perda P     TESTE: descarta P% dos pacotes de vídeo antes de enviar
+  --fec K               FEC: 1 pacote de paridade a cada K de dados (padrão 10;
+                        0 = sem FEC). Reconstrói 1 perda por grupo no cliente
 
 Para testar sem cliente, rode antes em outro terminal (ou outro PC):
   fluxo-bench receber --porta 9000";
 
+// Fora do Windows o host só avisa que não roda: as opções ficam sem uso.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone)]
 struct Opts {
     destino: String,
@@ -56,6 +60,7 @@ struct Opts {
     segundos: f64,
     porta_local: u16,
     simular_perda: f64,
+    fec: u8,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -70,6 +75,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         segundos: 0.0,
         porta_local: 0,
         simular_perda: 0.0,
+        fec: 10,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -247,13 +253,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             .map(|p| (p * 1e6).round() as u64)
             .unwrap_or(SenderConfig::for_bitrate(bitrate_bps).pacing_bps),
         simulated_loss: o.simular_perda / 100.0,
+        fec_group: o.fec,
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let pacing_mbps = net_cfg.pacing_bps as f64 / 1e6;
     let tx = VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?;
 
     println!(
-        "Transmitindo monitor {} ({}x{}) de {} para {}\n  {}\n  {} Mbps, até {} fps, pacing {:.0} Mbps, keyframe de segurança a cada {} s{}",
+        "Transmitindo monitor {} ({}x{}) de {} para {}\n  {}\n  {} Mbps, até {} fps, pacing {:.0} Mbps, FEC {}, keyframe de segurança a cada {} s{}",
         m.index,
         m.width,
         m.height,
@@ -263,6 +270,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         o.mbps,
         o.fps,
         pacing_mbps,
+        match o.fec {
+            0 => "desligado".to_string(),
+            k => format!("1 paridade a cada {k} pacotes (+{:.0}%)", 100.0 / k as f64),
+        },
         o.keyframe_a_cada,
         match o.simular_perda > 0.0 {
             true => format!("\n  TESTE: descartando {}% dos pacotes de vídeo", o.simular_perda),

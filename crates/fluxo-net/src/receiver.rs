@@ -290,7 +290,7 @@ fn recv_loop(
                     .add(clock_diff_us(clock_us(), h.timestamp_us));
                 shared.with_stats(|s| s.pongs_received += 1);
             }
-            PacketKind::Video => {
+            PacketKind::Video | PacketKind::Parity => {
                 let completed = reasm.push(&h, payload);
                 let mut dropped = false;
                 if let Some(frame) = completed {

@@ -89,10 +89,11 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
 
 1. ✅ Fragmentação e remontagem com descarte de frames velhos; envio com
    pacing e medição de RTT (`fluxo-net`).
-2. ⏳ Pedido de keyframe quando um frame se perde.
-3. ⏳ FEC (correção de erro): pacotes extras que reconstroem perdas sem
-   esperar retransmissão. O teste de loopback mostra a necessidade: 0,5% de
-   perda de pacotes vira ~18% de frames perdidos sem FEC.
+2. ✅ Pedido de keyframe quando um frame se perde (o cliente congela a última
+   imagem boa até ele chegar).
+3. ✅ FEC (correção de erro): 1 pacote de paridade XOR a cada 10 reconstrói
+   uma perda por grupo sem esperar retransmissão. Com 1% de perda: 98,7% dos
+   frames inteiros, contra 68% sem FEC.
 4. ⏳ Controle de bitrate pela taxa de perda e RTT.
 5. ⏳ Criptografia e travessia de NAT (STUN + *hole punching*, relay de
    fallback).

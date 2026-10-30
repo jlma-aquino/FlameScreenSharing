@@ -177,8 +177,8 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         r.packets_received, r.duplicate_packets, r.late_packets, s.invalid_packets
     );
     println!(
-        "  frames perdidos na rede:  {} ({} keyframes pedidos)",
-        r.frames_lost, s.keyframe_requests
+        "  frames perdidos na rede:  {} ({} fragmentos reconstruídos pelo FEC, {} keyframes pedidos)",
+        r.frames_lost, r.fec_recovered, s.keyframe_requests
     );
     if s.frames_dropped > 0 {
         println!(

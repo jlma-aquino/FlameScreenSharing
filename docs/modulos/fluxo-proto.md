@@ -13,7 +13,8 @@ sockets — isso é da camada de rede. Formato byte a byte em
 | `src/lib.rs` | Visão geral, reexportações, `DEFAULT_MAX_PAYLOAD` |
 | `src/packet.rs` | `PacketHeader` (encode/decode), `PacketKind`, `ProtoError`, constantes |
 | `src/fragment.rs` | `Fragmenter`: frame → pacotes, numeração de frames |
-| `src/reassembly.rs` | `Reassembler`: pacotes → frames, `ReassemblerStats` |
+| `src/reassembly.rs` | `Reassembler`: pacotes → frames, `ReassemblerStats`, reconstrução por FEC |
+| `src/fec.rs` | Paridade XOR: `parity`, `recover`, `group_count`, `group_range` |
 | `src/seq.rs` | `is_newer` / `is_newer_or_equal` com wrap-around |
 | `examples/loopback.rs` | Teste de carga via UDP local |
 

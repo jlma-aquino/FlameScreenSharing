@@ -6,7 +6,7 @@
 //!
 //! Uso:
 //! ```text
-//! cargo run -p fluxo-proto --release --example loopback -- [--segundos 5] [--mbps 20] [--fps 60] [--perda 0.5]
+//! cargo run -p fluxo-proto --release --example loopback -- [--segundos 5] [--mbps 20] [--fps 60] [--perda 0.5] [--fec 10]
 //! ```
 //! `--perda` é a porcentagem de pacotes descartados antes do envio.
 
@@ -21,6 +21,7 @@ struct Args {
     mbps: f64,
     fps: f64,
     perda_pct: f64,
+    fec: f64,
 }
 
 fn parse_args() -> Args {
@@ -29,6 +30,7 @@ fn parse_args() -> Args {
         mbps: 20.0,
         fps: 60.0,
         perda_pct: 0.0,
+        fec: 0.0,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -39,6 +41,7 @@ fn parse_args() -> Args {
             "--mbps" => a.mbps = n,
             "--fps" => a.fps = n,
             "--perda" => a.perda_pct = n,
+            "--fec" => a.fec = n,
             outro => panic!("argumento desconhecido: {outro}"),
         }
         i += 2;
@@ -66,11 +69,15 @@ fn main() -> std::io::Result<()> {
     let bytes_por_frame = (args.mbps * 1_000_000.0 / 8.0 / args.fps) as usize;
     let total_frames = (args.segundos * args.fps) as u32;
     println!(
-        "Enviando {total_frames} frames de ~{} KB a {} fps ({} Mbps), perda simulada {}%",
+        "Enviando {total_frames} frames de ~{} KB a {} fps ({} Mbps), perda simulada {}%, FEC {}",
         bytes_por_frame / 1024,
         args.fps,
         args.mbps,
-        args.perda_pct
+        args.perda_pct,
+        match args.fec as u8 {
+            0 => "desligado".to_string(),
+            k => format!("grupos de {k}"),
+        }
     );
 
     // ---------- Envio (thread separada, como seria no host) ----------
@@ -79,7 +86,7 @@ fn main() -> std::io::Result<()> {
     let sender = thread::spawn(move || -> std::io::Result<(u64, u64)> {
         let tx = UdpSocket::bind("127.0.0.1:0")?;
         tx.connect(rx_addr)?;
-        let mut frag = Fragmenter::new(DEFAULT_MAX_PAYLOAD);
+        let mut frag = Fragmenter::new(DEFAULT_MAX_PAYLOAD).with_fec_group(args.fec as u8);
         let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
         let inicio = Instant::now();
         let (mut enviados, mut descartados) = (0u64, 0u64);
@@ -170,5 +177,6 @@ fn main() -> std::io::Result<()> {
         "  duplicados / atrasados:  {} / {}",
         s.duplicate_packets, s.late_packets
     );
+    println!("  reconstruídos pelo FEC:  {}", s.fec_recovered);
     Ok(())
 }

@@ -74,6 +74,8 @@ Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
 - **Largada aquecida.** O primeiro ping sai antes do primeiro frame, e o
   envio espera até 50 ms pela resposta, para o sistema resolver o endereço
   do cliente (ARP) antes da primeira rajada.
+- **FEC** (`--fec K`, padrão 10): 1 pacote de paridade a cada K de dados;
+  o cliente reconstrói uma perda por grupo sozinho. 0 desliga.
 - **`--simular-perda P`** (teste): descarta P% dos pacotes de vídeo antes de
   enviar, para testar a recuperação sem precisar de uma rede ruim.
 - **Captura e encode na mesma thread.** O encode é síncrono e leva ~2,5 ms,

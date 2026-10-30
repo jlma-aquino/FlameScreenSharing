@@ -6,6 +6,13 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v3 — FEC:** pacote `Parity` (`kind = 5`) com o XOR de um grupo
+  de fragmentos; o byte 13 do cabeçalho vira `fec_group`. Novo módulo
+  `fluxo_proto::fec`; `Fragmenter::with_fec_group` intercala a paridade
+  depois de cada grupo; o `Reassembler` reconstrói um fragmento quando o
+  grupo tem exatamente um faltando (`ReassemblerStats::fec_recovered`).
+  Ligado por padrão com grupos de 10 (`SenderConfig::fec_group`,
+  `fluxo-host --fec K`; exemplo `loopback --fec K`).
 - **Protocolo v2:** pacote `KeyframeRequest` (`kind = 4`), cliente → host.
   Pacotes da versão 1 passam a ser recusados.
 - Pedido de keyframe de ponta a ponta: `VideoReceiver::request_keyframe`
@@ -73,6 +80,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- FEC (grupos de 10), exemplo `loopback` com 300 frames a 20 Mbps: com 1%
+  de perda, 98,7% dos frames inteiros (sem FEC: 68%); com 3%, 85% (sem:
+  35%; grupos de 5: 91%). No pipeline real com 1% de perda (cliente, 15 s):
+  frames perdidos de 236 para 8, mostrados de 461/708 para 803/813, tempo
+  congelado de ~28% para ~0,6% (8 perdas de 12 ms em média).
 - Pedido de keyframe com 1% de perda simulada (cliente na mesma máquina,
   15 s): 110 perdas detectadas, 159 pedidos, 158 atendidos, 0 erros de
   decode; imagem congelada em média 38 ms (máx 184 ms) por perda. Com 2% e

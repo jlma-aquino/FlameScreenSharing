@@ -55,8 +55,9 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       corrompida; com a tela parada o host recodifica a última imagem. Medido com 1% de perda:
       congelamento médio de 38 ms por perda (antes: imagem borrada até o keyframe periódico)
 - [ ] Intra-refresh no encoder (recuperação sem keyframes gigantes)
-- [ ] FEC (paridade por grupo de pacotes) — prioridade: com 1% de perda de pacotes, ~25% dos frames
-      perdem algo (30 pacotes por frame) e a imagem fica ~28% do tempo congelada esperando keyframe
+- [x] FEC por paridade XOR (protocolo v3, `--fec K`, padrão 10 = +10% de pacotes). Com 1% de perda no
+      pipeline real: frames perdidos de 236 para 8, tempo congelado de ~28% para ~0,6%
+- [ ] FEC Reed-Solomon (recupera 2+ perdas por grupo), se perdas em rajada aparecerem no Wi-Fi
 - [ ] Controle adaptativo de bitrate (perda + RTT)
 - [x] Perda simulada (`fluxo-host --simular-perda P`)
 - [ ] Atraso/jitter simulados

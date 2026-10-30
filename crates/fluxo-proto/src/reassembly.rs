@@ -15,9 +15,14 @@
 //! 5. No máximo `max_pending_frames` frames incompletos ficam em memória;
 //!    passando disso, o mais antigo é descartado. Isso limita memória mesmo
 //!    sob ataque ou perda pesada.
+//! 6. **FEC:** pacotes de paridade ([`crate::fec`]) ficam guardados por
+//!    grupo. Quando um grupo tem exatamente um fragmento faltando e a sua
+//!    paridade chegou, o fragmento é reconstruído na hora. Paridade de um
+//!    frame que já saiu completo é simplesmente ignorada (não é "atraso").
 
 use std::collections::HashMap;
 
+use crate::fec;
 use crate::packet::{PacketHeader, PacketKind};
 use crate::seq::is_newer;
 
@@ -73,12 +78,18 @@ pub struct ReassemblerStats {
     pub frames_lost: u64,
     /// Frames incompletos expulsos por falta de espaço na fila.
     pub frames_evicted: u64,
+    /// Fragmentos perdidos que o FEC reconstruiu.
+    pub fec_recovered: u64,
 }
 
 /// Frame ainda incompleto.
 #[derive(Debug)]
 struct PartialFrame {
     fragments: Vec<Option<Vec<u8>>>,
+    /// Paridades recebidas, por grupo. Vazio enquanto nenhuma chegou.
+    parity: Vec<Option<Vec<u8>>>,
+    /// Fragmentos por grupo de FEC (0 = nenhuma paridade vista ainda).
+    fec_group: u8,
     received: u16,
     total_bytes: usize,
     keyframe: bool,
@@ -140,31 +151,44 @@ impl Reassembler {
     /// Processa um pacote já decodificado. Devolve `Some(frame)` quando este
     /// pacote completou um frame.
     ///
-    /// Pacotes que não são de vídeo são ignorados (devolve `None`).
+    /// Pacotes de vídeo e de paridade são processados; os demais tipos são
+    /// ignorados (devolve `None`).
     pub fn push(&mut self, header: &PacketHeader, payload: &[u8]) -> Option<CompletedFrame> {
-        if header.kind != PacketKind::Video {
-            return None;
-        }
+        let paridade = match header.kind {
+            PacketKind::Video => false,
+            PacketKind::Parity => true,
+            _ => return None,
+        };
         let id = header.frame_id;
 
         // Regra 3: frame já entregue ou pulado.
         if let Some(last) = self.last_delivered {
             if !is_newer(id, last) {
-                self.stats.late_packets += 1;
+                // A paridade do último grupo costuma chegar depois de o frame
+                // já ter saído completo: sobra normal, não atraso da rede.
+                if !paridade {
+                    self.stats.late_packets += 1;
+                }
                 return None;
             }
         }
 
-        if header.frag_count == 0
-            || header.frag_index >= header.frag_count
+        let grupos = fec::group_count(header.frag_count, header.fec_group);
+        let invalido = header.frag_count == 0
             || header.frag_count > self.config.max_fragments_per_frame
-        {
+            || match paridade {
+                false => header.frag_index >= header.frag_count,
+                true => header.fec_group == 0 || header.frag_index >= grupos,
+            };
+        if invalido {
             self.stats.invalid_packets += 1;
             return None;
         }
 
         let partial = self.pending.entry(id).or_insert_with(|| PartialFrame {
             fragments: vec![None; header.frag_count as usize],
+            parity: Vec::new(),
+            fec_group: 0,
             received: 0,
             total_bytes: 0,
             keyframe: header.is_keyframe(),
@@ -176,15 +200,40 @@ impl Reassembler {
             return None;
         }
 
-        let slot = &mut partial.fragments[header.frag_index as usize];
-        if slot.is_some() {
-            self.stats.duplicate_packets += 1;
-            return None;
-        }
-        *slot = Some(payload.to_vec());
-        partial.received += 1;
-        partial.total_bytes += payload.len();
+        // Grupo de FEC afetado por este pacote, para tentar reconstruir.
+        let grupo = if paridade {
+            if partial.fec_group == 0 {
+                partial.fec_group = header.fec_group;
+                partial.parity = vec![None; grupos as usize];
+            } else if partial.fec_group != header.fec_group {
+                self.stats.invalid_packets += 1;
+                return None;
+            }
+            let slot = &mut partial.parity[header.frag_index as usize];
+            if slot.is_some() {
+                self.stats.duplicate_packets += 1;
+                return None;
+            }
+            *slot = Some(payload.to_vec());
+            Some(header.frag_index)
+        } else {
+            let slot = &mut partial.fragments[header.frag_index as usize];
+            if slot.is_some() {
+                self.stats.duplicate_packets += 1;
+                return None;
+            }
+            *slot = Some(payload.to_vec());
+            partial.received += 1;
+            partial.total_bytes += payload.len();
+            (partial.fec_group > 0).then(|| header.frag_index / partial.fec_group as u16)
+        };
         self.stats.packets_received += 1;
+
+        if let Some(g) = grupo {
+            if Self::try_recover(partial, g) {
+                self.stats.fec_recovered += 1;
+            }
+        }
 
         if partial.received as usize == partial.fragments.len() {
             return Some(self.complete(id));
@@ -195,6 +244,29 @@ impl Reassembler {
             self.evict_oldest();
         }
         None
+    }
+
+    /// Se o grupo `g` tem exatamente um fragmento faltando e a paridade dele
+    /// chegou, reconstrói o fragmento. Devolve `true` se reconstruiu.
+    fn try_recover(partial: &mut PartialFrame, g: u16) -> bool {
+        let Some(Some(par)) = partial.parity.get(g as usize) else {
+            return false;
+        };
+        let faixa = fec::group_range(g, partial.fec_group, partial.fragments.len() as u16);
+        let mut faltando = faixa.clone().filter(|&i| partial.fragments[i as usize].is_none());
+        let (Some(falta), None) = (faltando.next(), faltando.next()) else {
+            return false; // nada faltando, ou 2+ (o XOR não resolve)
+        };
+        let outros: Vec<&[u8]> = faixa
+            .filter_map(|i| partial.fragments[i as usize].as_deref())
+            .collect();
+        let Some(recuperado) = fec::recover(par, &outros) else {
+            return false; // paridade incoerente: ignora
+        };
+        partial.total_bytes += recuperado.len();
+        partial.received += 1;
+        partial.fragments[falta as usize] = Some(recuperado);
+        true
     }
 
     /// Monta o frame `id` (que deve estar completo) e limpa os mais antigos.
@@ -364,5 +436,103 @@ mod tests {
         }
         assert_eq!(ids, vec![u32::MAX - 1, u32::MAX, 0, 1]);
         assert_eq!(r.stats().frames_lost, 0);
+    }
+
+    // ---------- FEC ----------
+
+    /// Frame de `n` fragmentos de 100 bytes (o último menor), com FEC de grupo `k`.
+    fn frame_com_fec(n: usize, k: u8) -> (Vec<u8>, Vec<Vec<u8>>) {
+        let dados: Vec<u8> = (0..n * 100 - 37).map(|i| (i * 7 + 3) as u8).collect();
+        let mut f = Fragmenter::new(100).with_fec_group(k);
+        let (_, pacotes) = f.fragment(&dados, false, 0).unwrap();
+        (dados, pacotes)
+    }
+
+    fn entregar(pacotes: impl IntoIterator<Item = Vec<u8>>) -> (Option<CompletedFrame>, ReassemblerStats) {
+        let mut r = Reassembler::default();
+        let mut saiu = None;
+        for p in pacotes {
+            let (h, pl) = PacketHeader::decode(&p).unwrap();
+            if let Some(f) = r.push(&h, pl) {
+                saiu = Some(f);
+            }
+        }
+        (saiu, r.stats())
+    }
+
+    fn eh_paridade(p: &[u8]) -> bool {
+        PacketHeader::decode(p).unwrap().0.kind == PacketKind::Parity
+    }
+
+    #[test]
+    fn fec_reconstroi_qualquer_fragmento_perdido() {
+        let (dados, pacotes) = frame_com_fec(25, 10);
+        let indices_dados: Vec<usize> = (0..pacotes.len())
+            .filter(|&i| !eh_paridade(&pacotes[i]))
+            .collect();
+        assert_eq!(indices_dados.len(), 25);
+        for &perdido in &indices_dados {
+            let restantes = pacotes
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != perdido)
+                .map(|(_, p)| p.clone());
+            let (frame, s) = entregar(restantes);
+            assert_eq!(
+                frame.expect("frame reconstruído").data,
+                dados,
+                "perdeu o pacote {perdido}"
+            );
+            assert_eq!(s.fec_recovered, 1);
+        }
+    }
+
+    #[test]
+    fn fec_nao_resolve_duas_perdas_no_mesmo_grupo() {
+        let (_, pacotes) = frame_com_fec(25, 10);
+        // Pacotes 0 e 1 são dados do grupo 0.
+        let (frame, s) = entregar(pacotes.into_iter().skip(2));
+        assert!(frame.is_none());
+        assert_eq!(s.fec_recovered, 0);
+    }
+
+    #[test]
+    fn fec_resolve_uma_perda_em_cada_grupo() {
+        let (dados, pacotes) = frame_com_fec(25, 10);
+        // Ordem de envio: d0..d9 P0 d10..d19 P1 d20..d24 P2 → posições 3, 14 e 24 são dados.
+        let (frame, s) = entregar(
+            pacotes
+                .into_iter()
+                .enumerate()
+                .filter(|&(i, _)| ![3, 14, 24].contains(&i))
+                .map(|(_, p)| p),
+        );
+        assert_eq!(frame.unwrap().data, dados);
+        assert_eq!(s.fec_recovered, 3);
+    }
+
+    #[test]
+    fn paridade_que_chega_antes_dos_dados_tambem_serve() {
+        let (dados, mut pacotes) = frame_com_fec(10, 10);
+        pacotes.reverse(); // paridade primeiro
+        pacotes.remove(5); // perde um dado
+        let (frame, s) = entregar(pacotes);
+        assert_eq!(frame.unwrap().data, dados);
+        assert_eq!(s.fec_recovered, 1);
+    }
+
+    #[test]
+    fn paridade_que_sobra_nao_conta_como_atraso() {
+        let (dados, pacotes) = frame_com_fec(25, 10);
+        let (frame, s) = entregar(pacotes);
+        assert_eq!(frame.unwrap().data, dados);
+        assert_eq!((s.fec_recovered, s.late_packets, s.invalid_packets), (0, 0, 0));
+    }
+
+    #[test]
+    fn perder_so_a_paridade_nao_atrapalha() {
+        let (dados, pacotes) = frame_com_fec(25, 10);
+        let (frame, _) = entregar(pacotes.into_iter().filter(|p| !eh_paridade(p)));
+        assert_eq!(frame.unwrap().data, dados);
     }
 }

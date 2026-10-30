@@ -76,6 +76,12 @@ fn pacing_espalha_o_frame_no_tempo() {
     let f = rx.recv_frame(Duration::from_secs(2)).unwrap().expect("frame");
     assert_eq!(f.frame.data.len(), 150_000);
 
+    // O frame pode completar no cliente antes de o host terminar de enviar
+    // (a última paridade de FEC sai depois do último dado): espera o envio.
+    let limite = Instant::now() + Duration::from_secs(2);
+    while tx.stats().frames_sent == 0 && Instant::now() < limite {
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let ms = tx.stats().last_frame_send_ms;
     assert!((90.0..400.0).contains(&ms), "frame levou {ms:.1} ms para sair");
 }
@@ -204,4 +210,52 @@ fn perda_simulada_descarta_pacotes_e_o_receptor_percebe() {
     assert!(s.simulated_drops > 30, "{s:?}");
     assert!(completos < 20, "{completos} frames completos");
     assert!(r.reassembly.frames_lost > 0);
+}
+
+/// Envia 60 frames de 36 KB (30 pacotes) com perda simulada; devolve
+/// (frames completos, fragmentos reconstruídos pelo FEC).
+fn completos_com_perda(fec_group: u8, perda: f64) -> (usize, u64) {
+    let rx = VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            queue_frames: 128,
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            pacing_bps: 200_000_000,
+            simulated_loss: perda,
+            fec_group,
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
+    .unwrap();
+    for n in 0..60 {
+        tx.send_frame(frame(n, 36_000), n == 0, clock_us()).unwrap();
+    }
+    let mut completos = 0;
+    while let Some(f) = rx.recv_frame(Duration::from_millis(300)).unwrap() {
+        assert_eq!(
+            f.frame.data,
+            frame(f.frame.frame_id as usize, 36_000),
+            "frame errado"
+        );
+        completos += 1;
+    }
+    (completos, rx.stats().reassembly.fec_recovered)
+}
+
+#[test]
+fn fec_salva_a_maioria_dos_frames_com_perda() {
+    // 3% de perda, 30 pacotes por frame: sem FEC só ~40% saem inteiros;
+    // com grupos de 10, ~88%.
+    let (sem, rec_sem) = completos_com_perda(0, 0.03);
+    let (com, rec_com) = completos_com_perda(10, 0.03);
+    assert_eq!(rec_sem, 0);
+    assert!(rec_com > 0, "o FEC não reconstruiu nada");
+    assert!(com >= sem + 12, "sem FEC: {sem}/60, com FEC: {com}/60");
 }
