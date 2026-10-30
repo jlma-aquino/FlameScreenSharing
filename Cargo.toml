@@ -1,0 +1,42 @@
+# Workspace do Fluxo — streaming de tela P2P de baixa latência.
+#
+# Cada pasta em `crates/` é uma biblioteca com uma responsabilidade única.
+# Cada pasta em `apps/` é um executável que junta as bibliotecas.
+# Veja docs/ARQUITETURA.md para o desenho completo.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/fluxo-proto",
+    "crates/fluxo-capture",
+    "apps/fluxo-bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+
+# Versões de dependências compartilhadas ficam aqui, num lugar só.
+[workspace.dependencies]
+fluxo-proto = { path = "crates/fluxo-proto" }
+fluxo-capture = { path = "crates/fluxo-capture" }
+
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    # Necessário para IDXGIOutput::GetDesc (DXGI_OUTPUT_DESC contém um HMONITOR).
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+] }
+
+[profile.release]
+# Otimização máxima: o caminho de vídeo é sensível a desempenho.
+lto = "thin"
+codegen-units = 1
+# Mantém nomes de função em stack traces sem pesar o binário.
+debug = "line-tables-only"

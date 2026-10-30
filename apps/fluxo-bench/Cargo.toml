@@ -1,0 +1,10 @@
+[package]
+name = "fluxo-bench"
+description = "Ferramenta de linha de comando para testar e medir a captura de tela do Fluxo."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fluxo-capture = { workspace = true }

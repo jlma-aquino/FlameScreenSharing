@@ -1,0 +1,11 @@
+[package]
+name = "fluxo-proto"
+description = "Protocolo de rede do Fluxo: cabeçalho de pacote, fragmentação e remontagem de frames sobre UDP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Sem dependências de propósito: este crate é puro Rust (std), roda e é
+# testado em qualquer sistema operacional.
+[dependencies]

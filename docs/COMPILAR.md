@@ -1,0 +1,71 @@
+# Como compilar e rodar
+
+## 1. Instalar as ferramentas (uma vez)
+
+1. **Visual Studio Build Tools** (compilador e linker da Microsoft):
+   - Baixe em <https://visualstudio.microsoft.com/visual-cpp-build-tools/>
+   - Marque **"Desenvolvimento para desktop com C++"** e instale.
+2. **Rust**: baixe e rode o `rustup-init.exe` de <https://rustup.rs>,
+   aceitando as opções padrão.
+3. Feche e reabra o terminal. Confira:
+   ```powershell
+   rustc --version
+   cargo --version
+   ```
+4. *(Opcional)* Editor: VS Code com a extensão **rust-analyzer** — mostra
+   erros, tipos e a documentação ao passar o mouse.
+
+## 2. Compilar
+
+Na pasta do projeto (onde está o `Cargo.toml` principal):
+
+```powershell
+cargo build --release
+```
+
+A primeira vez baixa as dependências e demora alguns minutos. Os executáveis
+ficam em `target\release\`.
+
+## 3. Rodar os testes
+
+```powershell
+cargo test --workspace
+```
+
+Esperado: todos `ok` (protocolo, BMP e exemplos da documentação).
+
+## 4. Testar a captura
+
+```powershell
+.\target\release\fluxo-bench.exe listar
+.\target\release\fluxo-bench.exe screenshot --saida teste.bmp
+.\target\release\fluxo-bench.exe bench --segundos 10
+.\target\release\fluxo-bench.exe bench --segundos 10 --copiar-cpu
+```
+
+Durante o `bench`, deixe um vídeo do YouTube em 60 fps ou um jogo rodando no
+monitor capturado. Como interpretar a saída:
+[modulos/fluxo-bench.md](modulos/fluxo-bench.md).
+
+## 5. Testar o protocolo de rede
+
+```powershell
+cargo run -p fluxo-proto --release --example loopback -- --segundos 5 --mbps 20
+cargo run -p fluxo-proto --release --example loopback -- --segundos 5 --mbps 20 --perda 0.5
+```
+
+## 6. Ver a documentação do código
+
+```powershell
+cargo doc --workspace --no-deps --open
+```
+
+## Problemas comuns
+
+| Sintoma | Causa provável |
+|---|---|
+| `link.exe not found` | Build Tools sem o pacote "Desenvolvimento para desktop com C++". |
+| `Desktop Duplication indisponível: o driver não suporta` | Notebook com duas GPUs: no Painel NVIDIA/Configurações de gráficos do Windows, force o `fluxo-bench.exe` na GPU ligada à tela. |
+| `bench` mostra ~0–5 fps | Tela parada. Abra um vídeo/jogo. |
+| `acesso à captura perdido` aparecendo | Normal ao trocar resolução, abrir UAC ou alternar jogo em tela cheia exclusiva; a captura se recria sozinha. |
+| Erro de compilação dentro de `fluxo-capture/src/dxgi.rs` | Possível diferença de versão do crate `windows`. Copie a mensagem de erro completa para corrigirmos. |

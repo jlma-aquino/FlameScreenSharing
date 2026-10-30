@@ -1,0 +1,13 @@
+[package]
+name = "fluxo-capture"
+description = "Captura de tela do Fluxo via DXGI Desktop Duplication (Windows)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# A dependência `windows` só é usada ao compilar para Windows. Em outros
+# sistemas o crate compila com uma implementação vazia (ver src/stub.rs),
+# o que deixa o resto do workspace compilar e testar em qualquer lugar.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
