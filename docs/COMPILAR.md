@@ -63,16 +63,31 @@ Windows e mede a fidelidade. Como interpretar:
 
 ## 6. Testar a transmissão
 
-Em dois terminais (ou dois PCs, trocando `127.0.0.1` pelo IP de quem recebe):
+Em dois terminais (ou dois PCs, trocando `127.0.0.1` pelo IP de quem recebe).
+Primeiro quem assiste, depois quem compartilha:
+
+```powershell
+.\target\release\fluxo-client.exe --porta 9000
+.\target\release\fluxo-host.exe --destino 127.0.0.1:9000
+```
+
+Sem janela, só medindo e gravando o que chega:
 
 ```powershell
 .\target\release\fluxo-bench.exe receber --porta 9000 --segundos 30 --verificar
 .\target\release\fluxo-host.exe --destino 127.0.0.1:9000 --segundos 35
 ```
 
-Na primeira vez o Windows pode pedir para liberar o `fluxo-bench` no
-firewall: para receber de outro PC, permita em "Redes privadas". Como ler a
-saída: [modulos/fluxo-host.md](modulos/fluxo-host.md).
+Na primeira vez o Windows pode pedir para liberar o `fluxo-client` (ou o
+`fluxo-bench`) no firewall: para receber de outro PC, permita em "Redes
+privadas". Como ler a saída: [modulos/fluxo-client.md](modulos/fluxo-client.md)
+e [modulos/fluxo-host.md](modulos/fluxo-host.md).
+
+Só o decoder, sem rede:
+
+```powershell
+.\target\release\fluxo-bench.exe decode --segundos 10
+```
 
 ## 7. Testar o protocolo de rede
 

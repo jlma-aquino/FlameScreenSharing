@@ -11,8 +11,10 @@ members = [
     "crates/fluxo-capture",
     "crates/fluxo-encode",
     "crates/fluxo-net",
+    "crates/fluxo-decode",
     "apps/fluxo-bench",
     "apps/fluxo-host",
+    "apps/fluxo-client",
 ]
 
 [workspace.package]
@@ -27,6 +29,7 @@ fluxo-proto = { path = "crates/fluxo-proto" }
 fluxo-capture = { path = "crates/fluxo-capture" }
 fluxo-encode = { path = "crates/fluxo-encode" }
 fluxo-net = { path = "crates/fluxo-net" }
+fluxo-decode = { path = "crates/fluxo-decode" }
 
 windows = { version = "0.61", features = [
     "Win32_Foundation",
@@ -43,6 +46,9 @@ windows = { version = "0.61", features = [
     "Win32_System_Ole",
     "Win32_System_Variant",
     "Win32_UI_HiDpi",
+    # fluxo-client: janela Win32 e teclado.
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]

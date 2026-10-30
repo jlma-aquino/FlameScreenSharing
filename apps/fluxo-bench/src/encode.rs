@@ -1,5 +1,5 @@
-//! Comandos `encoders` e `encode`: testam o fluxo-encode com frames reais
-//! da captura.
+//! Comandos `encoders`, `encode` e `decode`: testam o fluxo-encode (e o
+//! fluxo-decode) com frames reais da captura.
 
 use std::collections::VecDeque;
 use std::error::Error;
@@ -239,6 +239,69 @@ pub fn cmd_encode(o: &Opts) -> Result<(), Box<dyn Error>> {
         println!(
             "Poucos frames? A tela provavelmente estava parada. Rode de novo com um vídeo ou jogo aberto."
         );
+    }
+    Ok(())
+}
+
+/// Captura → encode → decode na mesma máquina, sem rede: mede o decoder
+/// isolado (num device separado, como no cliente).
+pub fn cmd_decode(o: &Opts) -> Result<(), Box<dyn Error>> {
+    let mut cap = DesktopCapturer::new(o.monitor)?;
+    let cfg = config(o, &cap);
+    let mut enc = open_encoder(cap.d3d_device(), &cfg)?.encoder;
+    let device = fluxo_decode::create_device()?;
+    let mut dec = fluxo_decode::VideoDecoder::new(&device)?;
+    println!(
+        "Encode: {}\nDecode: {}\n{} s com a tela do monitor {}...",
+        enc.name(),
+        dec.name(),
+        o.segundos,
+        o.monitor
+    );
+
+    let duracao = Duration::from_secs_f64(o.segundos);
+    let inicio = Instant::now();
+    let mut tempos = Serie(Vec::new());
+    let (mut codificados, mut decodificados) = (0u64, 0u64);
+    let mut tamanho = (0, 0);
+    while inicio.elapsed() < duracao {
+        let frame = match cap.next_frame(100) {
+            Ok(Some(f)) => f,
+            Ok(None) => continue,
+            Err(CaptureError::AccessLost) => continue,
+            Err(e) => return Err(e.into()),
+        };
+        if !frame.info().desktop_updated {
+            continue;
+        }
+        let pacotes = enc.encode(frame.texture(), false)?;
+        drop(frame);
+        for p in pacotes {
+            codificados += 1;
+            let t = Instant::now();
+            let saida = dec.decode(&p.data)?;
+            tempos.0.push(t.elapsed());
+            if let Some(f) = saida {
+                decodificados += 1;
+                tamanho = (f.width(), f.height());
+            }
+        }
+    }
+
+    println!("\nResultado ({})", dec.name());
+    println!(
+        "  frames: {codificados} codificados, {decodificados} decodificados ({}x{})",
+        tamanho.0, tamanho.1
+    );
+    println!(
+        "  tempo de decode (CPU):    média {:.2} ms, p50 {:.2} ms, p99 {:.2} ms",
+        tempos.media_ms(),
+        tempos.percentil_ms(0.50),
+        tempos.percentil_ms(0.99)
+    );
+    println!("  (com DXVA, parte do trabalho termina na GPU depois; o fluxo-client mede até a tela)");
+    if decodificados + 1 < codificados {
+        println!("  Atenção: o decoder está segurando frames — latência extra de um frame por frame retido.");
     }
     Ok(())
 }

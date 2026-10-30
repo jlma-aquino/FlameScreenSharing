@@ -25,6 +25,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   recriação do encoder ao mudar a resolução e estatísticas por segundo.
 - `fluxo-bench receber`: receptor provisório até a fase 3 (grava o `.h264`
   a partir do primeiro keyframe; `--verificar` decodifica tudo).
+- `fluxo-decode`: decoder H.264 com o MFT da Microsoft acelerado por DXVA,
+  saída em textura NV12 na GPU, modo de baixa latência; reserva por
+  software quando o driver não oferece DXVA. ADR-007.
+- `apps/fluxo-client`: janela Win32 (tela cheia com F11/Alt+Enter),
+  swapchain flip model com tearing sem vsync (`--vsync` opcional),
+  NV12 → tela pelo Video Processor com barras pretas; decodifica todos os
+  frames recebidos e mostra o mais novo; estatísticas no título e resumo
+  ao fechar.
+- `fluxo-bench decode`: captura → encode → decode, mede o decoder isolado.
 
 ### Alterado
 - `fluxo-capture`: device D3D11 criado com `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`
@@ -49,6 +58,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   13,3 Mbps médio, 900 de 900 frames recebidos e decodificados, 0 perdidos;
   trânsito p50 5,5 ms, p99 7,6 ms, máx 9,5 ms; maior envio de um frame
   6,5 ms; encode p50 2,4 ms / p99 3,4 ms; PSNR RGB 34,9 dB médio.
+- Decode DXVA na RTX 5050: 255 de 255 frames, nenhum retido; CPU p50
+  0,17 ms / p99 0,34 ms por frame.
+- Pipeline completo na mesma máquina (fluxo-host → fluxo-client, 12 s):
+  464 frames recebidos e 464 mostrados, 0 perdidos, 0 erros de decode;
+  captura → `Present` p50 3,1 ms, p99 9,3 ms.
 
 ## [0.1.0] — 2026-10-29
 

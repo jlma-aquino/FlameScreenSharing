@@ -23,10 +23,10 @@ Cada estágio roda na **sua própria thread**, ligado ao próximo por uma fila
 curta (1–2 itens). Se um estágio atrasa, o anterior **descarta** frames em vez
 de acumular: em streaming ao vivo, fila longa = latência alta.
 
-**Hoje (fase 2):** no host, captura e encode dividem uma thread (o encode é
+**Hoje (fase 3):** no host, captura e encode dividem uma thread (o encode é
 síncrono e leva ~2,5 ms); a rede tem duas threads próprias (envio com pacing
-e pings). No cliente provisório (`fluxo-bench receber`), uma thread de rede
-remonta os frames e a principal os grava/decodifica.
+e pings). No `fluxo-client`, uma thread de rede remonta os frames e a thread
+da janela decodifica e apresenta (decode leva ~0,3 ms de CPU com DXVA).
 
 ## 2. Crates e responsabilidades
 
@@ -36,9 +36,9 @@ remonta os frames e a principal os grava/decodifica.
 | `fluxo-capture` | Captura frames da tela como textura D3D11 | Encode, rede | Windows (stub nos outros) |
 | `fluxo-encode` | Textura → H.264 via GPU (NVENC ou Media Foundation) | Captura | Windows (tipos em qualquer) |
 | `fluxo-net` | Sockets UDP, pacing, RTT (NAT traversal na fase 5) | Formato dos bytes | Qualquer |
-| `fluxo-decode` *(fase 3)* | Bytes → textura via GPU | Rede | Windows |
+| `fluxo-decode` | H.264 → textura NV12 via GPU (Media Foundation + DXVA) | Rede, tela | Windows (erro em qualquer) |
 | `apps/fluxo-host` | Captura → encode → rede | Decode, tela | Windows |
-| `apps/fluxo-client` *(fase 3)* | Rede → decode → tela | Captura | Windows |
+| `apps/fluxo-client` | Rede → decode → janela (swapchain flip model) | Captura | Windows |
 
 **Regra de dependência:** crates de baixo nível nunca dependem de crates de
 alto nível. `fluxo-proto` não depende de nada; `apps/*` dependem de tudo.
@@ -66,13 +66,19 @@ CPU. Por isso:
 | Encode | 3–6 ms | Preset de baixa latência, sem B-frames. Medido: 2,3 ms p50 / 2,8 ms p99 (NVENC, RTX 5050, 1080p) |
 | Rede (LAN) | 1–3 ms | Internet: + metade do ping. Pacing: ~1–6 ms por frame de 20–40 KB |
 | Remontagem | ~0 ms | Entrega ao chegar o último fragmento |
-| Decode | 2–4 ms | Hardware |
-| Apresentação | 0–16 ms | Depende de vsync; modo sem vsync reduz |
+| Decode | 2–4 ms | Hardware (DXVA). CPU medida: ~0,3 ms; o resto corre na GPU |
+| Apresentação | 0–16 ms | Depende de vsync; sem vsync + tearing ≈ 0 |
 | **Total** | **~10–35 ms** | Parsec/Moonlight ficam nessa faixa |
 
-**Medido até agora** (mesma máquina, RTX 5050, 1080p, 20 Mbps, vídeo de jogo
-a 60 fps): captura → frame completo no receptor em **p50 5,5 ms, p99 7,6 ms**
-(encode + pacing + rede local). Faltam decode e apresentação (fase 3).
+**Medido até agora** (mesma máquina, RTX 5050, 1080p, 20 Mbps):
+
+| Trecho | p50 | p99 |
+|---|---|---|
+| Captura → frame completo no receptor (vídeo de jogo a 60 fps) | 5,5 ms | 7,6 ms |
+| Captura → `Present` no `fluxo-client` (uso normal da área de trabalho) | 3,1 ms | 9,3 ms |
+
+Falta medir entre dois PCs e com cronômetro filmado (o `Present` ainda não é
+o instante em que o monitor acende o pixel).
 
 ## 5. Rede: por que UDP próprio (resumo do ADR-003)
 

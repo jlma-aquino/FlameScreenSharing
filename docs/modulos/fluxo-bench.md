@@ -9,7 +9,7 @@ Ferramenta de linha de comando para validar captura, encode e rede isoladamente.
 | Arquivo | Conteúdo |
 |---|---|
 | `src/main.rs` | Parsing de argumentos e os comandos `listar`, `bench`, `screenshot` |
-| `src/encode.rs` | Comandos `encoders` e `encode` |
+| `src/encode.rs` | Comandos `encoders`, `encode` e `decode` |
 | `src/receber.rs` | Comando `receber` (receptor provisório do fluxo-host) |
 | `src/verificar.rs` | `--verificar`: decoder H.264 do Windows, PSNR, NV12→BGRA |
 | `src/bmp.rs` | Gravação de BMP 32 bits sem dependências |
@@ -24,6 +24,7 @@ fluxo-bench encoders   [--monitor N]
 fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
                        [--saida arquivo.h264] [--verificar]
+fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
 fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
 ```
 
@@ -94,3 +95,15 @@ grava em `recebido.h264` a partir do primeiro keyframe e mostra estatísticas.
 | descartados na fila | O próprio receptor não leu a tempo | 0 |
 | RTT | Ida e volta medida por ping | LAN cabeada < 1 ms |
 | decodificados (com `--verificar`) | Frames aceitos pelo decoder H.264 do Windows | todos |
+
+## `decode`
+
+Captura → encode → decode na mesma máquina, sem rede nem janela, com o
+decoder num device separado (como no cliente). Mostra se o decoder está na
+GPU (DXVA), quantos frames saíram e o tempo de CPU por frame.
+
+| Linha | Esperado |
+|---|---|
+| Decode | "acelerado pela GPU (DXVA)" |
+| frames | decodificados = codificados (nenhum retido) |
+| tempo de decode (CPU) | < 1 ms (a GPU termina o trabalho em paralelo) |

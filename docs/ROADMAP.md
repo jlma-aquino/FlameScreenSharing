@@ -31,12 +31,17 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [ ] Teste ponta a ponta entre dois PCs na rede local (cabo e Wi-Fi)
 - [ ] Limitar o host ao `--fps` em monitores de 144/165 Hz sem perder a imagem final de uma animação
 
-## Fase 3 — Cliente e primeira imagem na tela
+## Fase 3 — Cliente e primeira imagem na tela (em andamento)
 
-- [ ] `fluxo-decode`: decoder de hardware (D3D11 Video / FFmpeg d3d11va)
-- [ ] `apps/fluxo-client`: janela, swapchain, apresentação sem vsync opcional
-- [ ] Overlay de estatísticas: fps, bitrate, perda, RTT, latência estimada
+- [x] `fluxo-decode`: decoder de hardware → ADR-007: MFT H.264 da Microsoft + D3D11 (DXVA), reserva por software
+- [x] `apps/fluxo-client`: janela, swapchain flip model, tearing sem vsync, `--vsync` opcional, tela cheia (F11)
+- [x] `fluxo-bench decode`: mede o decoder isolado
+- [x] Estatísticas no título da janela: fps, bitrate, captura→tela, RTT, perdas
+- [x] Teste ponta a ponta na mesma máquina (464/464 frames, captura→tela p99 9,3 ms)
+- [ ] Conferência visual da imagem na janela do cliente
+- [ ] Overlay de estatísticas desenhado sobre a imagem (Direct2D)
 - [ ] Primeiro teste ponta a ponta em LAN, medindo latência real (cronômetro filmado)
+- [ ] Não travar a recepção enquanto a janela é arrastada (decode/apresentação em thread própria)
 
 ## Fase 4 — Robustez de rede
 

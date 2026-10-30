@@ -1,0 +1,14 @@
+[package]
+name = "fluxo-client"
+description = "Cliente do Fluxo: recebe por UDP, decodifica na GPU e mostra numa janela."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fluxo-net = { workspace = true }
+fluxo-decode = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

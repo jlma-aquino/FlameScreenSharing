@@ -140,6 +140,38 @@ cai para Media Foundation se ele falhar, informando o motivo.
 
 ---
 
+## ADR-007 — Decoder: Media Foundation com D3D11 (DXVA)
+
+**Status:** Aceito (2026-10-30)
+
+**Contexto.** O cliente precisa decodificar H.264 por hardware, sem tirar o
+frame da GPU, em placas NVIDIA, AMD e Intel. Opções:
+
+| Opção | Prós | Contras |
+|---|---|---|
+| `ID3D11VideoDecoder` direto | Controle total | Exige parser de H.264 próprio (slice headers, DPB): semanas de trabalho |
+| FFmpeg `d3d11va` | Maduro | Mesma dor de build do ADR-004 |
+| MFT H.264 da Microsoft + D3D11 | Vem com o Windows, usa DXVA de qualquer fabricante, entrega texturas NV12 | Menos controle sobre a fila interna |
+
+**Decisão.** `fluxo-decode` usa o MFT H.264 da Microsoft com um
+`IMFDXGIDeviceManager`: a decodificação roda no hardware da GPU (DXVA) e a
+saída já é uma textura D3D11. Modo `MF_LOW_LATENCY` para 1 frame de saída por
+frame de entrada. Se o driver não oferecer DXVA, o mesmo MFT decodifica por
+software e o frame sobe para uma textura (mais lento, mas funciona).
+
+A apresentação usa o Video Processor do D3D11 (NV12 → BGRA, com escala e
+barras pretas) direto no back buffer de uma swapchain *flip model* com
+*tearing* permitido quando não há vsync — sem shaders próprios.
+
+**Consequências.**
+- ➕ Zero dependências novas; funciona em qualquer GPU com driver de vídeo.
+- ➕ Frame decodificado nunca passa pela CPU (no caminho de hardware).
+- ➖ Fila interna do MFT é opaca; se ela segurar frames, medimos e reavaliamos.
+- 🔁 Se a latência de decode passar de ~5 ms, avaliar `ID3D11VideoDecoder`
+  direto com um parser mínimo (só os perfis que o nosso encoder gera).
+
+---
+
 ## Modelo
 
 ```markdown

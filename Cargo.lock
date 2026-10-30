@@ -7,6 +7,7 @@ name = "fluxo-bench"
 version = "0.1.0"
 dependencies = [
  "fluxo-capture",
+ "fluxo-decode",
  "fluxo-encode",
  "fluxo-net",
  "windows",
@@ -14,6 +15,22 @@ dependencies = [
 
 [[package]]
 name = "fluxo-capture"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
+name = "fluxo-client"
+version = "0.1.0"
+dependencies = [
+ "fluxo-decode",
+ "fluxo-net",
+ "windows",
+]
+
+[[package]]
+name = "fluxo-decode"
 version = "0.1.0"
 dependencies = [
  "windows",

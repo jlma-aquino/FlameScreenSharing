@@ -1,0 +1,11 @@
+[package]
+name = "fluxo-decode"
+description = "Decoder H.264 do Fluxo: Media Foundation com aceleração D3D11 (DXVA), saída em textura na GPU."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Os tipos de erro compilam em qualquer sistema; o decoder só no Windows.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

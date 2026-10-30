@@ -1,7 +1,7 @@
 //! # fluxo-bench
 //!
-//! Ferramenta de linha de comando para validar captura e encode antes de
-//! existir o resto do pipeline.
+//! Ferramenta de linha de comando para validar captura, encode, decode e
+//! rede isoladamente.
 //!
 //! ```text
 //! fluxo-bench listar
@@ -11,6 +11,7 @@
 //! fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
 //!                        [--mbps M] [--fps F] [--keyframe-a-cada S] [--saida arquivo.h264]
 //!                        [--verificar]
+//! fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
 //! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
 //! ```
 //!
@@ -90,6 +91,7 @@ Comandos:
   screenshot [opções]         salva um frame como imagem BMP
   encoders   [opções]         mostra quais encoders funcionam nesta máquina
   encode     [opções]         captura + encode: mede tempos e grava um .h264
+  decode     [opções]         captura + encode + decode: mede o decoder do cliente
   receber    [opções]         recebe o vídeo do fluxo-host, mede e grava um .h264
 
 Opções:
@@ -137,6 +139,8 @@ fn main() -> ExitCode {
         "encoders" => encode::cmd_encoders(&opts),
         #[cfg(windows)]
         "encode" => encode::cmd_encode(&opts),
+        #[cfg(windows)]
+        "decode" => encode::cmd_decode(&opts),
         #[cfg(windows)]
         "receber" => receber::cmd_receber(&opts),
         "ajuda" | "--help" | "-h" => {
