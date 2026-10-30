@@ -65,8 +65,9 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       pacote, desconto de 1 RTT, janela de 1 s, perda só confirmada pelo cliente). A 20 Mbps fica em
       20 Mbps sem perda; pedindo 60 Mbps, estabiliza em ~35 Mbps pela fila real, sem perder frames
       (bitrate fixo em 60 Mbps: 447 frames perdidos e RTT de 48 ms)
-- [ ] Afinar o limiar de fila: em ~35 Mbps no Wi-Fi a fila fica em 11–13 ms (RTT ~10 ms); baixar o
-      limiar de 25 ms troca um pouco de bitrate por menos latência
+- [x] Afinar o limiar de fila: a fila agora é medida pela hora de saída de cada pacote (protocolo v6,
+      `send_us`) — antes, encode/limite de fps/pacing pareciam fila. Limite padrão 15 ms (`--fila-max`),
+      largada em até 20 Mbps (p99 no Wi-Fi de ~200 para 70 ms) e o alvo não sobe com a tela parada
 - [x] Banda limitada simulada (`fluxo-host --simular-banda M`)
 - [x] Perda simulada (`fluxo-host --simular-perda P`)
 - [x] Atraso/jitter simulados (`--simular-atraso MS`, `--simular-jitter MS`, nos dois sentidos)

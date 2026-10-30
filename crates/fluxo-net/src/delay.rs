@@ -1,4 +1,4 @@
-//! Estimativa do atraso de fila a partir do trânsito dos frames.
+//! Estimativa do atraso de fila a partir do trânsito dos pacotes.
 //!
 //! `trânsito = chegada (relógio do cliente) − captura (relógio do host)`. Com
 //! relógios diferentes o valor absoluto não significa nada, mas a diferença
@@ -6,6 +6,12 @@
 //! corresponde à rede vazia, e quanto um frame passa disso é tempo parado em
 //! alguma fila (roteador, Wi-Fi, placa de rede) — o primeiro sinal de
 //! congestionamento, antes mesmo de haver perda.
+//!
+//! O receptor usa `chegada − send_us` (a hora em que o pacote saiu do host),
+//! não a hora da captura: medido desde a captura, o tempo de encode, a
+//! espera do limite de fps e o pacing espalhando o frame (que crescem com o
+//! tamanho dele) pareciam fila — no Wi-Fi, 15 ms a 7 Mbps num link de 30+,
+//! e o bitrate caía sem motivo.
 //!
 //! O mínimo é de uma janela deslizante (10 s), para acompanhar mudanças de
 //! rota ou de relógio; o atraso de fila sai suavizado (média móvel

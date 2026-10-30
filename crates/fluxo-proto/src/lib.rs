@@ -33,7 +33,9 @@ pub mod seq;
 
 pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
-pub use packet::{PacketHeader, PacketKind, ProtoError, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION};
+pub use packet::{
+    stamp_send_time, PacketHeader, PacketKind, ProtoError, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION,
+};
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};
 
 /// Tamanho máximo padrão do *payload* de cada pacote, em bytes.

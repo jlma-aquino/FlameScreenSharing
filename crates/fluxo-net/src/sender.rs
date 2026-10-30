@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use fluxo_proto::{Feedback, Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD};
+use fluxo_proto::{stamp_send_time, Feedback, Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD};
 
 use crate::bitrate::NetworkReport;
 use crate::history::{LossSample, LossWindow, SentHistory};
@@ -139,6 +139,9 @@ pub(crate) struct Shared {
     loss_window: Mutex<LossWindow>,
     /// Último relatório ainda não consumido por [`VideoSender::take_report`].
     report: Mutex<Option<NetworkReport>>,
+    /// Quando chegou o relatório anterior e quantos bytes tinham saído até
+    /// ali, para medir a taxa de envio real ([`NetworkReport::sent_kbps`]).
+    envio_anterior: Mutex<Option<(Instant, u64)>>,
 }
 
 impl Shared {
@@ -201,6 +204,7 @@ impl VideoSender {
             sent_history: Mutex::new(SentHistory::default()),
             loss_window: Mutex::new(LossWindow::default()),
             report: Mutex::new(None),
+            envio_anterior: Mutex::new(None),
         });
         let (queue, jobs) = mpsc::channel();
 
@@ -403,7 +407,7 @@ fn send_job(
 ) {
     let start = Instant::now();
     let queue_wait = start - job.queued_at;
-    let packets = match frag.fragment(&job.data, job.keyframe, job.timestamp_us) {
+    let mut packets = match frag.fragment(&job.data, job.keyframe, job.timestamp_us) {
         Ok((_, p)) => p,
         Err(_) => {
             // Frame acima de ~78 MB: impossível com vídeo real; descartamos.
@@ -432,13 +436,19 @@ fn send_job(
         banda => pacing.min(banda),
     };
     pacer.set_rate(pacing, start);
+    // Na banda simulada, a fila de envio faz o papel da fila do roteador,
+    // que numa rede real fica **depois** da saída: os pacotes levam a hora em
+    // que o frame entrou na fila, para o cliente enxergar esse atraso.
+    let entrou_no_roteador = (cfg.simulated_bandwidth_bps > 0)
+        .then(|| clock_us().wrapping_sub(queue_wait.as_micros().min(u32::MAX as u128) as u32));
 
     let (mut sent, mut bytes, mut errors, mut dropped) = (0u64, 0u64, 0u64, 0u64);
-    for p in &packets {
+    for p in &mut packets {
         let wait = pacer.delay(Instant::now());
         if !wait.is_zero() {
             thread::sleep(wait);
         }
+        stamp_send_time(p, entrou_no_roteador.unwrap_or_else(clock_us));
         // O pacote "perdido" ocupa seu tempo no pacing, como numa rede real.
         if cfg.simulated_loss > 0.0 && rng.next_f64() < cfg.simulated_loss {
             dropped += 1;
@@ -581,9 +591,22 @@ fn on_feedback(shared: &Shared, f: &Feedback) {
             frames_perdidos: f.frames_lost,
             fec_reconstruidos: f.fec_recovered,
         });
+    // Quanto mandamos de fato desde o relatório anterior.
+    let agora = Instant::now();
+    let bytes = shared.stats.lock().map(|s| s.bytes_sent).unwrap_or(0);
+    let sent_kbps = {
+        let mut anterior = shared.envio_anterior.lock().unwrap_or_else(|e| e.into_inner());
+        let taxa = anterior.and_then(|(quando, b)| {
+            let ms = agora.duration_since(quando).as_millis() as u64;
+            (ms > 0).then(|| (bytes.saturating_sub(b) * 8 / ms) as u32)
+        });
+        *anterior = Some((agora, bytes));
+        taxa
+    };
     let report = NetworkReport {
         loss,
         queue_delay_ms: f.queue_delay_us as f64 / 1000.0,
+        sent_kbps,
     };
     *shared.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
     shared.with_stats(|s| {

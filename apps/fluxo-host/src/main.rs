@@ -32,9 +32,12 @@ Opções:
   --monitor N           monitor a transmitir (padrão 0)
   --encoder E           auto, nvenc ou mf (padrão auto)
   --mbps M              bitrate máximo do vídeo (padrão 20). O bitrate adaptativo
-                        desce quando a rede reclama e volta até este valor
+                        começa em até 20 Mbps, sobe até este valor se a rede
+                        deixar e desce quando ela reclama
   --mbps-min M          piso do bitrate adaptativo (padrão mbps/8, mínimo 1)
   --bitrate-fixo        desliga o bitrate adaptativo (fica sempre em --mbps)
+  --fila-max MS         bitrate adaptativo: atraso de fila tolerado (padrão 15).
+                        Menor = menos latência e menos bitrate
   --fps F               máximo de frames por segundo (padrão 60); capturas mais
                         rápidas esperam o próximo horário, sem perder a última
   --pacing-mbps P       taxa de envio dos pacotes (padrão 2,5 × mbps; 0 = sem pacing)
@@ -72,6 +75,7 @@ struct Opts {
     fec: u8,
     mbps_min: Option<f64>,
     bitrate_fixo: bool,
+    fila_max: f64,
     simular_banda: f64,
     simular_atraso: f64,
     simular_jitter: f64,
@@ -92,6 +96,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         fec: 10,
         mbps_min: None,
         bitrate_fixo: false,
+        fila_max: fluxo_net::DEFAULT_QUEUE_LIMIT_MS,
         simular_banda: 0.0,
         simular_atraso: 0.0,
         simular_jitter: 0.0,
@@ -114,6 +119,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--simular-perda" => o.simular_perda = valor()?.parse().map_err(|_| "simular-perda inválido")?,
             "--mbps-min" => o.mbps_min = Some(valor()?.parse().map_err(|_| "mbps-min inválido")?),
             "--bitrate-fixo" => o.bitrate_fixo = true,
+            "--fila-max" => o.fila_max = valor()?.parse().map_err(|_| "fila-max inválido")?,
             "--simular-banda" => o.simular_banda = valor()?.parse().map_err(|_| "simular-banda inválido")?,
             "--simular-atraso" => {
                 o.simular_atraso = valor()?.parse().map_err(|_| "simular-atraso inválido")?
@@ -297,7 +303,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .map(|m| (m * 1000.0) as u32)
         .unwrap_or(max_kbps / 8)
         .max(1000);
-    let mut abr = (!o.bitrate_fixo).then(|| BitrateController::new(min_kbps, max_kbps, Instant::now()));
+    let mut abr = (!o.bitrate_fixo)
+        .then(|| BitrateController::new(min_kbps, max_kbps, Instant::now()).with_queue_limit(o.fila_max));
     let pacing_segue_bitrate = o.pacing_mbps.is_none();
     let pacing_mbps = net_cfg.pacing_bps as f64 / 1e6;
     let tx = VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?;
@@ -324,10 +331,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         }
     );
     match &abr {
-        Some(_) => println!(
-            "  bitrate adaptativo: entre {:.1} e {:.1} Mbps",
+        Some(c) => println!(
+            "  bitrate adaptativo: entre {:.1} e {:.1} Mbps, fila máxima {} ms",
             min_kbps as f64 / 1000.0,
-            max_kbps as f64 / 1000.0
+            max_kbps as f64 / 1000.0,
+            c.queue_limit_ms()
         ),
         None => println!("  bitrate fixo (--bitrate-fixo)"),
     }

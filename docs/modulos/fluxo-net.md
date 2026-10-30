@@ -69,11 +69,15 @@ Medido com o exemplo `loopback` (300 frames, 20 Mbps):
 
 - **Cliente** (`VideoReceiver`, automático): a cada 250 ms manda um
   `Feedback` com os pacotes de vídeo/paridade recebidos (acumulado) e o
-  atraso de fila (`delay.rs`: trânsito de cada frame menos o menor dos
-  últimos 10 s, suavizado). `ReceiverStats::queue_delay_ms` mostra o valor.
+  atraso de fila (`delay.rs`: `chegada − send_us` do pacote que completou
+  cada frame, menos o menor dos últimos 10 s, suavizado).
+  `ReceiverStats::queue_delay_ms` mostra o valor. Medir desde a **saída**
+  (`send_us`, protocolo v6) e não desde a captura é essencial: encode,
+  espera do limite de fps e pacing crescem com o tamanho do frame e
+  pareciam 15 ms de fila a 7 Mbps num Wi-Fi que aguenta 30+.
 - **Host** (`VideoSender`): compara os recebidos com os pacotes que tentou
   mandar e calcula a perda; `take_report()` entrega um
-  `NetworkReport { loss, queue_delay_ms }`. A conta (`history.rs`) evita
+  `NetworkReport { loss, queue_delay_ms, sent_kbps }`. A conta (`history.rs`) evita
   "perda fantasma", que no primeiro teste no Wi-Fi derrubou o bitrate de 20
   para 2,5 Mbps com zero pacotes perdidos:
   - cada pacote conta como enviado **na hora em que sai** (não no início do
@@ -88,12 +92,35 @@ Medido com o exemplo `loopback` (300 frames, 20 Mbps):
 
 | Situação | Ação |
 |---|---|
-| perda ≥ 10% ou fila ≥ 60 ms | × 0,7 |
-| perda ≥ 3% ou fila ≥ 25 ms | × 0,85 (no máximo 1 queda a cada 500 ms) |
-| perda < 1% e fila < 10 ms, 2 s sem quedas | + 8% (no máximo 1×/s) |
+| perda ≥ 10% ou fila ≥ 2,4 × limite (36 ms) | × 0,7 |
+| perda ≥ 3% ou fila ≥ limite (15 ms) | × 0,85 (no máximo 1 queda a cada 500 ms) |
+| perda < 1%, fila < 0,4 × limite (6 ms), envio ≥ 50% do alvo, 2 s sem quedas | + 8% (no máximo 1×/s) |
+
+  - O limite de fila é `BitrateController::with_queue_limit` (host:
+    `--fila-max`, padrão 15 ms).
+  - Começa em no máximo 20 Mbps (`START_KBPS`) e sobe se a rede deixar:
+    começar direto em 60 deixava a largada ~2 s com 100–200 ms de atraso.
+  - Só sobe se o envio real (`sent_kbps`) usar pelo menos metade do alvo:
+    com a tela parada a rede parece folgada, o alvo ia a 60 Mbps e, quando o
+    movimento voltava, a rajada enchia a fila.
 
   Perda abaixo de ~2% fica para o FEC. O host aplica a decisão no encoder
   (`Encoder::set_bitrate`, sem keyframe) e no pacing (2,5× o bitrate).
+
+Medido no Wi-Fi (host Windows → notebook Linux, vídeo, `--mbps 60`, 30 s),
+já medindo a fila pelo `send_us`:
+
+| Limite de fila | Bitrate médio | Latência p50 | Fila em regime |
+|---|---|---|---|
+| 25 ms | 32,7 Mbps | 22,5 ms | 4–12 ms, picos de 24–26 |
+| 15 ms | 27,1 Mbps | 25,3 ms | 2–7 ms |
+| 10 ms | 23,6 Mbps | 20,5 ms | 2–6 ms |
+
+O conteúdo do vídeo pesa mais que o limite; a latência em regime acompanha
+o bitrate (~13–16 ms a 15 Mbps, ~22–25 ms a 35–40 Mbps), pelo tempo do
+frame atravessar o Wi-Fi. O p99 dessas rodadas (~180–210 ms) vinha todo da
+largada a 60 Mbps; começando em 20 Mbps, a largada ficou em ~27 ms e o p99
+caiu para 70 ms.
 - **Banda simulada** (`SenderConfig::simulated_bandwidth_bps`, só testes):
   envia no ritmo do "link"; com mais de 4 frames na fila, descarta o frame
   inteiro — como um roteador congestionado.

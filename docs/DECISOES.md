@@ -96,7 +96,8 @@ primeiro e é testado mais a fundo.
 qualquer fragmento IP se perde, o pacote inteiro some, e alguns roteadores
 descartam fragmentos.
 
-**Decisão.** 1200 bytes de payload (1248–1268 com cabeçalhos), abaixo do
+**Decisão.** 1200 bytes de payload (1252–1272 com cabeçalhos; o nosso tem
+24 bytes desde o protocolo v6), abaixo do
 mínimo de 1280 do IPv6. Mesma escolha do QUIC.
 
 **Consequências.**

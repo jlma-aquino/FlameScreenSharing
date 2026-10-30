@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 5
+# Protocolo de rede — versão 6
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -7,21 +7,22 @@ referência: `crates/fluxo-proto`.
 `crates/fluxo-proto/src/packet.rs`, atualize este documento e registre no
 CHANGELOG.
 
-## 1. Cabeçalho (20 bytes, big-endian)
+## 1. Cabeçalho (24 bytes, big-endian)
 
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `5`. Versões diferentes são descartadas (histórico na seção 6). |
+| 2 | 1 | `version` | `6`. Versões diferentes são descartadas (histórico na seção 6). |
 | 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback. |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
 | 12 | 1 | `flags` | Bit 0: keyframe. Bits 1–7 reservados (enviar 0, ignorar ao ler). |
 | 13 | 1 | `fec_group` | Só em Parity: fragmentos por grupo de FEC (≥ 1). Nos outros tipos, 0. |
-| 14 | 2 | `payload_len` | Bytes de payload. Deve ser igual a `tamanho do datagrama − 20`. |
+| 14 | 2 | `payload_len` | Bytes de payload. Deve ser igual a `tamanho do datagrama − 24`. |
 | 16 | 4 | `timestamp_us` | Momento da captura em µs: relógio de parede (UTC) truncado para 32 bits, volta a cada ~71 min (`fluxo_net::clock_us`). |
-| 20 | N | payload | Dados. |
+| 20 | 4 | `send_us` | Momento em que **este pacote** saiu, no mesmo relógio. Gravado na hora do envio (`stamp_send_time`), depois do pacing. Ver "Atraso de fila" no Feedback. |
+| 24 | N | payload | Dados. |
 
 ## 2. Tipos de pacote
 
@@ -65,9 +66,12 @@ perdido não estrague a conta.
 - **Perda:** o host compara `packets_received` com quantos pacotes tentou
   mandar entre dois relatórios: `perda = 1 − recebidos / tentados`. Com
   menos de 30 pacotes no intervalo (tela parada) a conta não é feita.
-- **Atraso de fila:** o cliente compara o trânsito de cada frame com o
-  menor trânsito dos últimos 10 s (a rede vazia). A defasagem entre os
-  relógios se cancela, então vale entre PCs diferentes.
+- **Atraso de fila:** quando um frame se completa, o cliente calcula
+  `chegada − send_us` do pacote que o completou e compara com o menor valor
+  dos últimos 10 s (a rede vazia). A defasagem entre os relógios se cancela,
+  então vale entre PCs diferentes. Usar `send_us`, e não `timestamp_us`,
+  tira da conta o encode, a espera do limite de fps e o pacing (que crescem
+  com o tamanho do frame e pareciam fila — versão 6).
 
 ### Parity (`kind = 5`) — FEC
 Pacote de paridade XOR de um grupo de fragmentos de vídeo. Os fragmentos de
@@ -150,3 +154,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 3 | + Parity (`kind = 5`, FEC); byte 13 vira `fec_group`. Pacotes das versões 1 e 2 são recusados. |
 | 4 | + Feedback (`kind = 6`), relatório para o bitrate adaptativo. Versões anteriores recusadas. |
 | 5 | Pong leva 4 bytes com o relógio de quem responde (sincronização). Versões anteriores recusadas. |
+| 6 | Cabeçalho de 24 bytes: + `send_us` (hora de saída de cada pacote), base do atraso de fila. Versões anteriores recusadas. |

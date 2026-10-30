@@ -6,6 +6,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v6 — hora de saída dos pacotes:** cabeçalho de 24 bytes com
+  `send_us`, gravado na hora do envio (`fluxo_proto::stamp_send_time`). O
+  atraso de fila do bitrate adaptativo passa a medir só a rede.
+- **Limite de fila configurável** (`fluxo-host --fila-max MS`,
+  `BitrateController::with_queue_limit`), padrão 15 ms (antes 25).
 - **Atraso e jitter simulados** (`fluxo-host --simular-atraso MS
   --simular-jitter MS`, `SenderConfig::simulated_delay`/`simulated_jitter`):
   atraso fixo mais um extra sorteado a cada 20 ms, nos dois sentidos, sem
@@ -97,6 +102,14 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Bitrate adaptativo no Wi-Fi: a "fila" incluía encode, espera do limite de
+  fps e pacing, e o bitrate caía sem congestionamento (com limite de 10 ms,
+  7,5 Mbps num link de 30+). Agora mede desde a saída de cada pacote.
+- Largada do bitrate adaptativo em até 20 Mbps (`START_KBPS`): começar em
+  `--mbps 60` deixava ~2 s com 100–200 ms de atraso (p99 no Wi-Fi: ~200 →
+  70 ms).
+- Com a tela parada o alvo do bitrate não sobe mais (só sobe se o envio
+  real usar metade dele): quando o movimento voltava, a rajada enchia a fila.
 - Bitrate adaptativo: "perda fantasma" no Wi-Fi. O host contava os pacotes
   de um frame como enviados no início do pacing, tratava pacotes ainda na
   fila do Wi-Fi como perdidos e usava intervalos de 250 ms; o resultado era

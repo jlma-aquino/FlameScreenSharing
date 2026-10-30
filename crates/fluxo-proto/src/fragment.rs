@@ -113,6 +113,8 @@ impl Fragmenter {
                 fec_group: 0,
                 payload_len: 0, // preenchido por encode_with_payload
                 timestamp_us,
+                // O emissor regrava na hora de mandar (`stamp_send_time`).
+                send_us: timestamp_us,
             };
             packets.push(header.encode_with_payload(payload)?);
 

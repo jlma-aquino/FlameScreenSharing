@@ -347,7 +347,11 @@ fn recv_loop(
                 let mut dropped = false;
                 if let Some(frame) = completed {
                     let received_us = clock_us();
-                    fila.add(clock_diff_us(received_us, frame.timestamp_us), Instant::now());
+                    // Atraso de fila pela hora em que o pacote que completou
+                    // o frame **saiu** do host: só a rede conta, sem encode,
+                    // espera do limite de fps nem pacing (que crescem com o
+                    // tamanho do frame e pareceriam fila).
+                    fila.add(clock_diff_us(received_us, h.send_us), Instant::now());
                     let transit_us = clock_diff_us(received_us, frame.timestamp_us);
                     let rf = ReceivedFrame {
                         // Captura no relógio do host + diferença dos relógios

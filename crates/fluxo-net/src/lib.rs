@@ -59,7 +59,7 @@ mod sync;
 
 use std::fmt;
 
-pub use bitrate::{BitrateChange, BitrateController, NetworkReport};
+pub use bitrate::{BitrateChange, BitrateController, NetworkReport, DEFAULT_QUEUE_LIMIT_MS, START_KBPS};
 pub use clock::{clock_diff_us, clock_us};
 pub use receiver::{ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
 pub use rtt::RttStats;
@@ -111,11 +111,13 @@ pub(crate) fn is_transient(e: &std::io::Error) -> bool {
 /// Pong para um Ping recebido: ecoa `frame_id` e `timestamp_us` e leva o
 /// nosso relógio no payload (sincronização, ver `sync.rs`).
 pub(crate) fn pong_for(ping: &fluxo_proto::PacketHeader) -> Option<Vec<u8>> {
+    let agora = clock_us();
     fluxo_proto::PacketHeader {
         kind: fluxo_proto::PacketKind::Pong,
+        send_us: agora,
         ..*ping
     }
-    .encode_with_payload(&clock_us().to_be_bytes())
+    .encode_with_payload(&agora.to_be_bytes())
     .ok()
 }
 

@@ -1,15 +1,15 @@
 //! Cabeçalho binário dos pacotes do Fluxo.
 //!
 //! Todo pacote UDP do Fluxo começa com este cabeçalho fixo de
-//! [`HEADER_LEN`] = 20 bytes, em ordem de bytes *big-endian* (padrão de rede),
+//! [`HEADER_LEN`] = 24 bytes, em ordem de bytes *big-endian* (padrão de rede),
 //! seguido de `payload_len` bytes de dados.
 //!
 //! ```text
-//!  0       2   3   4               8       10      12  13  14      16              20
-//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+
-//!  | magic |ver|knd|   frame_id    | frag  | frag  |flg|rsv|payload|  timestamp_us |
-//!  | "FL"  |   |   |               | index | count |   |   |  len  |               |
-//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+
+//!  0       2   3   4               8       10      12  13  14      16              20              24
+//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+---------------+
+//!  | magic |ver|knd|   frame_id    | frag  | frag  |flg|fec|payload|  timestamp_us |    send_us    |
+//!  | "FL"  |   |   |               | index | count |   |grp|  len  |   (captura)   |    (envio)    |
+//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+---------------+
 //! ```
 //!
 //! Detalhes de cada campo: `docs/PROTOCOLO.md`.
@@ -17,7 +17,11 @@
 use std::fmt;
 
 /// Tamanho fixo do cabeçalho em bytes.
-pub const HEADER_LEN: usize = 20;
+pub const HEADER_LEN: usize = 24;
+
+/// Posição de `send_us` no cabeçalho: o emissor o preenche com
+/// [`stamp_send_time`] na hora exata de mandar cada pacote.
+const SEND_US_AT: usize = 20;
 
 /// Assinatura "FL" (0x46 0x4C) no início de todo pacote.
 /// Serve para descartar rapidamente lixo que chegue na porta.
@@ -31,7 +35,8 @@ pub const MAGIC: u16 = 0x464C;
 /// - 3: + Parity (FEC) e o byte 13 do cabeçalho vira `fec_group`.
 /// - 4: + Feedback (relatório do cliente para o bitrate adaptativo).
 /// - 5: Pong leva 4 bytes com o relógio de quem responde (sincronização).
-pub const PROTOCOL_VERSION: u8 = 5;
+/// - 6: cabeçalho de 24 bytes: + `send_us`, a hora em que o pacote saiu.
+pub const PROTOCOL_VERSION: u8 = 6;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 pub const FLAG_KEYFRAME: u8 = 0b0000_0001;
@@ -89,8 +94,19 @@ impl PacketKind {
             fec_group: 0,
             payload_len: 0,
             timestamp_us,
+            send_us: timestamp_us,
         }
     }
+}
+
+/// Grava `send_us` (relógio de quem envia, µs em 32 bits) num pacote já
+/// montado. O emissor chama logo antes de mandar: os pacotes de um
+/// frame são montados juntos, mas saem espalhados pelo pacing.
+///
+/// # Panics
+/// Se `datagram.len() < HEADER_LEN` (erro de programação).
+pub fn stamp_send_time(datagram: &mut [u8], send_us: u32) {
+    datagram[SEND_US_AT..HEADER_LEN].copy_from_slice(&send_us.to_be_bytes());
 }
 
 /// Erros ao decodificar um pacote recebido.
@@ -159,6 +175,11 @@ pub struct PacketHeader {
     /// truncado em 32 bits — dá a volta a cada ~71 minutos). Usado para
     /// medir latência e ordenar a apresentação.
     pub timestamp_us: u32,
+    /// Momento em que **este pacote** saiu, no relógio de quem enviou (mesmo
+    /// formato de `timestamp_us`). `chegada − send_us` varia só com a rede:
+    /// não inclui encode, espera do limite de fps nem pacing. Base do atraso
+    /// de fila do bitrate adaptativo.
+    pub send_us: u32,
 }
 
 impl PacketHeader {
@@ -183,6 +204,7 @@ impl PacketHeader {
         b[13] = self.fec_group;
         b[14..16].copy_from_slice(&self.payload_len.to_be_bytes());
         b[16..20].copy_from_slice(&self.timestamp_us.to_be_bytes());
+        b[SEND_US_AT..HEADER_LEN].copy_from_slice(&self.send_us.to_be_bytes());
     }
 
     /// Monta um pacote completo (cabeçalho + payload) num `Vec` novo.
@@ -224,6 +246,7 @@ impl PacketHeader {
             fec_group: datagram[13],
             payload_len: be16(14),
             timestamp_us: be32(16),
+            send_us: be32(SEND_US_AT),
         };
 
         let actual = datagram.len() - HEADER_LEN;
@@ -281,7 +304,17 @@ mod tests {
             fec_group: 0,
             payload_len: 0,
             timestamp_us: 123_456,
+            send_us: 130_000,
         }
+    }
+
+    #[test]
+    fn hora_de_envio_gravada_no_pacote_pronto() {
+        let mut pkt = exemplo().encode_with_payload(b"x").unwrap();
+        stamp_send_time(&mut pkt, 0xFFFF_FFF0);
+        let (h, payload) = PacketHeader::decode(&pkt).unwrap();
+        assert_eq!((h.timestamp_us, h.send_us), (123_456, 0xFFFF_FFF0));
+        assert_eq!(payload, b"x");
     }
 
     #[test]
@@ -297,6 +330,7 @@ mod tests {
         assert!(h.is_keyframe());
         assert_eq!(h.payload_len, 3);
         assert_eq!(h.timestamp_us, 123_456);
+        assert_eq!(h.send_us, 130_000);
     }
 
     #[test]
