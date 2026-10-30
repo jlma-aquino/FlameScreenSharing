@@ -349,3 +349,85 @@ fn relogios_sincronizados_na_mesma_maquina_dao_diferenca_zero() {
     let lat = f.latency_us.expect("latência corrigida");
     assert!((lat - f.transit_us).abs() < 2_000, "{lat} vs {}", f.transit_us);
 }
+
+#[test]
+fn atraso_simulado_vale_nos_dois_sentidos() {
+    let rx = VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            ping_interval: Duration::from_millis(50),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            ping_interval: Duration::from_millis(50),
+            simulated_delay: Duration::from_millis(25),
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
+    .unwrap();
+    let limite = Instant::now() + Duration::from_secs(3);
+    let mut latencias = Vec::new();
+    let mut n = 0;
+    while latencias.len() < 10 && Instant::now() < limite {
+        tx.send_frame(frame(n, 5_000), n == 0, clock_us()).unwrap();
+        n += 1;
+        // Os primeiros frames esperam a largada do host (até 50 ms pelo
+        // primeiro pong), então ficam de fora.
+        if let Some(f) = rx.recv_frame(Duration::from_millis(30)).unwrap() {
+            if f.frame.frame_id >= 5 {
+                latencias.extend(f.latency_us);
+            }
+        }
+    }
+    assert!(latencias.len() >= 10, "frames com latência: {}", latencias.len());
+    // Ida: ~25 ms. O atraso é igual nos dois sentidos, então a
+    // sincronização dos relógios continua certa.
+    for l in &latencias {
+        assert!((24_000..40_000).contains(l), "latência {l} µs");
+    }
+    // RTT: ~50 ms dos dois lados.
+    let (rc, rh) = (rx.stats().rtt.min_ms, tx.stats().rtt.min_ms);
+    assert!((49.0..65.0).contains(&rc), "RTT do cliente {rc} ms");
+    assert!((49.0..65.0).contains(&rh), "RTT do host {rh} ms");
+}
+
+#[test]
+fn jitter_simulado_aparece_como_atraso_de_fila() {
+    let rx = VideoReceiver::bind("127.0.0.1:0", ReceiverConfig::default()).unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            simulated_jitter: Duration::from_millis(40),
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
+    .unwrap();
+    let mut transitos = Vec::new();
+    let inicio = Instant::now();
+    let mut n = 0;
+    while inicio.elapsed() < Duration::from_millis(1500) {
+        tx.send_frame(frame(n, 5_000), n == 0, clock_us()).unwrap();
+        n += 1;
+        let ate = Instant::now() + Duration::from_millis(16);
+        while let Some(f) = rx
+            .recv_frame(ate.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            // Fora a largada (ver o teste acima).
+            if f.frame.frame_id >= 10 {
+                transitos.push(f.transit_us);
+            }
+        }
+    }
+    transitos.sort_unstable();
+    let (min, max) = (transitos[0], transitos[transitos.len() - 1]);
+    assert!(transitos.len() > 50, "frames: {}", transitos.len());
+    assert!(max - min > 20_000, "o trânsito deveria variar: {min}..{max} µs");
+    assert!(max - min < 60_000, "variação acima do jitter: {min}..{max} µs");
+}

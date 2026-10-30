@@ -54,6 +54,7 @@ mod pacer;
 mod receiver;
 mod rtt;
 mod sender;
+mod sim;
 mod sync;
 
 use std::fmt;

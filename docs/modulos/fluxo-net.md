@@ -15,6 +15,8 @@ biblioteca padrão — roda e é testado em qualquer sistema.
 | `src/pacer.rs` | Token bucket do pacing (lógica pura, testada com tempo simulado) |
 | `src/rtt.rs` | `RttEstimator` / `RttStats` (média suavizada estilo TCP) |
 | `src/clock.rs` | `clock_us`, `clock_diff_us` — relógio de 32 bits dos pacotes |
+| `src/sync.rs` | `ClockSync` — diferença entre os relógios pelos Ping/Pong |
+| `src/sim.rs` | Atraso e jitter simulados (só testes): `DelayModel`, `DelayLine` |
 | `tests/loopback.rs` | Testes com sockets reais em 127.0.0.1 |
 
 ## Threads
@@ -121,6 +123,13 @@ Medido (link simulado de 8 Mbps, host querendo 20, 15 s):
 - `SenderConfig::simulated_loss` (só para testes) descarta uma fração dos
   pacotes de vídeo antes do envio; o pacote "perdido" ainda ocupa seu tempo
   no pacing, como numa rede real.
+- `SenderConfig::simulated_delay` / `simulated_jitter` (só para testes):
+  tudo o que o host manda passa por uma linha de atraso (thread própria), e
+  tudo o que ele recebe espera a sua vez antes de ser tratado — os dois
+  sentidos atrasam igual, então o RTT e a sincronização dos relógios
+  continuam coerentes. O jitter sorteia um extra em `[0, jitter]` a cada
+  20 ms; quando o extra cai, os pacotes segurados saem juntos (rajada, como
+  no Wi-Fi). Os pacotes nunca se ultrapassam.
 
 ## Host único e reinício
 

@@ -47,6 +47,10 @@ Opções:
                         0 = sem FEC). Reconstrói 1 perda por grupo no cliente
   --simular-banda M     TESTE: simula um link de M Mbps (fila de ~4 frames e
                         descarte quando enche), como um Wi-Fi congestionado
+  --simular-atraso MS   TESTE: soma MS de atraso em cada sentido (RTT + 2×MS),
+                        como uma conexão pela internet
+  --simular-jitter MS   TESTE: atraso extra sorteado entre 0 e MS a cada 20 ms,
+                        em cada sentido (os pacotes saem em rajadas, como no Wi-Fi)
 
 Para testar sem cliente, rode antes em outro terminal (ou outro PC):
   fluxo-bench receber --porta 9000";
@@ -69,6 +73,8 @@ struct Opts {
     mbps_min: Option<f64>,
     bitrate_fixo: bool,
     simular_banda: f64,
+    simular_atraso: f64,
+    simular_jitter: f64,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -87,6 +93,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         mbps_min: None,
         bitrate_fixo: false,
         simular_banda: 0.0,
+        simular_atraso: 0.0,
+        simular_jitter: 0.0,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -107,6 +115,12 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--mbps-min" => o.mbps_min = Some(valor()?.parse().map_err(|_| "mbps-min inválido")?),
             "--bitrate-fixo" => o.bitrate_fixo = true,
             "--simular-banda" => o.simular_banda = valor()?.parse().map_err(|_| "simular-banda inválido")?,
+            "--simular-atraso" => {
+                o.simular_atraso = valor()?.parse().map_err(|_| "simular-atraso inválido")?
+            }
+            "--simular-jitter" => {
+                o.simular_jitter = valor()?.parse().map_err(|_| "simular-jitter inválido")?
+            }
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
@@ -271,6 +285,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         simulated_loss: o.simular_perda / 100.0,
         fec_group: o.fec,
         simulated_bandwidth_bps: (o.simular_banda * 1e6).round() as u64,
+        simulated_delay: Duration::from_secs_f64(o.simular_atraso.max(0.0) / 1000.0),
+        simulated_jitter: Duration::from_secs_f64(o.simular_jitter.max(0.0) / 1000.0),
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     // Bitrate adaptativo: o controlador decide, o encoder e o pacing seguem
@@ -317,6 +333,12 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     }
     if o.simular_banda > 0.0 {
         println!("  TESTE: simulando um link de {} Mbps", o.simular_banda);
+    }
+    if o.simular_atraso > 0.0 || o.simular_jitter > 0.0 {
+        println!(
+            "  TESTE: atraso de {} ms + jitter de 0–{} ms em cada sentido",
+            o.simular_atraso, o.simular_jitter
+        );
     }
     if o.segundos <= 0.0 {
         println!("  Ctrl+C para encerrar.");

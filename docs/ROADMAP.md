@@ -69,7 +69,7 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       limiar de 25 ms troca um pouco de bitrate por menos latência
 - [x] Banda limitada simulada (`fluxo-host --simular-banda M`)
 - [x] Perda simulada (`fluxo-host --simular-perda P`)
-- [ ] Atraso/jitter simulados
+- [x] Atraso/jitter simulados (`--simular-atraso MS`, `--simular-jitter MS`, nos dois sentidos)
 - [x] Não perder o 1º keyframe: o host manda um ping antes do primeiro frame e espera até 50 ms pela
       resposta (causa provável: o Windows descarta parte da primeira rajada para um IP novo enquanto
       resolve o ARP — visto no teste Windows → Linux); falta confirmar entre dois PCs

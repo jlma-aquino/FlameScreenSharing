@@ -143,7 +143,8 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                                 / 1000.0,
                             max as f64 / 1000.0
                         ),
-                        None => "— (sincronizando relógios)".to_string(),
+                        None if s.clock_offset_ms.is_none() => "— (sincronizando relógios)".to_string(),
+                        None => "—".to_string(),
                     },
                     s.reassembly.frames_lost,
                     s.rtt.smoothed_ms

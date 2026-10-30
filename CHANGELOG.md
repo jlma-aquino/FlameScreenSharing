@@ -6,6 +6,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Atraso e jitter simulados** (`fluxo-host --simular-atraso MS
+  --simular-jitter MS`, `SenderConfig::simulated_delay`/`simulated_jitter`):
+  atraso fixo mais um extra sorteado a cada 20 ms, nos dois sentidos, sem
+  os pacotes se ultrapassarem (`fluxo_net::sim`).
 - **Protocolo v5 — sincronização de relógio:** o Pong leva 4 bytes com o
   relógio de quem responde; `fluxo_net::sync` estima a diferença entre os
   relógios estilo NTP (menor RTT das últimas 16 medições, erro ±meio RTT).

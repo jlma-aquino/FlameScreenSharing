@@ -80,6 +80,11 @@ Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
   mostra alvo, perda e fila. `--bitrate-fixo` desliga.
 - **`--simular-banda M`** (teste): simula um link de M Mbps com fila de ~4
   frames e descarte quando enche.
+- **`--simular-atraso MS` e `--simular-jitter MS`** (teste): somam MS de
+  atraso fixo e um extra sorteado entre 0 e MS (trocado a cada 20 ms) em
+  **cada sentido**. Com `--simular-atraso 15 --simular-jitter 20` na mesma
+  máquina: RTT ~52 ms, latência p50 36,6 ms, fila medida 7–12 ms, sem
+  perdas e sem queda de bitrate.
 - **FEC** (`--fec K`, padrão 10): 1 pacote de paridade a cada K de dados;
   o cliente reconstrói uma perda por grupo sozinho. 0 desliga.
 - **`--simular-perda P`** (teste): descarta P% dos pacotes de vídeo antes de

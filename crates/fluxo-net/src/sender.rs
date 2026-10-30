@@ -1,5 +1,6 @@
 //! Lado do host: [`VideoSender`].
 
+use std::collections::VecDeque;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -13,6 +14,7 @@ use crate::bitrate::NetworkReport;
 use crate::history::{LossSample, LossWindow, SentHistory};
 use crate::pacer::Pacer;
 use crate::rtt::{RttEstimator, RttStats};
+use crate::sim::{DelayLine, DelayModel, Rng};
 use crate::sync::ClockSync;
 use crate::{clock_diff_us, clock_us, is_transient, pong_clock, pong_for, NetError};
 
@@ -40,6 +42,12 @@ pub struct SenderConfig {
     /// [`SIMULATED_QUEUE_FRAMES`] na fila, são descartados — como num
     /// roteador congestionado.
     pub simulated_bandwidth_bps: u64,
+    /// **Só para testes:** atraso fixo somado em **cada sentido** (o RTT
+    /// sobe o dobro). Vale para tudo o que o host manda e recebe.
+    pub simulated_delay: Duration,
+    /// **Só para testes:** atraso extra sorteado em `[0, jitter]` a cada
+    /// 20 ms, em cada sentido; os pacotes nunca se ultrapassam.
+    pub simulated_jitter: Duration,
 }
 
 /// Tamanho da "fila do roteador" da banda simulada, em frames (~66 ms a 60 fps).
@@ -58,6 +66,8 @@ impl SenderConfig {
             simulated_loss: 0.0,
             fec_group: 10,
             simulated_bandwidth_bps: 0,
+            simulated_delay: Duration::ZERO,
+            simulated_jitter: Duration::ZERO,
         }
     }
 }
@@ -115,11 +125,11 @@ struct Job {
     queued_at: Instant,
 }
 
-struct Shared {
+pub(crate) struct Shared {
     stats: Mutex<SenderStats>,
     rtt: Mutex<RttEstimator>,
     pacing_bps: AtomicU64,
-    stop: AtomicBool,
+    pub(crate) stop: AtomicBool,
     keyframe_requested: AtomicBool,
     /// Pacotes de vídeo/paridade que tentamos mandar (inclui os descartados
     /// pelas simulações), contados um a um na hora em que saem: base da
@@ -159,6 +169,8 @@ pub struct VideoSender {
     shared: Arc<Shared>,
     send_thread: Option<JoinHandle<()>>,
     recv_thread: Option<JoinHandle<()>>,
+    /// Thread da linha de atraso simulada, se houver.
+    delay_thread: Option<JoinHandle<()>>,
     local: SocketAddr,
     peer: SocketAddr,
 }
@@ -192,16 +204,38 @@ impl VideoSender {
         });
         let (queue, jobs) = mpsc::channel();
 
-        let send_socket = socket.try_clone().map_err(NetError::io("duplicar socket"))?;
+        let duplicar = || socket.try_clone().map_err(NetError::io("duplicar socket"));
+        let simula_atraso = !cfg.simulated_delay.is_zero() || !cfg.simulated_jitter.is_zero();
+        let (atraso, delay_thread) = match simula_atraso {
+            true => {
+                let modelo = DelayModel::new(cfg.simulated_delay, cfg.simulated_jitter);
+                let (linha, t) = DelayLine::spawn(duplicar()?, modelo, shared.clone())
+                    .map_err(NetError::io("criar thread de atraso"))?;
+                (Some(linha), Some(t))
+            }
+            false => (None, None),
+        };
+        // O que chega também atrasa (o outro sentido do link simulado).
+        let atraso_chegada =
+            simula_atraso.then(|| DelayModel::new(cfg.simulated_delay, cfg.simulated_jitter));
+
+        let saida = Saida {
+            socket: duplicar()?,
+            atraso: atraso.clone(),
+        };
         let s = shared.clone();
         let sender = thread::Builder::new()
             .name("fluxo-net-envio".into())
-            .spawn(move || send_loop(send_socket, jobs, cfg, s))
+            .spawn(move || send_loop(saida, jobs, cfg, s))
             .map_err(NetError::io("criar thread de envio"))?;
+        let saida = Saida {
+            socket: duplicar()?,
+            atraso,
+        };
         let s = shared.clone();
         let receiver = thread::Builder::new()
             .name("fluxo-net-pings".into())
-            .spawn(move || recv_loop(socket, s))
+            .spawn(move || recv_loop(socket, saida, atraso_chegada, s))
             .map_err(NetError::io("criar thread de recepção"))?;
 
         Ok(Self {
@@ -209,6 +243,7 @@ impl VideoSender {
             shared,
             send_thread: Some(sender),
             recv_thread: Some(receiver),
+            delay_thread,
             local,
             peer,
         })
@@ -288,31 +323,30 @@ impl Drop for VideoSender {
         if let Some(t) = self.recv_thread.take() {
             let _ = t.join();
         }
+        // A linha de atraso entrega o que ainda segura e termina.
+        if let Some(t) = self.delay_thread.take() {
+            let _ = t.join();
+        }
     }
 }
 
-/// Gerador pseudoaleatório mínimo (xorshift) para a perda simulada.
-struct Rng(u64);
+/// Por onde os pacotes saem: direto no socket, ou pela linha de atraso
+/// simulada.
+struct Saida {
+    socket: UdpSocket,
+    atraso: Option<Arc<DelayLine>>,
+}
 
-impl Rng {
-    fn new() -> Self {
-        let semente = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9E37_79B9_7F4A_7C15);
-        Self(semente | 1)
-    }
-
-    /// Número em [0, 1).
-    fn next_f64(&mut self) -> f64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0 >> 11) as f64 / (1u64 << 53) as f64
+impl Saida {
+    fn send(&self, pacote: &[u8]) -> std::io::Result<usize> {
+        match &self.atraso {
+            Some(linha) => Ok(linha.send(pacote)),
+            None => self.socket.send(pacote),
+        }
     }
 }
 
-fn send_loop(socket: UdpSocket, jobs: mpsc::Receiver<Job>, cfg: SenderConfig, shared: Arc<Shared>) {
+fn send_loop(socket: Saida, jobs: mpsc::Receiver<Job>, cfg: SenderConfig, shared: Arc<Shared>) {
     let mut frag = Fragmenter::new(cfg.max_payload).with_fec_group(cfg.fec_group);
     let packet_size = cfg.max_payload + fluxo_proto::HEADER_LEN;
     let mut pacer = Pacer::new(
@@ -346,7 +380,7 @@ fn send_loop(socket: UdpSocket, jobs: mpsc::Receiver<Job>, cfg: SenderConfig, sh
     }
 }
 
-fn send_ping(socket: &UdpSocket, shared: &Shared, ping_id: &mut u32) {
+fn send_ping(socket: &Saida, shared: &Shared, ping_id: &mut u32) {
     let ping = PacketKind::Ping.control(*ping_id, clock_us());
     *ping_id = ping_id.wrapping_add(1);
     let ok = ping
@@ -359,7 +393,7 @@ fn send_ping(socket: &UdpSocket, shared: &Shared, ping_id: &mut u32) {
 }
 
 fn send_job(
-    socket: &UdpSocket,
+    socket: &Saida,
     frag: &mut Fragmenter,
     pacer: &mut Pacer,
     shared: &Shared,
@@ -437,11 +471,33 @@ fn send_job(
     });
 }
 
-fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
+fn recv_loop(socket: UdpSocket, saida: Saida, mut atraso: Option<DelayModel>, shared: Arc<Shared>) {
     let mut buf = [0u8; 2048];
     // Diferença entre o relógio do cliente e o nosso, pelos Ping/Pong.
     let mut relogio = ClockSync::default();
+    // Atraso simulado na chegada: pacotes recebidos esperando a sua hora.
+    let mut segurados: VecDeque<(Instant, Vec<u8>)> = VecDeque::new();
     while !shared.stop.load(Ordering::Relaxed) {
+        while segurados
+            .front()
+            .is_some_and(|(quando, _)| *quando <= Instant::now())
+        {
+            if let Some((_, pacote)) = segurados.pop_front() {
+                on_packet(&pacote, &saida, &mut relogio, &shared);
+            }
+        }
+        if atraso.is_some() {
+            // Acorda a tempo do próximo pacote segurado (mínimo 1 ms: zero
+            // significaria "sem timeout").
+            let espera = segurados
+                .front()
+                .map_or(Duration::from_millis(100), |(quando, _)| {
+                    quando.saturating_duration_since(Instant::now())
+                });
+            let _ = socket.set_read_timeout(Some(
+                espera.clamp(Duration::from_millis(1), Duration::from_millis(100)),
+            ));
+        }
         let n = match socket.recv(&mut buf) {
             Ok(n) => n,
             Err(e) if is_transient(&e) => continue,
@@ -451,42 +507,50 @@ fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
                 continue;
             }
         };
-        let Ok((h, payload)) = PacketHeader::decode(&buf[..n]) else {
-            continue; // lixo na porta: ignorar
-        };
-        match h.kind {
-            PacketKind::Pong => {
-                let agora = clock_us();
-                shared
-                    .rtt
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .add(clock_diff_us(agora, h.timestamp_us));
-                if let Some(t1) = pong_clock(payload) {
-                    relogio.add(h.timestamp_us, t1, agora);
-                }
-                let offset = relogio.offset_us();
-                shared.with_stats(|s| {
-                    s.pongs_received += 1;
-                    s.clock_offset_ms = offset.map(|o| o as f64 / 1000.0);
-                });
-            }
-            PacketKind::Ping => {
-                if pong_for(&h).is_some_and(|p| socket.send(&p).is_ok()) {
-                    shared.with_stats(|s| s.pings_answered += 1);
-                }
-            }
-            PacketKind::KeyframeRequest => {
-                shared.keyframe_requested.store(true, Ordering::Relaxed);
-                shared.with_stats(|s| s.keyframe_requests += 1);
-            }
-            PacketKind::Feedback => {
-                if let Ok(f) = Feedback::from_bytes(payload) {
-                    on_feedback(&shared, &f);
-                }
-            }
-            PacketKind::Video | PacketKind::Parity => {} // o host não recebe vídeo
+        match atraso.as_mut() {
+            Some(modelo) => segurados.push_back((modelo.due(Instant::now()), buf[..n].to_vec())),
+            None => on_packet(&buf[..n], &saida, &mut relogio, &shared),
         }
+    }
+}
+
+/// Trata um pacote que chegou do cliente.
+fn on_packet(pacote: &[u8], socket: &Saida, relogio: &mut ClockSync, shared: &Shared) {
+    let Ok((h, payload)) = PacketHeader::decode(pacote) else {
+        return; // lixo na porta: ignorar
+    };
+    match h.kind {
+        PacketKind::Pong => {
+            let agora = clock_us();
+            shared
+                .rtt
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .add(clock_diff_us(agora, h.timestamp_us));
+            if let Some(t1) = pong_clock(payload) {
+                relogio.add(h.timestamp_us, t1, agora);
+            }
+            let offset = relogio.offset_us();
+            shared.with_stats(|s| {
+                s.pongs_received += 1;
+                s.clock_offset_ms = offset.map(|o| o as f64 / 1000.0);
+            });
+        }
+        PacketKind::Ping => {
+            if pong_for(&h).is_some_and(|p| socket.send(&p).is_ok()) {
+                shared.with_stats(|s| s.pings_answered += 1);
+            }
+        }
+        PacketKind::KeyframeRequest => {
+            shared.keyframe_requested.store(true, Ordering::Relaxed);
+            shared.with_stats(|s| s.keyframe_requests += 1);
+        }
+        PacketKind::Feedback => {
+            if let Ok(f) = Feedback::from_bytes(payload) {
+                on_feedback(shared, &f);
+            }
+        }
+        PacketKind::Video | PacketKind::Parity => {} // o host não recebe vídeo
     }
 }
 
