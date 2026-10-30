@@ -32,6 +32,9 @@ HOST (VideoSender)                              CLIENTE (VideoReceiver)
 - `send_frame` só enfileira: captura e encode nunca esperam a rede.
 - A recepção lê o socket sem parar, para o buffer do sistema não transbordar
   enquanto o cliente decodifica.
+- A fila de frames prontos guarda até 120 (`ReceiverConfig::queue_frames`,
+  ~2 s a 60 fps): descartar um frame quebra a cadeia de P-frames, então é
+  melhor o cliente atrasar um instante e alcançar do que perder imagem.
 - Os dois lados medem RTT: o host para o futuro controle de bitrate, o
   cliente para o overlay.
 

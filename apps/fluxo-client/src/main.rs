@@ -3,7 +3,7 @@
 //! Lado de quem assiste: rede → decode → tela.
 //!
 //! ```text
-//! fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A]
+//! fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
 //! ```
 //!
 //! Escuta numa porta UDP, decodifica com o `fluxo-decode` e mostra numa
@@ -31,6 +31,7 @@ Opções:
   --segundos S    fecha sozinho depois de S segundos do primeiro frame (padrão 0 = não)
   --largura L     largura inicial da janela (padrão 1280)
   --altura A      altura inicial da janela (padrão 720)
+  --no-topo       janela sempre por cima das outras
 
 Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia.
 No PC que compartilha:  fluxo-host --destino <IP deste PC>:9000";
@@ -41,6 +42,7 @@ struct Opts {
     segundos: f64,
     largura: u32,
     altura: u32,
+    no_topo: bool,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -50,6 +52,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         segundos: 0.0,
         largura: 1280,
         altura: 720,
+        no_topo: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -60,6 +63,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--segundos" => o.segundos = valor()?.parse().map_err(|_| "segundos inválido")?,
             "--largura" => o.largura = valor()?.parse().map_err(|_| "largura inválida")?,
             "--altura" => o.altura = valor()?.parse().map_err(|_| "altura inválida")?,
+            "--no-topo" => o.no_topo = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
@@ -133,6 +137,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         &format!("Fluxo — aguardando o host na porta {}", o.porta),
         o.largura,
         o.altura,
+        o.no_topo,
     )?;
     let mut tela = Presenter::new(&device, janela.hwnd(), janela.client_size(), o.vsync)?;
     println!(

@@ -30,6 +30,7 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] Teste ponta a ponta com vídeo a 60 fps na mesma máquina (900/900 frames, trânsito p99 7,6 ms)
 - [ ] Teste ponta a ponta entre dois PCs na rede local (cabo e Wi-Fi)
 - [ ] Limitar o host ao `--fps` em monitores de 144/165 Hz sem perder a imagem final de uma animação
+      (comprovado no teste do cliente: com a janela do cliente na tela capturada, o host chegou a 162 fps e 60 Mbps)
 
 ## Fase 3 — Cliente e primeira imagem na tela (em andamento)
 
@@ -38,7 +39,8 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] `fluxo-bench decode`: mede o decoder isolado
 - [x] Estatísticas no título da janela: fps, bitrate, captura→tela, RTT, perdas
 - [x] Teste ponta a ponta na mesma máquina (464/464 frames, captura→tela p99 9,3 ms)
-- [ ] Conferência visual da imagem na janela do cliente
+- [x] Conferência visual da imagem na janela do cliente (`--no-topo` para a janela ficar por cima)
+- [x] Fila do receptor de 120 frames: um travamento curto do cliente não descarta frames (antes: 242 descartes a ~160 fps)
 - [ ] Overlay de estatísticas desenhado sobre a imagem (Direct2D)
 - [ ] Primeiro teste ponta a ponta em LAN, medindo latência real (cronômetro filmado)
 - [ ] Não travar a recepção enquanto a janela é arrastada (decode/apresentação em thread própria)

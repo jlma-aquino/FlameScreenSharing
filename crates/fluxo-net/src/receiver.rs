@@ -23,6 +23,11 @@ pub struct ReceiverConfig {
     pub ping_interval: Duration,
     /// Frames prontos que podem esperar o consumidor. Passou disso, os
     /// novos são descartados (e contados) — sinal de decoder lento.
+    ///
+    /// Generoso de propósito: descartar um frame quebra a cadeia de
+    /// P-frames (artefatos até o próximo keyframe), enquanto um consumidor
+    /// que decodifica tudo e mostra só o mais novo recupera um atraso
+    /// rapidamente. 120 frames ≈ 2 s a 60 fps, ~5 MB a 20 Mbps.
     pub queue_frames: usize,
     /// Sem pacotes do host por este tempo, aceitamos um host novo (ex.:
     /// o host reiniciou e veio de outra porta).
@@ -34,7 +39,7 @@ impl Default for ReceiverConfig {
         Self {
             reassembler: ReassemblerConfig::default(),
             ping_interval: Duration::from_millis(500),
-            queue_frames: 16,
+            queue_frames: 120,
             peer_timeout: Duration::from_secs(2),
         }
     }

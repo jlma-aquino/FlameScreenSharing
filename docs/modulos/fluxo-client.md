@@ -7,8 +7,12 @@ Lado de quem assiste: rede (`fluxo-net`) → decode (`fluxo-decode`) → tela.
 ## Uso
 
 ```text
-fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A]
+fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
 ```
+
+`--no-topo` mantém a janela sempre por cima das outras: útil para acompanhar
+enquanto usa o PC, e necessário quando o cliente é aberto por outro programa
+em segundo plano (o Windows não deixa essa janela tomar o foco).
 
 ```powershell
 # No PC que assiste
@@ -72,16 +76,24 @@ perdas, erros).
 
 | | Resultado |
 |---|---|
-| Frames | 464 recebidos, 464 mostrados, 0 perdidos, 0 erros de decode |
-| Captura → tela | p50 3,1 ms, p99 9,3 ms |
-| Decode (CPU) | 0,28 ms médio |
+| Frames (30 s, 60 fps) | 1801 recebidos, 1799 mostrados, 0 perdidos, 0 erros de decode |
+| Captura → tela (60 fps) | p50 7,4 ms, p99 8,0 ms |
+| Frames (12 s, ~170 fps, janela do cliente na tela capturada) | 2035 recebidos e mostrados, 0 descartados |
+| Captura → tela (~170 fps) | p50 2,6 ms, p99 7,2 ms |
+| Decode (CPU) | ~0,2 ms médio |
+
+Com a janela do cliente dentro da tela capturada, cada frame mostrado muda a
+tela e gera nova captura: o host passa a codificar na frequência do monitor
+(até ~165 fps), não nos 60 do `--fps`. Ver a pendência de limite de fps no
+roadmap.
 
 ## Limitações conhecidas
 
 - **Estatísticas no título**, não sobre a imagem (overlay desenhado fica
   para depois).
 - **Arrastar/redimensionar a janela** pausa o laço (o Windows segura a thread
-  durante o arraste); frames acumulam e podem ser descartados.
+  durante o arraste); os frames esperam na fila do `fluxo-net` (até 120) e o
+  cliente alcança depois. Arrastes mais longos que ~2 s descartam frames.
 - A janela não toma o foco se for aberta por outro programa em segundo
-  plano: clique nela na barra de tarefas.
+  plano: clique nela na barra de tarefas ou use `--no-topo`.
 - Sem áudio, mouse ou teclado remotos (fase 6).

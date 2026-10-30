@@ -37,7 +37,10 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(title: &str, width: u32, height: u32) -> windows::core::Result<Self> {
+    /// `topmost`: a janela fica sempre por cima das outras (útil para
+    /// acompanhar a transmissão enquanto usa o PC, e porque uma janela aberta
+    /// por um programa em segundo plano não pode tomar o foco sozinha).
+    pub fn new(title: &str, width: u32, height: u32, topmost: bool) -> windows::core::Result<Self> {
         let state = Box::<State>::default();
         // SAFETY: registro de classe e criação de janela com parâmetros
         // válidos; `state` sobrevive à janela (destruída no Drop).
@@ -62,8 +65,13 @@ impl Window {
                 bottom: height as i32,
             };
             AdjustWindowRect(&mut rect, WS_OVERLAPPEDWINDOW, false)?;
+            let ex_style = if topmost {
+                WS_EX_TOPMOST
+            } else {
+                WINDOW_EX_STYLE::default()
+            };
             let hwnd = CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
+                ex_style,
                 CLASS,
                 &HSTRING::from(title),
                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,

@@ -32,12 +32,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   swapchain flip model com tearing sem vsync (`--vsync` opcional),
   NV12 → tela pelo Video Processor com barras pretas; decodifica todos os
   frames recebidos e mostra o mais novo; estatísticas no título e resumo
-  ao fechar.
+  ao fechar; `--no-topo` mantém a janela por cima das outras.
 - `fluxo-bench decode`: captura → encode → decode, mede o decoder isolado.
 
 ### Alterado
 - `fluxo-capture`: device D3D11 criado com `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`
   (com fallback sem a flag), exigido pela conversão NV12 e pelo Media Foundation.
+- `fluxo-net`: fila de frames prontos do receptor passou de 16 para 120;
+  com 16, um travamento de ~0,3 s do cliente a ~160 fps descartou 242
+  frames (cada descarte estraga a imagem até o próximo keyframe).
 
 ### Corrigido
 - Build: habilitada a feature `Win32_Graphics_Gdi` do crate `windows`,
@@ -63,6 +66,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - Pipeline completo na mesma máquina (fluxo-host → fluxo-client, 12 s):
   464 frames recebidos e 464 mostrados, 0 perdidos, 0 erros de decode;
   captura → `Present` p50 3,1 ms, p99 9,3 ms.
+- Cliente 30 s a 60 fps: 1801 recebidos, 1799 mostrados, captura → tela
+  p50 7,4 ms / p99 8,0 ms. Com a janela do cliente na tela capturada
+  (~170 fps): 2035 de 2035 mostrados, 0 descartados, p50 2,6 / p99 7,2 ms.
 
 ## [0.1.0] — 2026-10-29
 
