@@ -45,6 +45,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - Transmissão na mesma máquina (fluxo-host → fluxo-bench receber, NVENC
   20 Mbps): 488 de 488 frames recebidos e decodificados, 0 perdidos;
   captura → frame completo no receptor p50 2,9 ms, p99 7,1 ms.
+- Mesma transmissão com vídeo de jogo a 60 fps (16 s): 60 fps estáveis,
+  13,3 Mbps médio, 900 de 900 frames recebidos e decodificados, 0 perdidos;
+  trânsito p50 5,5 ms, p99 7,6 ms, máx 9,5 ms; maior envio de um frame
+  6,5 ms; encode p50 2,4 ms / p99 3,4 ms; PSNR RGB 34,9 dB médio.
 
 ## [0.1.0] — 2026-10-29
 

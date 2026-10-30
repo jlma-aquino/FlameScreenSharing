@@ -73,11 +73,12 @@ relógios; o RTT não é afetado.
 
 ## Medições (mesma máquina, 1080p, NVENC 20 Mbps)
 
-| | Resultado |
-|---|---|
-| Captura → frame completo no receptor | p50 2,9 ms, p99 7,1 ms |
-| Frames perdidos / decodificados | 0 / todos |
-| Maior tempo de envio de um frame (pacing 50 Mbps) | 5,0 ms |
+| | Área de trabalho | Vídeo de jogo a 60 fps |
+|---|---|---|
+| Captura → frame completo no receptor | p50 2,9 ms, p99 7,1 ms | p50 5,5 ms, p99 7,6 ms |
+| Frames perdidos / decodificados | 0 / 488 de 488 | 0 / 900 de 900 |
+| Maior tempo de envio de um frame (pacing 50 Mbps) | 5,0 ms | 6,5 ms |
+| Bitrate médio | 6,3 Mbps | 13,3 Mbps |
 
 ## Testes
 

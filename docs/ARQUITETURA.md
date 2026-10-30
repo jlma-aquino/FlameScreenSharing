@@ -70,9 +70,9 @@ CPU. Por isso:
 | Apresentação | 0–16 ms | Depende de vsync; modo sem vsync reduz |
 | **Total** | **~10–35 ms** | Parsec/Moonlight ficam nessa faixa |
 
-**Medido até agora** (mesma máquina, RTX 5050, 1080p, 20 Mbps): captura →
-frame completo no receptor em **p50 2,9 ms, p99 7,1 ms** (encode + pacing +
-rede local). Faltam decode e apresentação (fase 3).
+**Medido até agora** (mesma máquina, RTX 5050, 1080p, 20 Mbps, vídeo de jogo
+a 60 fps): captura → frame completo no receptor em **p50 5,5 ms, p99 7,6 ms**
+(encode + pacing + rede local). Faltam decode e apresentação (fase 3).
 
 ## 5. Rede: por que UDP próprio (resumo do ADR-003)
 

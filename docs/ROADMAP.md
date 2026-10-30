@@ -27,7 +27,8 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] `fluxo-net`: socket UDP, envio com *pacing* (token bucket, 2,5× o bitrate), Ping/Pong nos dois sentidos
 - [x] `apps/fluxo-host`: captura → encode → rede, linha de comando
 - [x] `fluxo-bench receber`: receptor provisório (mede trânsito, perdas, RTT; grava e verifica o `.h264`)
-- [ ] Teste ponta a ponta com vídeo a 60 fps tocando (mesma máquina e entre dois PCs)
+- [x] Teste ponta a ponta com vídeo a 60 fps na mesma máquina (900/900 frames, trânsito p99 7,6 ms)
+- [ ] Teste ponta a ponta entre dois PCs na rede local (cabo e Wi-Fi)
 - [ ] Limitar o host ao `--fps` em monitores de 144/165 Hz sem perder a imagem final de uma animação
 
 ## Fase 3 — Cliente e primeira imagem na tela
