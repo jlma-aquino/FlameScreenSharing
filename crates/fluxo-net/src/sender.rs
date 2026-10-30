@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use fluxo_proto::{Feedback, Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD};
 
 use crate::bitrate::NetworkReport;
+use crate::history::{LossSample, LossWindow, SentHistory};
 use crate::pacer::Pacer;
 use crate::rtt::{RttEstimator, RttStats};
 use crate::{clock_diff_us, clock_us, is_transient, NetError};
@@ -59,10 +60,6 @@ impl SenderConfig {
         }
     }
 }
-
-/// Abaixo deste número de pacotes num intervalo, a taxa de perda não é
-/// calculada (tela parada: poucos pacotes, conta sem valor estatístico).
-const MIN_PACKETS_FOR_LOSS: u64 = 30;
 
 /// Espera máxima, na largada, pela resposta do primeiro ping antes de mandar
 /// o primeiro frame. Na primeira rajada para um IP novo, o sistema ainda
@@ -122,11 +119,11 @@ struct Shared {
     stop: AtomicBool,
     keyframe_requested: AtomicBool,
     /// Pacotes de vídeo/paridade que tentamos mandar (inclui os descartados
-    /// pelas simulações): base da conta de perda.
-    attempted: AtomicU64,
-    /// Contadores no último relatório usado na conta: (recebidos pelo
-    /// cliente, tentados por nós).
-    feedback_base: Mutex<Option<(u32, u64)>>,
+    /// pelas simulações), contados um a um na hora em que saem: base da
+    /// conta de perda.
+    sent_history: Mutex<SentHistory>,
+    /// Relatórios da última ~1 s, para a conta de perda (ver `history.rs`).
+    loss_window: Mutex<LossWindow>,
     /// Último relatório ainda não consumido por [`VideoSender::take_report`].
     report: Mutex<Option<NetworkReport>>,
 }
@@ -136,6 +133,15 @@ impl Shared {
         // Um panic em outra thread envenenaria o mutex; as estatísticas
         // continuam válidas, então seguimos com elas.
         f(&mut self.stats.lock().unwrap_or_else(|e| e.into_inner()));
+    }
+
+    /// Registra `n` pacotes de vídeo/paridade saindo agora (ou descartados
+    /// pelas simulações) no histórico usado na conta de perda.
+    fn record_sent(&self, n: u64) {
+        self.sent_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record(n, Instant::now());
     }
 }
 
@@ -177,8 +183,8 @@ impl VideoSender {
             pacing_bps: AtomicU64::new(cfg.pacing_bps),
             stop: AtomicBool::new(false),
             keyframe_requested: AtomicBool::new(false),
-            attempted: AtomicU64::new(0),
-            feedback_base: Mutex::new(None),
+            sent_history: Mutex::new(SentHistory::default()),
+            loss_window: Mutex::new(LossWindow::default()),
             report: Mutex::new(None),
         });
         let (queue, jobs) = mpsc::channel();
@@ -371,14 +377,11 @@ fn send_job(
             return;
         }
     };
-    shared
-        .attempted
-        .fetch_add(packets.len() as u64, Ordering::Relaxed);
-
     // Banda simulada: fila do "roteador" cheia → o frame inteiro se perde
     // (o fragmentador já numerou, então o cliente vê o buraco).
     let fila = shared.stats.lock().map(|s| s.queue_len).unwrap_or(0);
     if cfg.simulated_bandwidth_bps > 0 && fila > SIMULATED_QUEUE_FRAMES {
+        shared.record_sent(packets.len() as u64);
         shared.with_stats(|s| {
             s.queue_len = s.queue_len.saturating_sub(1);
             s.simulated_drops += packets.len() as u64;
@@ -411,6 +414,9 @@ fn send_job(
                 Err(_) => errors += 1,
             }
         }
+        // Conta na hora em que sai (não no início do frame): pacotes ainda
+        // no pacing não podem parecer perdidos para o relatório do cliente.
+        shared.record_sent(1);
         pacer.consume(p.len(), Instant::now());
     }
 
@@ -480,30 +486,31 @@ fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
 
 /// Transforma um relatório do cliente em [`NetworkReport`].
 ///
-/// A perda do intervalo é `1 − recebidos/tentados` entre este relatório e o
-/// último usado. Os pacotes ainda em trânsito entram como "não recebidos",
-/// mas isso se compensa de um intervalo para o outro.
+/// A perda é `1 − recebidos/tentados` na última ~1 s, onde "tentados" é o
+/// total que tinha saído **um RTT antes** de o relatório chegar (o que saiu
+/// depois ainda estava no caminho quando o cliente contou), e só conta se o
+/// cliente confirmou perda (FEC ou frame perdido). Ver `history.rs`.
 fn on_feedback(shared: &Shared, f: &Feedback) {
-    let tentados = shared.attempted.load(Ordering::Relaxed);
-    let mut base = shared.feedback_base.lock().unwrap_or_else(|e| e.into_inner());
-    let loss = match *base {
-        Some((recebidos0, tentados0)) => {
-            let tentados_int = tentados.saturating_sub(tentados0);
-            if tentados_int >= MIN_PACKETS_FOR_LOSS {
-                let recebidos_int = f.packets_received.wrapping_sub(recebidos0) as u64;
-                *base = Some((f.packets_received, tentados));
-                Some((1.0 - recebidos_int as f64 / tentados_int as f64).clamp(0.0, 1.0))
-            } else {
-                // Poucos pacotes (tela parada): acumula com o próximo intervalo.
-                None
-            }
-        }
-        None => {
-            *base = Some((f.packets_received, tentados));
-            None
+    let rtt = shared.rtt.lock().unwrap_or_else(|e| e.into_inner()).stats();
+    let um_rtt = Duration::from_secs_f64(rtt.smoothed_ms.max(0.0) / 1000.0);
+    let tentados = {
+        let h = shared.sent_history.lock().unwrap_or_else(|e| e.into_inner());
+        match Instant::now().checked_sub(um_rtt) {
+            Some(quando) => h.at(quando),
+            None => h.total(),
         }
     };
-    drop(base);
+    let loss = shared
+        .loss_window
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .add(LossSample {
+            quando: Instant::now(),
+            recebidos: f.packets_received,
+            tentados,
+            frames_perdidos: f.frames_lost,
+            fec_reconstruidos: f.fec_recovered,
+        });
     let report = NetworkReport {
         loss,
         queue_delay_ms: f.queue_delay_us as f64 / 1000.0,

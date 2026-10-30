@@ -86,10 +86,22 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Bitrate adaptativo: "perda fantasma" no Wi-Fi. O host contava os pacotes
+  de um frame como enviados no início do pacing, tratava pacotes ainda na
+  fila do Wi-Fi como perdidos e usava intervalos de 250 ms; o resultado era
+  3–60% de perda calculada com zero pacotes perdidos, e o bitrate caía de 20
+  para 2,5 Mbps. Agora cada pacote conta ao sair, a comparação desconta 1
+  RTT, a janela é de 1 s e só vale perda confirmada pelo cliente (FEC ou
+  frame perdido).
 - Build: habilitada a feature `Win32_Graphics_Gdi` do crate `windows`,
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- Wi-Fi real (host Windows → notebook Linux no Wi-Fi, vídeo a 60 fps, 30 s
+  por rodada): a 20 Mbps com FEC e adaptativo, 0 frames perdidos e o
+  bitrate fica em 20 Mbps; pedindo 60 Mbps com bitrate fixo, 447 frames
+  perdidos e RTT de 48 ms; pedindo 60 Mbps com adaptativo, estabiliza em
+  ~35 Mbps (fila 11–13 ms) com 0 frames perdidos.
 - Bitrate adaptativo num link simulado de 8 Mbps (host querendo 20, cliente
   na mesma máquina, 15 s): frames perdidos de 255 (bitrate fixo) para 44,
   mostrados de 470/593 para 762/873, captura → tela p99 de 223 para 95 ms;

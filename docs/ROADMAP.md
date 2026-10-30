@@ -61,7 +61,12 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] Bitrate adaptativo (protocolo v4, `Feedback`): o cliente relata perda e atraso de fila a cada 250 ms;
       o host cai ×0,85–0,7 e sobe +8%/s. Link simulado de 8 Mbps: perdidos 255 → 44, p99 captura→tela
       223 → 95 ms, regime estável sem perda e com fila de 5–10 ms
-- [ ] Ajuste fino do bitrate adaptativo no Wi-Fi real (hoje se acomoda em ~60% da banda simulada)
+- [x] Bitrate adaptativo no Wi-Fi real (Windows → notebook): corrigida a "perda fantasma" (contagem por
+      pacote, desconto de 1 RTT, janela de 1 s, perda só confirmada pelo cliente). A 20 Mbps fica em
+      20 Mbps sem perda; pedindo 60 Mbps, estabiliza em ~35 Mbps pela fila real, sem perder frames
+      (bitrate fixo em 60 Mbps: 447 frames perdidos e RTT de 48 ms)
+- [ ] Afinar o limiar de fila: em ~35 Mbps no Wi-Fi a fila fica em 11–13 ms (RTT ~10 ms); baixar o
+      limiar de 25 ms troca um pouco de bitrate por menos latência
 - [x] Banda limitada simulada (`fluxo-host --simular-banda M`)
 - [x] Perda simulada (`fluxo-host --simular-perda P`)
 - [ ] Atraso/jitter simulados

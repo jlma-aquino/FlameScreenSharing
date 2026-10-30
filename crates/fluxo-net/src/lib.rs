@@ -49,6 +49,7 @@
 mod bitrate;
 mod clock;
 mod delay;
+mod history;
 mod pacer;
 mod receiver;
 mod rtt;

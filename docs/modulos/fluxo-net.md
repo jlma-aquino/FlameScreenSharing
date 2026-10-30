@@ -70,8 +70,18 @@ Medido com o exemplo `loopback` (300 frames, 20 Mbps):
   atraso de fila (`delay.rs`: trânsito de cada frame menos o menor dos
   últimos 10 s, suavizado). `ReceiverStats::queue_delay_ms` mostra o valor.
 - **Host** (`VideoSender`): compara os recebidos com os pacotes que tentou
-  mandar no intervalo e calcula a perda; `take_report()` entrega um
-  `NetworkReport { loss, queue_delay_ms }`.
+  mandar e calcula a perda; `take_report()` entrega um
+  `NetworkReport { loss, queue_delay_ms }`. A conta (`history.rs`) evita
+  "perda fantasma", que no primeiro teste no Wi-Fi derrubou o bitrate de 20
+  para 2,5 Mbps com zero pacotes perdidos:
+  - cada pacote conta como enviado **na hora em que sai** (não no início do
+    frame, que leva milissegundos no pacing);
+  - compara com o que tinha saído **um RTT antes** do relatório chegar (o
+    resto ainda estava no caminho ou na fila do Wi-Fi);
+  - usa uma janela de **1 s** de relatórios, não 250 ms;
+  - só conta perda que o cliente **confirmou** (fragmento reconstruído pelo
+    FEC ou frame perdido): o Wi-Fi segura pacotes por alguns ms e os entrega
+    em lote, o que sozinho parecia 3–6% de perda.
 - **Decisão** (`BitrateController`, lógica pura em `bitrate.rs`):
 
 | Situação | Ação |
