@@ -325,3 +325,27 @@ fn banda_simulada_gera_fila_e_descartes() {
         c.queue_delay_ms
     );
 }
+
+#[test]
+fn relogios_sincronizados_na_mesma_maquina_dao_diferenca_zero() {
+    let (rx, tx) = par(0, Duration::from_millis(20));
+    tx.send_frame(frame(0, 1_000), true, clock_us()).unwrap();
+    let limite = Instant::now() + Duration::from_secs(3);
+    while (rx.stats().clock_offset_ms.is_none() || tx.stats().clock_offset_ms.is_none())
+        && Instant::now() < limite
+    {
+        let _ = rx.recv_frame(Duration::from_millis(20));
+    }
+    let (c, h) = (rx.stats(), tx.stats());
+    // Mesmo relógio dos dois lados: a diferença medida é ~0.
+    let oc = c.clock_offset_ms.expect("cliente mediu");
+    let oh = h.clock_offset_ms.expect("host mediu");
+    assert!(oc.abs() < 2.0 && oh.abs() < 2.0, "diferenças {oc} / {oh} ms");
+    assert!(c.clock_error_ms.unwrap() < 5.0);
+
+    // Com a diferença conhecida, cada frame traz a latência corrigida.
+    tx.send_frame(frame(1, 1_000), false, clock_us()).unwrap();
+    let f = rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
+    let lat = f.latency_us.expect("latência corrigida");
+    assert!((lat - f.transit_us).abs() < 2_000, "{lat} vs {}", f.transit_us);
+}

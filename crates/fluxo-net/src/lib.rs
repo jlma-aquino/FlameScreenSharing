@@ -54,6 +54,7 @@ mod pacer;
 mod receiver;
 mod rtt;
 mod sender;
+mod sync;
 
 use std::fmt;
 
@@ -104,4 +105,22 @@ pub(crate) fn is_transient(e: &std::io::Error) -> bool {
         e.kind(),
         WouldBlock | TimedOut | Interrupted | ConnectionReset | ConnectionRefused
     )
+}
+
+/// Pong para um Ping recebido: ecoa `frame_id` e `timestamp_us` e leva o
+/// nosso relógio no payload (sincronização, ver `sync.rs`).
+pub(crate) fn pong_for(ping: &fluxo_proto::PacketHeader) -> Option<Vec<u8>> {
+    fluxo_proto::PacketHeader {
+        kind: fluxo_proto::PacketKind::Pong,
+        ..*ping
+    }
+    .encode_with_payload(&clock_us().to_be_bytes())
+    .ok()
+}
+
+/// Relógio de quem respondeu, lido do payload de um Pong.
+pub(crate) fn pong_clock(payload: &[u8]) -> Option<u32> {
+    Some(u32::from_be_bytes(
+        payload.get(..fluxo_proto::PONG_LEN)?.try_into().ok()?,
+    ))
 }

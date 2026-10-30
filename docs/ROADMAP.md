@@ -73,8 +73,8 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] Não perder o 1º keyframe: o host manda um ping antes do primeiro frame e espera até 50 ms pela
       resposta (causa provável: o Windows descarta parte da primeira rajada para um IP novo enquanto
       resolve o ARP — visto no teste Windows → Linux); falta confirmar entre dois PCs
-- [ ] Sincronizar relógios pelo Ping/Pong (estilo NTP: o Pong traz o relógio de quem responde), para
-      medir a latência de ida real entre PCs — no teste, os relógios diferiam ~0,7 s
+- [x] Sincronizar relógios pelo Ping/Pong (protocolo v5, estilo NTP): erro ±0,5 ms; latência de ida real
+      no Wi-Fi (Windows → notebook, vídeo): p50 5,1 ms, p99 29,9 ms
 
 ## Fase 5 — Internet e segurança
 

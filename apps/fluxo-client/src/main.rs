@@ -246,20 +246,29 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             drop(d); // devolve a superfície ao decoder
             mostrados += 1;
             frames_seg += 1;
-            // Captura no host → frame entregue ao monitor aqui (mesmo relógio
-            // só na mesma máquina ou com NTP).
-            let ms = clock_diff_us(clock_us(), capturado_us) as f64 / 1000.0;
-            latencia_seg.push(ms);
-            latencias.push(ms);
+            // Captura no host → frame entregue ao monitor aqui. A captura vem
+            // no relógio do host; somando a diferença entre os relógios
+            // (medida pelos pings) ela vira o nosso relógio.
+            if let Some(dif_ms) = rx.stats().clock_offset_ms {
+                let ms = clock_diff_us(clock_us(), capturado_us) as f64 / 1000.0 + dif_ms;
+                latencia_seg.push(ms);
+                latencias.push(ms);
+            }
         }
 
         if Instant::now() >= proximo_titulo {
             let s = rx.stats();
+            let latencia = match latencia_seg.0.is_empty() {
+                true => "sincronizando relógios".to_string(),
+                false => format!(
+                    "captura→tela {:.1} ms (máx {:.1})",
+                    latencia_seg.media(),
+                    latencia_seg.percentil(1.0)
+                ),
+            };
             janela.set_title(&format!(
-                "Fluxo — {frames_seg} fps · {:.1} Mbps · captura→tela {:.1} ms (máx {:.1}) · RTT {:.1} ms · perdidos {}",
+                "Fluxo — {frames_seg} fps · {:.1} Mbps · {latencia} · RTT {:.1} ms · perdidos {}",
                 bytes_seg as f64 * 8.0 / 1e6,
-                latencia_seg.media(),
-                latencia_seg.percentil(1.0),
                 s.rtt.smoothed_ms,
                 s.reassembly.frames_lost,
             ));
@@ -292,11 +301,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         decodes.percentil(0.99)
     );
     println!(
-        "  captura → tela:   p50 {:.1} ms, p99 {:.1} ms, máx {:.1} ms (válido com relógios iguais)",
+        "  captura → tela:   p50 {:.1} ms, p99 {:.1} ms, máx {:.1} ms",
         latencias.percentil(0.5),
         latencias.percentil(0.99),
         latencias.percentil(1.0)
     );
+    if let (Some(dif), Some(erro)) = (s.clock_offset_ms, s.clock_error_ms) {
+        println!("  relógios:         host {dif:+.1} ms em relação a este PC (sincronizados pelos pings, erro ±{erro:.1} ms)");
+    }
     println!(
         "  RTT:              {:.2} ms suavizado, {:.2} ms mínimo",
         s.rtt.smoothed_ms, s.rtt.min_ms

@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 4
+# Protocolo de rede — versão 5
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -12,7 +12,7 @@ CHANGELOG.
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `4`. Versões diferentes são descartadas (histórico na seção 6). |
+| 2 | 1 | `version` | `5`. Versões diferentes são descartadas (histórico na seção 6). |
 | 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback. |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
@@ -31,10 +31,16 @@ Um pedaço de um frame codificado em **H.264 Annex B** (NALs com prefixo
 o mesmo `frame_id`, `frag_count`, `flags` e `timestamp_us`.
 
 ### Ping (`kind = 2`) / Pong (`kind = 3`)
-Medição de RTT, nos **dois sentidos** (host e cliente pingam a cada 500 ms).
-Quem recebe um Ping responde com um Pong copiando `frame_id` e
-`timestamp_us`. RTT = relógio atual − `timestamp_us` do Pong, com aritmética
-de 32 bits (`clock_diff_us`). `frag_index`/`frag_count` = 0, payload vazio.
+Medição de RTT e **sincronização de relógio**, nos dois sentidos (host e
+cliente pingam a cada 500 ms). `frag_index`/`frag_count` = 0.
+
+- **Ping:** `timestamp_us` = relógio de quem pinga (`t0`); payload vazio.
+- **Pong:** copia `frame_id` e `timestamp_us` do Ping; payload de **4 bytes**
+  (u32 big-endian) com o relógio de quem responde, na hora de responder (`t1`).
+- Quem recebe o Pong no instante `t3` calcula `RTT = t3 − t0` e a diferença
+  entre os relógios `t1 − (t0 + RTT/2)` (estilo NTP), usando entre as
+  últimas 16 medições a de menor RTT. Erro máximo: metade desse RTT (~0,5 ms
+  em rede local). Toda a aritmética é de 32 bits com volta (`clock_diff_us`).
 
 ### KeyframeRequest (`kind = 4`)
 Cliente → host: "perdi a referência, mande um keyframe". Enviado quando um
@@ -143,3 +149,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 2 | + KeyframeRequest (`kind = 4`). Pacotes da versão 1 são recusados. |
 | 3 | + Parity (`kind = 5`, FEC); byte 13 vira `fec_group`. Pacotes das versões 1 e 2 são recusados. |
 | 4 | + Feedback (`kind = 6`), relatório para o bitrate adaptativo. Versões anteriores recusadas. |
+| 5 | Pong leva 4 bytes com o relógio de quem responde (sincronização). Versões anteriores recusadas. |

@@ -13,7 +13,8 @@ use crate::bitrate::NetworkReport;
 use crate::history::{LossSample, LossWindow, SentHistory};
 use crate::pacer::Pacer;
 use crate::rtt::{RttEstimator, RttStats};
-use crate::{clock_diff_us, clock_us, is_transient, NetError};
+use crate::sync::ClockSync;
+use crate::{clock_diff_us, clock_us, is_transient, pong_clock, pong_for, NetError};
 
 /// Configuração do [`VideoSender`].
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +103,8 @@ pub struct SenderStats {
     pub last_loss: Option<f64>,
     /// Atraso de fila do último relatório do cliente, em ms.
     pub queue_delay_ms: f64,
+    /// Relógio do cliente menos o nosso, em ms (`None` antes da 1ª medição).
+    pub clock_offset_ms: Option<f64>,
     pub rtt: RttStats,
 }
 
@@ -436,6 +439,8 @@ fn send_job(
 
 fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
     let mut buf = [0u8; 2048];
+    // Diferença entre o relógio do cliente e o nosso, pelos Ping/Pong.
+    let mut relogio = ClockSync::default();
     while !shared.stop.load(Ordering::Relaxed) {
         let n = match socket.recv(&mut buf) {
             Ok(n) => n,
@@ -451,22 +456,23 @@ fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
         };
         match h.kind {
             PacketKind::Pong => {
+                let agora = clock_us();
                 shared
                     .rtt
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .add(clock_diff_us(clock_us(), h.timestamp_us));
-                shared.with_stats(|s| s.pongs_received += 1);
+                    .add(clock_diff_us(agora, h.timestamp_us));
+                if let Some(t1) = pong_clock(payload) {
+                    relogio.add(h.timestamp_us, t1, agora);
+                }
+                let offset = relogio.offset_us();
+                shared.with_stats(|s| {
+                    s.pongs_received += 1;
+                    s.clock_offset_ms = offset.map(|o| o as f64 / 1000.0);
+                });
             }
             PacketKind::Ping => {
-                let pong = PacketHeader {
-                    kind: PacketKind::Pong,
-                    ..h
-                };
-                if pong
-                    .encode_with_payload(&[])
-                    .is_ok_and(|p| socket.send(&p).is_ok())
-                {
+                if pong_for(&h).is_some_and(|p| socket.send(&p).is_ok()) {
                     shared.with_stats(|s| s.pings_answered += 1);
                 }
             }

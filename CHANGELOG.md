@@ -6,6 +6,13 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v5 — sincronização de relógio:** o Pong leva 4 bytes com o
+  relógio de quem responde; `fluxo_net::sync` estima a diferença entre os
+  relógios estilo NTP (menor RTT das últimas 16 medições, erro ±meio RTT).
+  `ReceivedFrame::latency_us` traz a latência real captura → chegada entre
+  PCs; `ReceiverStats`/`SenderStats::clock_offset_ms`. O `fluxo-client` e o
+  `fluxo-bench receber` mostram a latência sincronizada e a diferença dos
+  relógios.
 - **Protocolo v4 — bitrate adaptativo:** pacote `Feedback` (`kind = 6`), que
   o cliente manda a cada 250 ms com os pacotes recebidos (acumulado) e o
   atraso de fila (trânsito de cada frame menos o menor dos últimos 10 s).
@@ -97,6 +104,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- Latência de ida real entre dois PCs (host Windows → notebook Linux no
+  Wi-Fi, vídeo, 30 s, relógios sincronizados pelos pings a +837,4 ms ±
+  0,5 ms): p50 5,1 ms, p99 29,9 ms, máx 85 ms; 1803 frames, 0 perdidos.
 - Wi-Fi real (host Windows → notebook Linux no Wi-Fi, vídeo a 60 fps, 30 s
   por rodada): a 20 Mbps com FEC e adaptativo, 0 frames perdidos e o
   bitrate fica em 20 Mbps; pedindo 60 Mbps com bitrate fixo, 447 frames

@@ -13,7 +13,8 @@ use fluxo_proto::{
 
 use crate::delay::QueueDelay;
 use crate::rtt::{RttEstimator, RttStats};
-use crate::{clock_diff_us, clock_us, is_transient, NetError};
+use crate::sync::ClockSync;
+use crate::{clock_diff_us, clock_us, is_transient, pong_clock, pong_for, NetError};
 
 /// Configuração do [`VideoReceiver`].
 #[derive(Debug, Clone)]
@@ -56,9 +57,14 @@ pub struct ReceivedFrame {
     pub frame: CompletedFrame,
     /// [`clock_us`] no momento em que o último fragmento chegou.
     pub received_us: u32,
-    /// Captura no host → frame completo aqui, em µs. **Só faz sentido com
-    /// os relógios das duas máquinas sincronizados** (ou na mesma máquina).
+    /// Captura no host → frame completo aqui, em µs, comparando os dois
+    /// relógios como estão. Entre PCs, inclui a diferença entre eles
+    /// (prefira [`Self::latency_us`]).
     pub transit_us: i32,
+    /// Latência real captura → frame completo, em µs, com a diferença entre
+    /// os relógios descontada (sincronização pelos Ping/Pong). `None` até a
+    /// primeira medição (~500 ms depois de o host aparecer).
+    pub latency_us: Option<i32>,
 }
 
 /// Estatísticas acumuladas do [`VideoReceiver`].
@@ -86,6 +92,10 @@ pub struct ReceiverStats {
     /// Atraso de fila do último relatório, em ms: quanto os frames chegam
     /// mais tarde que o normal (0 = rede sem fila).
     pub queue_delay_ms: f64,
+    /// Relógio do host menos o nosso, em ms (`None` antes da 1ª medição).
+    pub clock_offset_ms: Option<f64>,
+    /// Erro máximo de [`Self::clock_offset_ms`] (metade do melhor RTT), em ms.
+    pub clock_error_ms: Option<f64>,
     pub rtt: RttStats,
 }
 
@@ -236,6 +246,8 @@ fn recv_loop(
     // inclusive os que a remontagem descarta como sobra) e atraso de fila.
     let mut pacotes_video = 0u32;
     let mut fila = QueueDelay::default();
+    // Diferença entre o relógio do host e o nosso, pelos Ping/Pong.
+    let mut relogio = ClockSync::default();
     let mut next_feedback = Instant::now() + cfg.feedback_interval;
 
     while !shared.stop.load(Ordering::Relaxed) {
@@ -294,6 +306,7 @@ fn recv_loop(
                 if anterior.is_some() {
                     reasm = Reassembler::new(cfg.reassembler);
                     fila = QueueDelay::default();
+                    relogio = ClockSync::default();
                     shared.with_stats(|s| s.peer_changes += 1);
                 }
                 peer = Some(from);
@@ -307,24 +320,26 @@ fn recv_loop(
             // Só o host recebe pedidos de keyframe e relatórios.
             PacketKind::KeyframeRequest | PacketKind::Feedback => {}
             PacketKind::Ping => {
-                let pong = PacketHeader {
-                    kind: PacketKind::Pong,
-                    ..h
-                };
-                if pong
-                    .encode_with_payload(&[])
-                    .is_ok_and(|p| socket.send_to(&p, from).is_ok())
-                {
+                if pong_for(&h).is_some_and(|p| socket.send_to(&p, from).is_ok()) {
                     shared.with_stats(|s| s.pings_answered += 1);
                 }
             }
             PacketKind::Pong => {
+                let agora = clock_us();
                 shared
                     .rtt
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .add(clock_diff_us(clock_us(), h.timestamp_us));
-                shared.with_stats(|s| s.pongs_received += 1);
+                    .add(clock_diff_us(agora, h.timestamp_us));
+                if let Some(t1) = pong_clock(payload) {
+                    relogio.add(h.timestamp_us, t1, agora);
+                }
+                let (offset, erro) = (relogio.offset_us(), relogio.best_rtt_us());
+                shared.with_stats(|s| {
+                    s.pongs_received += 1;
+                    s.clock_offset_ms = offset.map(|o| o as f64 / 1000.0);
+                    s.clock_error_ms = erro.map(|r| r as f64 / 2000.0);
+                });
             }
             PacketKind::Video | PacketKind::Parity => {
                 pacotes_video = pacotes_video.wrapping_add(1);
@@ -333,8 +348,12 @@ fn recv_loop(
                 if let Some(frame) = completed {
                     let received_us = clock_us();
                     fila.add(clock_diff_us(received_us, frame.timestamp_us), Instant::now());
+                    let transit_us = clock_diff_us(received_us, frame.timestamp_us);
                     let rf = ReceivedFrame {
-                        transit_us: clock_diff_us(received_us, frame.timestamp_us),
+                        // Captura no relógio do host + diferença dos relógios
+                        // = captura no nosso relógio.
+                        latency_us: relogio.offset_us().map(|o| transit_us.wrapping_add(o)),
+                        transit_us,
                         received_us,
                         frame,
                     };

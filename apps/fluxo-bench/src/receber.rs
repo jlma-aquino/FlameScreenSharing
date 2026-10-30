@@ -73,12 +73,12 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let mut esperando_keyframe = true;
     let (mut frames, mut bytes, mut keyframes, mut pulados, mut decodificados) =
         (0u64, 0u64, 0u64, 0u64, 0u64);
-    let mut transitos: Vec<i32> = Vec::new();
+    // Latência captura → chegada, com os relógios sincronizados pelos
+    // Ping/Pong. Os frames de antes da 1ª sincronização (~500 ms) ficam fora.
+    let mut latencias: Vec<i32> = Vec::new();
     let mut proximo_relatorio = Duration::from_secs(1);
-    let (mut frames_seg, mut bytes_seg, mut transito_seg, mut transito_max_seg) =
-        (0u64, 0u64, 0i64, i32::MIN);
-    // Máximo começa no menor valor possível: entre PCs com relógios diferentes
-    // o trânsito pode ser negativo, e começar em 0 escondia o máximo real.
+    let (mut frames_seg, mut bytes_seg) = (0u64, 0u64);
+    let mut latencias_seg: Vec<i32> = Vec::new();
 
     loop {
         if let (Some(t0), Some(d)) = (inicio, duracao) {
@@ -120,31 +120,36 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             frames += 1;
             bytes += f.frame.data.len() as u64;
             keyframes += f.frame.keyframe as u64;
-            transitos.push(f.transit_us);
             frames_seg += 1;
             bytes_seg += f.frame.data.len() as u64;
-            transito_seg += f.transit_us as i64;
-            transito_max_seg = transito_max_seg.max(f.transit_us);
+            if let Some(l) = f.latency_us {
+                latencias.push(l);
+                latencias_seg.push(l);
+            }
         }
 
         if let Some(t0) = inicio {
             if t0.elapsed() >= proximo_relatorio {
                 let s = rx.stats();
                 println!(
-                    "  {:>3} s: {frames_seg} fps, {:.1} Mbps, trânsito {:.1} ms (máx {:.1}), \
-                     perdidos {}, RTT {:.2} ms",
+                    "  {:>3} s: {frames_seg} fps, {:.1} Mbps, latência {}, perdidos {}, RTT {:.2} ms",
                     proximo_relatorio.as_secs(),
                     bytes_seg as f64 * 8.0 / 1e6,
-                    transito_seg as f64 / frames_seg.max(1) as f64 / 1000.0,
-                    if frames_seg == 0 {
-                        0.0
-                    } else {
-                        transito_max_seg as f64 / 1000.0
+                    match latencias_seg.iter().max() {
+                        Some(&max) => format!(
+                            "{:.1} ms (máx {:.1})",
+                            latencias_seg.iter().map(|&l| l as f64).sum::<f64>()
+                                / latencias_seg.len() as f64
+                                / 1000.0,
+                            max as f64 / 1000.0
+                        ),
+                        None => "— (sincronizando relógios)".to_string(),
                     },
                     s.reassembly.frames_lost,
                     s.rtt.smoothed_ms
                 );
-                (frames_seg, bytes_seg, transito_seg, transito_max_seg) = (0, 0, 0, i32::MIN);
+                (frames_seg, bytes_seg) = (0, 0);
+                latencias_seg.clear();
                 proximo_relatorio += Duration::from_secs(1);
             }
         }
@@ -157,10 +162,10 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let s = rx.stats();
     let r = s.reassembly;
     let total = inicio.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
-    transitos.sort_unstable();
+    latencias.sort_unstable();
     let pct = |p: f64| {
-        transitos
-            .get(((transitos.len().max(1) - 1) as f64 * p).round() as usize)
+        latencias
+            .get(((latencias.len().max(1) - 1) as f64 * p).round() as usize)
             .map(|&us| us as f64 / 1000.0)
             .unwrap_or(0.0)
     };
@@ -186,12 +191,22 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             s.frames_dropped
         );
     }
-    println!(
-        "  trânsito captura→chegada: p50 {:.1} ms, p99 {:.1} ms, máx {:.1} ms (válido com relógios iguais)",
-        pct(0.5),
-        pct(0.99),
-        pct(1.0)
-    );
+    match (s.clock_offset_ms, s.clock_error_ms) {
+        (Some(dif), Some(erro)) => {
+            println!(
+                "  latência captura→chegada: p50 {:.1} ms, p99 {:.1} ms, máx {:.1} ms ({} frames)",
+                pct(0.5),
+                pct(0.99),
+                pct(1.0),
+                latencias.len()
+            );
+            println!(
+                "  relógios:                 host {dif:+.1} ms em relação a este PC \
+                 (sincronizados pelos pings, erro ±{erro:.1} ms)"
+            );
+        }
+        _ => println!("  latência:                 — (relógios não sincronizados: nenhum ping respondido)"),
+    }
     println!(
         "  RTT:                      {:.2} ms suavizado, {:.2} ms mínimo ({} medições)",
         s.rtt.smoothed_ms, s.rtt.min_ms, s.rtt.samples

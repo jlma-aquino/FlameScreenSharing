@@ -76,9 +76,10 @@ CPU. Por isso:
 |---|---|---|
 | Captura → frame completo no receptor (vídeo de jogo a 60 fps) | 5,5 ms | 7,6 ms |
 | Captura → `Present` no `fluxo-client` (uso normal da área de trabalho) | 3,1 ms | 9,3 ms |
+| Captura → frame completo, **entre dois PCs no Wi-Fi** (relógios sincronizados pelos pings) | 5,1 ms | 29,9 ms |
 
-Falta medir entre dois PCs e com cronômetro filmado (o `Present` ainda não é
-o instante em que o monitor acende o pixel).
+Falta medir com cronômetro filmado (o `Present` ainda não é o instante em
+que o monitor acende o pixel) e com o cliente com tela num segundo PC Windows.
 
 ## 5. Rede: por que UDP próprio (resumo do ADR-003)
 

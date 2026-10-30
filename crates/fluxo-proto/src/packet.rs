@@ -30,10 +30,15 @@ pub const MAGIC: u16 = 0x464C;
 /// - 2: + KeyframeRequest.
 /// - 3: + Parity (FEC) e o byte 13 do cabeçalho vira `fec_group`.
 /// - 4: + Feedback (relatório do cliente para o bitrate adaptativo).
-pub const PROTOCOL_VERSION: u8 = 4;
+/// - 5: Pong leva 4 bytes com o relógio de quem responde (sincronização).
+pub const PROTOCOL_VERSION: u8 = 5;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 pub const FLAG_KEYFRAME: u8 = 0b0000_0001;
+
+/// Tamanho do payload de um [`PacketKind::Pong`]: o relógio (u32, big-endian)
+/// de quem respondeu.
+pub const PONG_LEN: usize = 4;
 
 /// Tipo do pacote (campo `kind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +50,8 @@ pub enum PacketKind {
     /// `timestamp_us` = relógio de quem enviou.
     Ping = 2,
     /// Resposta a um [`PacketKind::Ping`], ecoando `frame_id` e `timestamp_us`.
+    /// Payload: [`PONG_LEN`] bytes com o relógio de quem respondeu, na hora de
+    /// responder — para sincronizar os relógios (estilo NTP).
     Pong = 3,
     /// Cliente → host: "perdi a referência, mande um keyframe". `frame_id`
     /// = número do pedido, `timestamp_us` = relógio de quem pediu.
@@ -230,6 +237,12 @@ impl PacketHeader {
             return Err(ProtoError::BadFragment {
                 index: header.frag_index,
                 count: header.frag_count,
+            });
+        }
+        if kind == PacketKind::Pong && actual != PONG_LEN {
+            return Err(ProtoError::LengthMismatch {
+                declared: PONG_LEN,
+                actual,
             });
         }
         if kind == PacketKind::Feedback && actual != crate::feedback::FEEDBACK_LEN {

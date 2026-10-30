@@ -134,10 +134,21 @@ sessão.
 ## Relógio e latência
 
 `timestamp_us` = relógio de parede em µs, truncado para 32 bits
-(`clock_us`). Na mesma máquina, ou com relógios sincronizados por NTP,
-`ReceivedFrame::transit_us` dá a latência real captura → frame completo. Em
-máquinas diferentes sem sincronia, o número tem o erro da diferença entre os
-relógios; o RTT não é afetado.
+(`clock_us`). Entre dois PCs os relógios diferem (no teste com o notebook,
+837 ms), então o Fluxo os **sincroniza pelos Ping/Pong** (`sync.rs`, estilo
+NTP): o Pong leva o relógio de quem respondeu, e a diferença é estimada pela
+medição de menor RTT entre as últimas 16 — erro máximo de meio RTT (~0,5 ms
+numa LAN).
+
+- `ReceivedFrame::latency_us`: latência real captura → frame completo, com a
+  diferença descontada (`None` nos ~500 ms antes da 1ª medição).
+- `ReceivedFrame::transit_us`: o valor bruto, comparando os relógios como
+  estão (usado pelo atraso de fila, onde a diferença se cancela).
+- `ReceiverStats::clock_offset_ms` / `clock_error_ms` e
+  `SenderStats::clock_offset_ms`: a diferença medida de cada lado.
+
+Medido (host Windows → notebook Linux no Wi-Fi, vídeo, 30 s): latência de ida
+p50 **5,1 ms**, p99 29,9 ms, máx 85 ms; relógios a +837,4 ms ± 0,5 ms.
 
 ## Erros
 
