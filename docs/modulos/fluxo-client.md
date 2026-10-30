@@ -43,9 +43,15 @@ recv_frame(2 ms) ──► decodifica TODOS os frames que chegaram
 1×/s: estatísticas no título da janela
 ```
 
-- Antes do primeiro keyframe, frames são pulados (o host manda um a cada 2 s).
-- Se o decode falhar (bitstream estragado), o decoder é recriado e espera o
-  próximo keyframe.
+- Sem imagem decodificável (largada), o cliente pede um keyframe ao host
+  (`request_keyframe`) e pula frames até ele chegar.
+- **Perda:** um frame que chega com `preceded_by_loss` depende de um que não
+  chegou. O cliente **congela a última imagem boa**, pede um keyframe e
+  descarta os P-frames até ele chegar — nada de imagem corrompida na tela.
+  O resumo mostra quantas perdas houve e quanto tempo a imagem ficou
+  congelada (medido com 1% de perda: 38 ms em média).
+- Se o decode falhar (bitstream estragado), o decoder é recriado e pede
+  keyframe da mesma forma.
 
 ## Apresentação de baixa latência
 

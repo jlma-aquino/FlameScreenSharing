@@ -6,6 +6,20 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v2:** pacote `KeyframeRequest` (`kind = 4`), cliente → host.
+  Pacotes da versão 1 passam a ser recusados.
+- Pedido de keyframe de ponta a ponta: `VideoReceiver::request_keyframe`
+  (limitado a um a cada 50 ms ou 2 RTTs) e `VideoSender::take_keyframe_request`.
+  O `fluxo-client` pede ao começar, ao detectar perda e quando o decode
+  falha, e **congela a última imagem boa** em vez de mostrar imagem
+  corrompida; o `fluxo-host` força keyframe no próximo encode e, com a tela
+  parada, recodifica a última imagem enviada. `fluxo-bench receber` também
+  pede e não grava frames estragados.
+- Perda simulada para testes: `SenderConfig::simulated_loss` e
+  `fluxo-host --simular-perda P`.
+- Largada aquecida: o host manda um ping antes do primeiro frame e espera
+  até 50 ms pela resposta, para não perder a primeira rajada enquanto o
+  sistema resolve o endereço do cliente.
 - `fluxo-encode`: encoder H.264 por hardware com trait `Encoder` e dois
   backends — NVENC direto (API 12.1, padrão em NVIDIA) e Media Foundation
   (NVIDIA, AMD, Intel). Escolha por `BackendChoice` (`auto`, `nvenc`, `mf`);
@@ -36,6 +50,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - `fluxo-bench decode`: captura → encode → decode, mede o decoder isolado.
 
 ### Alterado
+- `fluxo-host`: keyframe periódico padrão passou de 2 s para 10 s (só rede
+  de segurança, agora que o cliente pede quando precisa); com a tela parada,
+  a espera por captura caiu de 100 para 10 ms para atender pedidos rápido.
 - `fluxo-bench receber` compila e roda em Linux/macOS (só depende do
   `fluxo-net`), para testar a rede com um segundo PC que não seja Windows;
   `--verificar` continua só no Windows. Workspace inteiro sem avisos no
@@ -56,6 +73,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- Pedido de keyframe com 1% de perda simulada (cliente na mesma máquina,
+  15 s): 110 perdas detectadas, 159 pedidos, 158 atendidos, 0 erros de
+  decode; imagem congelada em média 38 ms (máx 184 ms) por perda. Com 2% e
+  a tela parada: 16 pedidos, 16 atendidos recodificando a última imagem.
 - Captura 1080p na RTX 5050 com vídeo YouTube 60 fps (15 s): 68,9 fps médio,
   regime estável 62–63 fps, intervalo p50 16,6 ms / p99 22,3 ms, 1 frame
   perdido, 0 perdas de acesso. Fase 1 validada.

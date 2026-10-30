@@ -25,7 +25,10 @@ pub const MAGIC: u16 = 0x464C;
 
 /// Versão atual do protocolo. Incrementar sempre que o formato mudar de
 /// forma incompatível (e registrar em `docs/PROTOCOLO.md` e no CHANGELOG).
-pub const PROTOCOL_VERSION: u8 = 1;
+///
+/// - 1: Video, Ping, Pong.
+/// - 2: + KeyframeRequest.
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 pub const FLAG_KEYFRAME: u8 = 0b0000_0001;
@@ -41,6 +44,9 @@ pub enum PacketKind {
     Ping = 2,
     /// Resposta a um [`PacketKind::Ping`], ecoando `frame_id` e `timestamp_us`.
     Pong = 3,
+    /// Cliente → host: "perdi a referência, mande um keyframe". `frame_id`
+    /// = número do pedido, `timestamp_us` = relógio de quem pediu.
+    KeyframeRequest = 4,
 }
 
 impl PacketKind {
@@ -49,7 +55,21 @@ impl PacketKind {
             1 => Some(Self::Video),
             2 => Some(Self::Ping),
             3 => Some(Self::Pong),
+            4 => Some(Self::KeyframeRequest),
             _ => None,
+        }
+    }
+
+    /// Cabeçalho de um pacote de controle (sem payload nem fragmentos).
+    pub fn control(self, id: u32, timestamp_us: u32) -> PacketHeader {
+        PacketHeader {
+            kind: self,
+            frame_id: id,
+            frag_index: 0,
+            frag_count: 0,
+            flags: 0,
+            payload_len: 0,
+            timestamp_us,
         }
     }
 }
@@ -288,5 +308,23 @@ mod tests {
             exemplo().encode_with_payload(&grande),
             Err(ProtoError::PayloadTooLarge(70_000))
         );
+    }
+
+    #[test]
+    fn pedido_de_keyframe_vai_e_volta() {
+        let h = PacketKind::KeyframeRequest.control(7, 123_456);
+        let pkt = h.encode_with_payload(&[]).unwrap();
+        assert_eq!(pkt.len(), HEADER_LEN);
+        let (d, payload) = PacketHeader::decode(&pkt).unwrap();
+        assert_eq!(d.kind, PacketKind::KeyframeRequest);
+        assert_eq!((d.frame_id, d.timestamp_us), (7, 123_456));
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn rejeita_versao_anterior() {
+        let mut pkt = PacketKind::Ping.control(1, 2).encode_with_payload(&[]).unwrap();
+        pkt[2] = 1; // pacote de um Fluxo antigo
+        assert_eq!(PacketHeader::decode(&pkt), Err(ProtoError::UnsupportedVersion(1)));
     }
 }

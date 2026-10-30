@@ -66,8 +66,16 @@ Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
 ## Decisões provisórias
 
 - **Destino manual.** Sem descoberta nem NAT (fase 5).
-- **Keyframe periódico** a cada 2 s (`--keyframe-a-cada`), para um receptor
-  que entrar depois conseguir começar. Vira pedido do cliente na fase 4.
+- **Keyframes sob pedido.** O cliente pede um keyframe quando perde algo
+  (ou ao começar); o host força keyframe no próximo encode e, com a tela
+  parada, recodifica a última imagem enviada (guardada como cópia na GPU).
+  O keyframe periódico (`--keyframe-a-cada`, padrão 10 s) fica só como rede
+  de segurança para um pedido que se perca.
+- **Largada aquecida.** O primeiro ping sai antes do primeiro frame, e o
+  envio espera até 50 ms pela resposta, para o sistema resolver o endereço
+  do cliente (ARP) antes da primeira rajada.
+- **`--simular-perda P`** (teste): descarta P% dos pacotes de vídeo antes de
+  enviar, para testar a recuperação sem precisar de uma rede ruim.
 - **Captura e encode na mesma thread.** O encode é síncrono e leva ~2,5 ms,
   então separar ainda não compensa; a rede já tem as suas threads.
 - **Mudança de resolução** recria o encoder (o novo começa com keyframe).

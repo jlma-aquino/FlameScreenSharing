@@ -48,15 +48,21 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [ ] Primeiro teste ponta a ponta em LAN, medindo latência real (cronômetro filmado)
 - [ ] Não travar a recepção enquanto a janela é arrastada (decode/apresentação em thread própria)
 
-## Fase 4 — Robustez de rede
+## Fase 4 — Robustez de rede (em andamento)
 
-- [ ] Pedido de keyframe ao detectar `preceded_by_loss`
+- [x] Pedido de keyframe (protocolo v2, `KeyframeRequest`): ao detectar `preceded_by_loss`, falha de
+      decode ou falta de imagem; o cliente congela a última imagem boa em vez de mostrar imagem
+      corrompida; com a tela parada o host recodifica a última imagem. Medido com 1% de perda:
+      congelamento médio de 38 ms por perda (antes: imagem borrada até o keyframe periódico)
 - [ ] Intra-refresh no encoder (recuperação sem keyframes gigantes)
-- [ ] FEC (paridade por grupo de pacotes)
+- [ ] FEC (paridade por grupo de pacotes) — prioridade: com 1% de perda de pacotes, ~25% dos frames
+      perdem algo (30 pacotes por frame) e a imagem fica ~28% do tempo congelada esperando keyframe
 - [ ] Controle adaptativo de bitrate (perda + RTT)
-- [ ] Testes com perda/atraso simulados
-- [ ] Não perder o 1º keyframe: mandar um ping antes do primeiro frame (causa provável: o Windows descarta parte da
-      primeira rajada para um IP novo enquanto resolve o ARP — visto no teste Windows → Linux)
+- [x] Perda simulada (`fluxo-host --simular-perda P`)
+- [ ] Atraso/jitter simulados
+- [x] Não perder o 1º keyframe: o host manda um ping antes do primeiro frame e espera até 50 ms pela
+      resposta (causa provável: o Windows descarta parte da primeira rajada para um IP novo enquanto
+      resolve o ARP — visto no teste Windows → Linux); falta confirmar entre dois PCs
 - [ ] Sincronizar relógios pelo Ping/Pong (estilo NTP: o Pong traz o relógio de quem responde), para
       medir a latência de ida real entre PCs — no teste, os relógios diferiam ~0,7 s
 

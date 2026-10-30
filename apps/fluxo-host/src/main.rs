@@ -35,9 +35,11 @@ Opções:
   --fps F               máximo de frames por segundo (padrão 60); capturas mais
                         rápidas esperam o próximo horário, sem perder a última
   --pacing-mbps P       taxa de envio dos pacotes (padrão 2,5 × mbps; 0 = sem pacing)
-  --keyframe-a-cada S   keyframe periódico em segundos (padrão 2; 0 = só o primeiro)
+  --keyframe-a-cada S   keyframe periódico de segurança, em segundos (padrão 10;
+                        0 = só o primeiro). O cliente pede um quando perde algo.
   --segundos S          encerra depois de S segundos (padrão 0 = até Ctrl+C)
   --porta-local P       porta UDP de saída (padrão: automática)
+  --simular-perda P     TESTE: descarta P% dos pacotes de vídeo antes de enviar
 
 Para testar sem cliente, rode antes em outro terminal (ou outro PC):
   fluxo-bench receber --porta 9000";
@@ -53,6 +55,7 @@ struct Opts {
     keyframe_a_cada: f64,
     segundos: f64,
     porta_local: u16,
+    simular_perda: f64,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -63,9 +66,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         mbps: 20.0,
         fps: 60,
         pacing_mbps: None,
-        keyframe_a_cada: 2.0,
+        keyframe_a_cada: 10.0,
         segundos: 0.0,
         porta_local: 0,
+        simular_perda: 0.0,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -82,6 +86,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             }
             "--segundos" => o.segundos = valor()?.parse().map_err(|_| "segundos inválido")?,
             "--porta-local" => o.porta_local = valor()?.parse().map_err(|_| "porta-local inválida")?,
+            "--simular-perda" => o.simular_perda = valor()?.parse().map_err(|_| "simular-perda inválido")?,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
@@ -130,6 +135,8 @@ struct Contadores {
     adiadas: u64,
     /// Saiu um keyframe desde a última vez que o laço olhou.
     keyframe: bool,
+    /// Pedidos de keyframe do cliente atendidos.
+    pedidos: u64,
 }
 
 /// Codifica `textura` e enfileira o resultado na rede. Devolve o tamanho
@@ -239,13 +246,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             .pacing_mbps
             .map(|p| (p * 1e6).round() as u64)
             .unwrap_or(SenderConfig::for_bitrate(bitrate_bps).pacing_bps),
+        simulated_loss: o.simular_perda / 100.0,
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let pacing_mbps = net_cfg.pacing_bps as f64 / 1e6;
     let tx = VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?;
 
     println!(
-        "Transmitindo monitor {} ({}x{}) de {} para {}\n  {}\n  {} Mbps, até {} fps, pacing {:.0} Mbps, keyframe a cada {} s",
+        "Transmitindo monitor {} ({}x{}) de {} para {}\n  {}\n  {} Mbps, até {} fps, pacing {:.0} Mbps, keyframe de segurança a cada {} s{}",
         m.index,
         m.width,
         m.height,
@@ -255,7 +263,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         o.mbps,
         o.fps,
         pacing_mbps,
-        o.keyframe_a_cada
+        o.keyframe_a_cada,
+        match o.simular_perda > 0.0 {
+            true => format!("\n  TESTE: descartando {}% dos pacotes de vídeo", o.simular_perda),
+            false => String::new(),
+        }
     );
     if o.segundos <= 0.0 {
         println!("  Ctrl+C para encerrar.");
@@ -270,17 +282,22 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     // Frame que chegou cedo demais: cópia na GPU + momento da captura.
     let mut pendente: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
     let mut pendente_us = 0u32;
+    // Cópia da última imagem enviada: com a tela parada, é ela que vira o
+    // keyframe que o cliente pedir.
+    let mut ultima: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
     let mut seg = Contadores::default();
     let mut total = Contadores::default();
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
-        // Com um pendente, espera no máximo até o horário dele.
+        // Com um pendente, espera no máximo até o horário dele; sem pendente,
+        // 10 ms: com a tela parada, um pedido de keyframe do cliente é
+        // atendido em até ~10 ms (re-enviando a última imagem).
         let espera_ms = match limite.deadline() {
             Some(d) => d
                 .saturating_duration_since(Instant::now())
                 .as_micros()
                 .div_ceil(1000) as u32,
-            None => 100,
+            None => 10,
         };
         let frame = match cap.next_frame(espera_ms) {
             Ok(f) => f,
@@ -291,7 +308,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => return Err(e.into()),
         };
 
-        let mut pedir_keyframe = keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p);
+        // Keyframe: pedido pelo cliente (perdeu algo) ou periódico (rede de
+        // segurança, caso um pedido se perca).
+        let pedido = tx.take_keyframe_request();
+        seg.pedidos += pedido as u64;
+        let mut pedir_keyframe = pedido || keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p);
         let mut recriar = None;
         if let Some(frame) = frame.filter(|f| f.info().desktop_updated) {
             // Momento da captura, no relógio que o cliente usa para medir o trânsito.
@@ -306,6 +327,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     &mut seg,
                 )?;
                 pedir_keyframe = false;
+                guardar_copia(&device, &context, frame.texture(), &mut ultima)?;
             } else {
                 guardar_copia(&device, &context, frame.texture(), &mut pendente)?;
                 pendente_us = capturado_us;
@@ -316,6 +338,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         if recriar.is_none() && limite.on_tick(Instant::now()) {
             if let Some(t) = &pendente {
                 recriar = codificar(&mut *enc, &tx, t, pendente_us, pedir_keyframe, &mut seg)?;
+                pedir_keyframe = false;
+                guardar_copia(&device, &context, t, &mut ultima)?;
+            }
+        }
+        // Pedido do cliente sem frame novo para levar o keyframe (tela
+        // parada): recodifica a última imagem enviada, na hora.
+        if pedido && pedir_keyframe && recriar.is_none() {
+            if let Some(t) = &ultima {
+                recriar = codificar(&mut *enc, &tx, t, clock_us(), true, &mut seg)?;
             }
         }
         if std::mem::take(&mut seg.keyframe) {
@@ -325,16 +356,18 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             println!("(resolução mudou para {w}x{h}; recriando o encoder, que começa com keyframe)");
             enc = open_encoder(&device, &config_para(w, h))?.encoder;
             pendente = None;
+            ultima = None;
             limite = FpsLimiter::new(o.fps);
         }
 
         if inicio.elapsed() >= proximo_relatorio {
             let s = tx.stats();
             println!(
-                "  {:>4} s: {} fps ({} capturas adiadas), {:.1} Mbps, encode {:.1} ms, envio {:.1} ms (fila {}), RTT {}",
+                "  {:>4} s: {} fps ({} capturas adiadas, {} keyframes pedidos), {:.1} Mbps, encode {:.1} ms, envio {:.1} ms (fila {}), RTT {}",
                 proximo_relatorio.as_secs(),
                 seg.frames,
                 seg.adiadas,
+                seg.pedidos,
                 seg.bytes as f64 * 8.0 / 1e6,
                 seg.encode.as_secs_f64() * 1000.0 / seg.frames.max(1) as f64,
                 s.last_frame_send_ms,
@@ -347,6 +380,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             total.frames += seg.frames;
             total.bytes += seg.bytes;
             total.adiadas += seg.adiadas;
+            total.pedidos += seg.pedidos;
             seg = Contadores::default();
             proximo_relatorio += Duration::from_secs(1);
         }
@@ -355,6 +389,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     total.frames += seg.frames;
     total.bytes += seg.bytes;
     total.adiadas += seg.adiadas;
+    total.pedidos += seg.pedidos;
     drop(enc);
     let s = tx.stats();
     drop(tx); // espera a fila de envio esvaziar
@@ -371,6 +406,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "  rede: {} pacotes, {} erros de envio, maior tempo de envio de um frame {:.1} ms",
         s.packets_sent, s.send_errors, s.max_frame_send_ms
+    );
+    println!(
+        "  keyframes pedidos pelo cliente: {} recebidos, {} atendidos{}",
+        s.keyframe_requests,
+        total.pedidos,
+        match s.simulated_drops {
+            0 => String::new(),
+            n => format!("; {n} pacotes descartados pela perda simulada"),
+        }
     );
     println!(
         "  RTT: {:.2} ms suavizado, {:.2} ms mínimo ({} medições)",

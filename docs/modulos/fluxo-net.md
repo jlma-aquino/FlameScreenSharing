@@ -49,6 +49,23 @@ O modelo é de "dívida": o pacote sai se o saldo não está negativo e então
 desconta seu tamanho. Assim pacotes maiores que o balde nunca travam e a taxa
 média é exata.
 
+## Pedido de keyframe
+
+- Cliente: `VideoReceiver::request_keyframe()` manda um `KeyframeRequest` ao
+  host. Pode ser chamado a cada frame: só envia se o último pedido tiver mais
+  de 50 ms (ou 2 RTTs), tempo para o keyframe chegar antes de pedir de novo.
+- Host: `VideoSender::take_keyframe_request()` devolve `true` uma vez por
+  pedido (vários acumulados contam como um).
+
+## Largada e perda simulada
+
+- O primeiro ping sai antes do primeiro frame, e o envio espera até 50 ms
+  pela resposta: sem isso, a primeira rajada para um IP novo pode ser
+  descartada enquanto o sistema resolve o endereço físico (ARP).
+- `SenderConfig::simulated_loss` (só para testes) descarta uma fração dos
+  pacotes de vídeo antes do envio; o pacote "perdido" ainda ocupa seu tempo
+  no pacing, como numa rede real.
+
 ## Host único e reinício
 
 O receptor aprende o endereço do host pelo primeiro pacote válido e ignora

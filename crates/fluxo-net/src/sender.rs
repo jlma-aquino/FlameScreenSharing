@@ -14,7 +14,7 @@ use crate::rtt::{RttEstimator, RttStats};
 use crate::{clock_diff_us, clock_us, is_transient, NetError};
 
 /// Configuração do [`VideoSender`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SenderConfig {
     /// Payload máximo por pacote (ver ADR-005).
     pub max_payload: usize,
@@ -24,21 +24,31 @@ pub struct SenderConfig {
     pub burst_packets: usize,
     /// Intervalo entre pings de medição de RTT.
     pub ping_interval: Duration,
+    /// **Só para testes:** fração dos pacotes de vídeo descartados de
+    /// propósito antes do envio (0.01 = 1%), simulando uma rede ruim.
+    pub simulated_loss: f64,
 }
 
 impl SenderConfig {
     /// Configuração para um vídeo com este bitrate: pacing a 2,5× o
     /// bitrate (folga para keyframes e variações), rajadas de 10 pacotes,
-    /// ping a cada 500 ms.
+    /// ping a cada 500 ms, sem perda simulada.
     pub fn for_bitrate(bitrate_bps: u64) -> Self {
         Self {
             max_payload: DEFAULT_MAX_PAYLOAD,
             pacing_bps: bitrate_bps.saturating_mul(5) / 2,
             burst_packets: 10,
             ping_interval: Duration::from_millis(500),
+            simulated_loss: 0.0,
         }
     }
 }
+
+/// Espera máxima, na largada, pela resposta do primeiro ping antes de mandar
+/// o primeiro frame. Na primeira rajada para um IP novo, o sistema ainda
+/// está descobrindo o endereço físico do destino (ARP) e descarta parte dos
+/// pacotes — no teste Windows → Linux, o primeiro keyframe chegou quebrado.
+const WARMUP: Duration = Duration::from_millis(50);
 
 /// Estatísticas acumuladas do [`VideoSender`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -64,6 +74,10 @@ pub struct SenderStats {
     pub pongs_received: u64,
     /// Pings do cliente que respondemos.
     pub pings_answered: u64,
+    /// Pedidos de keyframe recebidos do cliente.
+    pub keyframe_requests: u64,
+    /// Pacotes descartados de propósito por [`SenderConfig::simulated_loss`].
+    pub simulated_drops: u64,
     pub rtt: RttStats,
 }
 
@@ -79,6 +93,7 @@ struct Shared {
     rtt: Mutex<RttEstimator>,
     pacing_bps: AtomicU64,
     stop: AtomicBool,
+    keyframe_requested: AtomicBool,
 }
 
 impl Shared {
@@ -126,6 +141,7 @@ impl VideoSender {
             rtt: Mutex::new(RttEstimator::default()),
             pacing_bps: AtomicU64::new(cfg.pacing_bps),
             stop: AtomicBool::new(false),
+            keyframe_requested: AtomicBool::new(false),
         });
         let (queue, jobs) = mpsc::channel();
 
@@ -167,6 +183,12 @@ impl VideoSender {
             s.queue_len += 1;
         });
         Ok(())
+    }
+
+    /// `true` (uma vez) se o cliente pediu um keyframe desde a última
+    /// chamada. Vários pedidos seguidos contam como um só.
+    pub fn take_keyframe_request(&self) -> bool {
+        self.shared.keyframe_requested.swap(false, Ordering::Relaxed)
     }
 
     /// Muda a taxa de pacing (0 desliga). Vale para os próximos pacotes.
@@ -211,6 +233,27 @@ impl Drop for VideoSender {
     }
 }
 
+/// Gerador pseudoaleatório mínimo (xorshift) para a perda simulada.
+struct Rng(u64);
+
+impl Rng {
+    fn new() -> Self {
+        let semente = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E37_79B9_7F4A_7C15);
+        Self(semente | 1)
+    }
+
+    /// Número em [0, 1).
+    fn next_f64(&mut self) -> f64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
 fn send_loop(socket: UdpSocket, jobs: mpsc::Receiver<Job>, cfg: SenderConfig, shared: Arc<Shared>) {
     let mut frag = Fragmenter::new(cfg.max_payload);
     let packet_size = cfg.max_payload + fluxo_proto::HEADER_LEN;
@@ -219,40 +262,53 @@ fn send_loop(socket: UdpSocket, jobs: mpsc::Receiver<Job>, cfg: SenderConfig, sh
         cfg.burst_packets.max(1) * packet_size,
         Instant::now(),
     );
+    let mut rng = Rng::new();
     let mut ping_id = 0u32;
-    let mut next_ping = Instant::now();
+
+    // Largada: um ping antes de qualquer frame, e uma espera curta pela
+    // resposta (ver WARMUP).
+    send_ping(&socket, &shared, &mut ping_id);
+    let limite = Instant::now() + WARMUP;
+    while Instant::now() < limite && shared.stats.lock().map(|s| s.pongs_received == 0).unwrap_or(true) {
+        thread::sleep(Duration::from_millis(2));
+    }
+    let mut next_ping = Instant::now() + cfg.ping_interval;
 
     loop {
         let wait = next_ping.saturating_duration_since(Instant::now());
         match jobs.recv_timeout(wait) {
-            Ok(job) => send_job(&socket, &mut frag, &mut pacer, &shared, job),
+            Ok(job) => send_job(&socket, &mut frag, &mut pacer, &shared, &cfg, &mut rng, job),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
         if Instant::now() >= next_ping {
-            let ping = PacketHeader {
-                kind: PacketKind::Ping,
-                frame_id: ping_id,
-                frag_index: 0,
-                frag_count: 0,
-                flags: 0,
-                payload_len: 0,
-                timestamp_us: clock_us(),
-            };
-            ping_id = ping_id.wrapping_add(1);
-            let ok = ping
-                .encode_with_payload(&[])
-                .is_ok_and(|p| socket.send(&p).is_ok());
-            shared.with_stats(|s| match ok {
-                true => s.pings_sent += 1,
-                false => s.send_errors += 1,
-            });
+            send_ping(&socket, &shared, &mut ping_id);
             next_ping = Instant::now() + cfg.ping_interval;
         }
     }
 }
 
-fn send_job(socket: &UdpSocket, frag: &mut Fragmenter, pacer: &mut Pacer, shared: &Shared, job: Job) {
+fn send_ping(socket: &UdpSocket, shared: &Shared, ping_id: &mut u32) {
+    let ping = PacketKind::Ping.control(*ping_id, clock_us());
+    *ping_id = ping_id.wrapping_add(1);
+    let ok = ping
+        .encode_with_payload(&[])
+        .is_ok_and(|p| socket.send(&p).is_ok());
+    shared.with_stats(|s| match ok {
+        true => s.pings_sent += 1,
+        false => s.send_errors += 1,
+    });
+}
+
+fn send_job(
+    socket: &UdpSocket,
+    frag: &mut Fragmenter,
+    pacer: &mut Pacer,
+    shared: &Shared,
+    cfg: &SenderConfig,
+    rng: &mut Rng,
+    job: Job,
+) {
     let start = Instant::now();
     let queue_wait = start - job.queued_at;
     let packets = match frag.fragment(&job.data, job.keyframe, job.timestamp_us) {
@@ -268,18 +324,23 @@ fn send_job(socket: &UdpSocket, frag: &mut Fragmenter, pacer: &mut Pacer, shared
     };
     pacer.set_rate(shared.pacing_bps.load(Ordering::Relaxed), start);
 
-    let (mut sent, mut bytes, mut errors) = (0u64, 0u64, 0u64);
+    let (mut sent, mut bytes, mut errors, mut dropped) = (0u64, 0u64, 0u64, 0u64);
     for p in &packets {
         let wait = pacer.delay(Instant::now());
         if !wait.is_zero() {
             thread::sleep(wait);
         }
-        match socket.send(p) {
-            Ok(n) => {
-                sent += 1;
-                bytes += n as u64;
+        // O pacote "perdido" ocupa seu tempo no pacing, como numa rede real.
+        if cfg.simulated_loss > 0.0 && rng.next_f64() < cfg.simulated_loss {
+            dropped += 1;
+        } else {
+            match socket.send(p) {
+                Ok(n) => {
+                    sent += 1;
+                    bytes += n as u64;
+                }
+                Err(_) => errors += 1,
             }
-            Err(_) => errors += 1,
         }
         pacer.consume(p.len(), Instant::now());
     }
@@ -291,6 +352,7 @@ fn send_job(socket: &UdpSocket, frag: &mut Fragmenter, pacer: &mut Pacer, shared
         s.packets_sent += sent;
         s.bytes_sent += bytes;
         s.send_errors += errors;
+        s.simulated_drops += dropped;
         s.last_frame_send_ms = send_ms;
         s.max_frame_send_ms = s.max_frame_send_ms.max(send_ms);
         s.last_queue_wait_ms = queue_wait.as_secs_f64() * 1000.0;
@@ -332,6 +394,10 @@ fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
                 {
                     shared.with_stats(|s| s.pings_answered += 1);
                 }
+            }
+            PacketKind::KeyframeRequest => {
+                shared.keyframe_requested.store(true, Ordering::Relaxed);
+                shared.with_stats(|s| s.keyframe_requests += 1);
             }
             PacketKind::Video => {} // o host não recebe vídeo
         }

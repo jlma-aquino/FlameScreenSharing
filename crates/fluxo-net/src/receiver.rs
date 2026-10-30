@@ -74,6 +74,8 @@ pub struct ReceiverStats {
     pub pings_sent: u64,
     pub pongs_received: u64,
     pub pings_answered: u64,
+    /// Pedidos de keyframe enviados ao host.
+    pub keyframe_requests: u64,
     pub rtt: RttStats,
 }
 
@@ -103,7 +105,15 @@ pub struct VideoReceiver {
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
     local: SocketAddr,
+    /// Cópia do socket para mandar pedidos de keyframe desta thread.
+    socket: UdpSocket,
+    /// Último pedido de keyframe e quantos já foram (número do próximo).
+    last_request: Mutex<(Option<Instant>, u32)>,
 }
+
+/// Intervalo mínimo entre pedidos de keyframe (ou 2 RTTs, o que for maior):
+/// tempo para o keyframe pedido chegar antes de pedir de novo.
+const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(50);
 
 impl VideoReceiver {
     /// Escuta em `bind` (ex.: `"0.0.0.0:9000"`).
@@ -120,6 +130,7 @@ impl VideoReceiver {
         });
         let (tx, frames) = mpsc::sync_channel(cfg.queue_frames.max(1));
         let s = shared.clone();
+        let copia = socket.try_clone().map_err(NetError::io("duplicar socket"))?;
         let thread = thread::Builder::new()
             .name("fluxo-net-recepcao".into())
             .spawn(move || recv_loop(socket, cfg, tx, s))
@@ -129,7 +140,37 @@ impl VideoReceiver {
             shared,
             thread: Some(thread),
             local,
+            socket: copia,
+            last_request: Mutex::new((None, 0)),
         })
+    }
+
+    /// Pede ao host um keyframe — chame quando um frame se perdeu
+    /// ([`CompletedFrame::preceded_by_loss`](fluxo_proto::CompletedFrame)) ou
+    /// enquanto estiver sem imagem decodificável.
+    ///
+    /// Seguro de chamar a cada frame: só envia se o último pedido tiver mais
+    /// de ~50 ms (ou 2 RTTs). Devolve `true` se um pedido saiu agora; `false`
+    /// se foi segurado ou se o host ainda é desconhecido.
+    pub fn request_keyframe(&self) -> bool {
+        let s = self.stats();
+        let Some(peer) = s.peer else {
+            return false;
+        };
+        let espera = KEYFRAME_REQUEST_INTERVAL.max(Duration::from_secs_f64(s.rtt.smoothed_ms * 2.0 / 1000.0));
+        let mut ultimo = self.last_request.lock().unwrap_or_else(|e| e.into_inner());
+        if ultimo.0.is_some_and(|t| t.elapsed() < espera) {
+            return false;
+        }
+        let pedido = PacketKind::KeyframeRequest.control(ultimo.1, clock_us());
+        let ok = pedido
+            .encode_with_payload(&[])
+            .is_ok_and(|p| self.socket.send_to(&p, peer).is_ok());
+        if ok {
+            *ultimo = (Some(Instant::now()), ultimo.1.wrapping_add(1));
+            self.shared.with_stats(|s| s.keyframe_requests += 1);
+        }
+        ok
     }
 
     /// Espera até `timeout` pelo próximo frame completo. `Ok(None)` se nada
@@ -227,6 +268,8 @@ fn recv_loop(
         last_from_peer = Instant::now();
 
         match h.kind {
+            // Só o host recebe pedidos de keyframe.
+            PacketKind::KeyframeRequest => {}
             PacketKind::Ping => {
                 let pong = PacketHeader {
                     kind: PacketKind::Pong,
@@ -276,15 +319,8 @@ fn recv_loop(
 }
 
 fn ping_to(socket: &UdpSocket, to: SocketAddr, id: u32) -> bool {
-    let ping = PacketHeader {
-        kind: PacketKind::Ping,
-        frame_id: id,
-        frag_index: 0,
-        frag_count: 0,
-        flags: 0,
-        payload_len: 0,
-        timestamp_us: clock_us(),
-    };
-    ping.encode_with_payload(&[])
+    PacketKind::Ping
+        .control(id, clock_us())
+        .encode_with_payload(&[])
         .is_ok_and(|p| socket.send_to(&p, to).is_ok())
 }

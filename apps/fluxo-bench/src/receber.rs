@@ -73,7 +73,6 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let mut esperando_keyframe = true;
     let (mut frames, mut bytes, mut keyframes, mut pulados, mut decodificados) =
         (0u64, 0u64, 0u64, 0u64, 0u64);
-    let mut com_perda_antes = 0u64;
     let mut transitos: Vec<i32> = Vec::new();
     let mut proximo_relatorio = Duration::from_secs(1);
     let (mut frames_seg, mut bytes_seg, mut transito_seg, mut transito_max_seg) =
@@ -87,13 +86,24 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                 break;
             }
         }
-        let recebido = rx.recv_frame(Duration::from_millis(100))?;
+        // Sem referência (largada ou depois de uma perda): pede um keyframe
+        // ao host. O fluxo-net segura pedidos repetidos.
+        if esperando_keyframe {
+            rx.request_keyframe();
+        }
+        let recebido = rx.recv_frame(Duration::from_millis(20))?;
 
         if let Some(f) = recebido {
             if inicio.is_none() {
                 let de = rx.stats().peer.map(|p| p.to_string()).unwrap_or_default();
                 println!("Recebendo de {de}");
                 inicio = Some(Instant::now());
+            }
+            // Perdeu um frame: o que vem depois depende dele. Para de gravar
+            // até o keyframe pedido chegar (o arquivo fica sem imagem estragada).
+            if f.frame.preceded_by_loss && !f.frame.keyframe {
+                esperando_keyframe = true;
+                rx.request_keyframe();
             }
             // O decoder (e quem abrir o arquivo) só consegue começar num keyframe.
             if esperando_keyframe {
@@ -110,7 +120,6 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             frames += 1;
             bytes += f.frame.data.len() as u64;
             keyframes += f.frame.keyframe as u64;
-            com_perda_antes += f.frame.preceded_by_loss as u64;
             transitos.push(f.transit_us);
             frames_seg += 1;
             bytes_seg += f.frame.data.len() as u64;
@@ -156,7 +165,9 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             .unwrap_or(0.0)
     };
     println!("\nResultado");
-    println!("  frames gravados:          {frames} ({keyframes} keyframes), {pulados} pulados antes do 1º keyframe");
+    println!(
+        "  frames gravados:          {frames} ({keyframes} keyframes), {pulados} pulados esperando keyframe"
+    );
     println!(
         "  bitrate médio:            {:.2} Mbps",
         bytes as f64 * 8.0 / total.max(0.001) / 1e6
@@ -166,8 +177,8 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         r.packets_received, r.duplicate_packets, r.late_packets, s.invalid_packets
     );
     println!(
-        "  frames perdidos na rede:  {} (frames que chegaram depois de uma perda: {com_perda_antes})",
-        r.frames_lost
+        "  frames perdidos na rede:  {} ({} keyframes pedidos)",
+        r.frames_lost, s.keyframe_requests
     );
     if s.frames_dropped > 0 {
         println!(

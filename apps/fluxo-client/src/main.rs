@@ -156,6 +156,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let duracao = (o.segundos > 0.0).then(|| Duration::from_secs_f64(o.segundos));
     let mut inicio: Option<Instant> = None;
     let mut esperando_keyframe = true;
+    // Quando a perda atual foi notada, para medir quanto a imagem ficou congelada.
+    let mut perda_desde: Option<Instant> = None;
+    let mut recuperacoes = Serie::default();
+    let mut perdas = 0u64;
     let mut proximo_titulo = Instant::now() + Duration::from_secs(1);
 
     // Estatísticas: por segundo (título) e totais (resumo).
@@ -179,6 +183,12 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             tela.resize(janela.client_size())?;
         }
 
+        // Sem imagem decodificável (largada ou perda): pede um keyframe. Pode
+        // chamar a cada volta: o fluxo-net segura pedidos repetidos.
+        if esperando_keyframe {
+            rx.request_keyframe();
+        }
+
         // Espera curta para a janela continuar responsiva sem frames.
         let Some(primeiro) = rx.recv_frame(Duration::from_millis(2))? else {
             if Instant::now() >= proximo_titulo {
@@ -195,21 +205,35 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         while let Some(f) = chegou.take() {
             recebidos += 1;
             bytes_seg += f.frame.data.len() as u64;
+            // Um frame se perdeu antes deste: os P-frames seguintes apontam
+            // para uma imagem que o decoder não tem. Em vez de mostrar imagem
+            // corrompida, congela a última boa e pede um keyframe.
+            if f.frame.preceded_by_loss && !f.frame.keyframe && !esperando_keyframe {
+                perdas += 1;
+                esperando_keyframe = true;
+                perda_desde = Some(Instant::now());
+                rx.request_keyframe();
+            }
             if esperando_keyframe && !f.frame.keyframe {
                 pulados += 1;
             } else {
                 esperando_keyframe = false;
+                if let Some(t) = perda_desde.take() {
+                    recuperacoes.push(t.elapsed().as_secs_f64() * 1000.0);
+                }
                 let t = Instant::now();
                 match decoder.decode(&f.frame.data) {
                     Ok(Some(d)) => para_mostrar = Some((d, f.frame.timestamp_us)),
                     Ok(None) => {}
                     Err(e) => {
-                        // Bitstream estragado (perda de pacotes): recomeça no
-                        // próximo keyframe com um decoder limpo.
+                        // Bitstream estragado: recomeça no próximo keyframe
+                        // com um decoder limpo.
                         erros_decode += 1;
-                        eprintln!("(decode falhou: {e}; aguardando keyframe)");
+                        eprintln!("(decode falhou: {e}; pedindo keyframe)");
                         decoder = VideoDecoder::new(&device)?;
                         esperando_keyframe = true;
+                        perda_desde = Some(Instant::now());
+                        rx.request_keyframe();
                     }
                 }
                 decodes.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -249,12 +273,18 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let total = inicio.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
     println!("\nResultado ({:.1} s)", total);
     println!(
-        "  frames: {recebidos} recebidos, {mostrados} mostrados ({:.1} fps), {pulados} pulados antes do 1º keyframe",
+        "  frames: {recebidos} recebidos, {mostrados} mostrados ({:.1} fps), {pulados} pulados esperando keyframe",
         mostrados as f64 / total.max(0.001)
     );
     println!(
         "  perdidos na rede: {} | erros de decode: {erros_decode} | descartados na fila: {}",
         s.reassembly.frames_lost, s.frames_dropped
+    );
+    println!(
+        "  recuperação:      {perdas} perdas, {} keyframes pedidos; imagem congelada média {:.1} ms, máx {:.1} ms",
+        s.keyframe_requests,
+        recuperacoes.media(),
+        recuperacoes.percentil(1.0)
     );
     println!(
         "  decode (CPU):     média {:.2} ms, p99 {:.2} ms",

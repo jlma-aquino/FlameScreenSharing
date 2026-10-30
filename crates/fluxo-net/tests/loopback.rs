@@ -144,3 +144,64 @@ fn host_novo_e_aceito_depois_do_timeout() {
     assert_eq!(f.frame.data, frame(0, 5_000));
     assert_eq!(rx.stats().peer_changes, 1);
 }
+
+#[test]
+fn pedido_de_keyframe_chega_ao_host_uma_vez() {
+    let (rx, tx) = par(0, Duration::from_secs(10));
+    // Antes de conhecer o host, não há para quem pedir.
+    assert!(!rx.request_keyframe());
+    tx.send_frame(frame(0, 1_000), true, clock_us()).unwrap();
+    rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
+
+    assert!(rx.request_keyframe(), "primeiro pedido deve sair");
+    assert!(
+        !rx.request_keyframe(),
+        "pedido repetido logo em seguida é segurado"
+    );
+
+    let limite = Instant::now() + Duration::from_secs(2);
+    while !tx.take_keyframe_request() {
+        assert!(Instant::now() < limite, "pedido não chegou: {:?}", tx.stats());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!tx.take_keyframe_request(), "o pedido é consumido uma vez só");
+    assert_eq!(tx.stats().keyframe_requests, 1);
+    assert_eq!(rx.stats().keyframe_requests, 1);
+
+    // Passado o intervalo mínimo, pode pedir de novo.
+    std::thread::sleep(Duration::from_millis(60));
+    assert!(rx.request_keyframe());
+}
+
+#[test]
+fn perda_simulada_descarta_pacotes_e_o_receptor_percebe() {
+    let rx = VideoReceiver::bind("127.0.0.1:0", ReceiverConfig::default()).unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            pacing_bps: 0,
+            simulated_loss: 0.2,
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
+    .unwrap();
+    for n in 0..40 {
+        tx.send_frame(frame(n, 12_000), n == 0, clock_us()).unwrap();
+    }
+    let mut completos = 0;
+    while let Some(f) = rx.recv_frame(Duration::from_millis(300)).unwrap() {
+        assert_eq!(
+            f.frame.data,
+            frame(f.frame.frame_id as usize, 12_000),
+            "frame remontado errado"
+        );
+        completos += 1;
+    }
+    let (s, r) = (tx.stats(), rx.stats());
+    // 40 frames × 10 pacotes a 20% de perda: ~80 descartes; quase todo
+    // frame perde algum pacote (só ~11% saem inteiros).
+    assert!(s.simulated_drops > 30, "{s:?}");
+    assert!(completos < 20, "{completos} frames completos");
+    assert!(r.reassembly.frames_lost > 0);
+}
