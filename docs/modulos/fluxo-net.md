@@ -83,6 +83,15 @@ relógios; o RTT não é afetado.
 | Maior tempo de envio de um frame (pacing 50 Mbps) | 5,0 ms | 6,5 ms |
 | Bitrate médio | 6,3 Mbps | 13,3 Mbps |
 
+## Medições entre dois PCs (host Windows → notebook Linux no Wi-Fi, 30 s)
+
+| | Resultado |
+|---|---|
+| Pacotes | 40 085 recebidos, 0 duplicados, 0 atrasados, 0 inválidos |
+| Frames perdidos | 1, na largada (provável descarte da 1ª rajada enquanto o Windows resolvia o ARP); 0 durante o vídeo |
+| RTT | 1,0 ms mínimo, 2,9 ms suavizado; sobe de ~1,2 para 2,5–4,6 ms transmitindo a ~17 Mbps (fila no caminho) |
+| Trânsito | Relógios defasados ~0,7 s, então só a variação vale: p99 +17 ms e pico +56 ms acima da mediana (na mesma máquina, ~2 ms) |
+
 ## Testes
 
 ```powershell

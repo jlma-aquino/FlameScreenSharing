@@ -78,6 +78,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - Cliente 30 s a 60 fps: 1801 recebidos, 1799 mostrados, captura → tela
   p50 7,4 ms / p99 8,0 ms. Com a janela do cliente na tela capturada
   (~170 fps): 2035 de 2035 mostrados, 0 descartados, p50 2,6 / p99 7,2 ms.
+- Entre dois PCs (host Windows → notebook Linux no Wi-Fi, 30 s): 40 085
+  pacotes, 0 duplicados/atrasados/inválidos, 1 frame perdido na largada e
+  0 durante o vídeo; RTT 1,0 ms mínimo / 2,9 ms suavizado, subindo até
+  4,6 ms sob carga; variação do trânsito p99 +17 ms, pico +56 ms.
 
 ## [0.1.0] — 2026-10-29
 

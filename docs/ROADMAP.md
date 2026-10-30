@@ -28,7 +28,10 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] `apps/fluxo-host`: captura → encode → rede, linha de comando
 - [x] `fluxo-bench receber`: receptor provisório (mede trânsito, perdas, RTT; grava e verifica o `.h264`)
 - [x] Teste ponta a ponta com vídeo a 60 fps na mesma máquina (900/900 frames, trânsito p99 7,6 ms)
-- [ ] Teste ponta a ponta entre dois PCs na rede local (cabo e Wi-Fi)
+- [x] Teste entre dois PCs, Wi-Fi: host Windows → notebook Linux no Wi-Fi, 30 s: 0 frames perdidos
+      durante o vídeo (1 na largada), RTT 1–4,6 ms, variação do trânsito p99 +17 ms, pico +56 ms
+- [ ] Teste entre dois PCs, ambos no cabo
+- [ ] Conferir a imagem do `.h264` recebido no notebook (`ffplay recebido.h264`)
 - [x] Limitar o host ao `--fps` em monitores de 144/165 Hz sem perder a imagem final de uma animação
       (antes: 162 fps e ~60 Mbps com o cliente na tela capturada; depois: 59,8 fps, 15 Mbps)
 
@@ -52,6 +55,10 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [ ] FEC (paridade por grupo de pacotes)
 - [ ] Controle adaptativo de bitrate (perda + RTT)
 - [ ] Testes com perda/atraso simulados
+- [ ] Não perder o 1º keyframe: mandar um ping antes do primeiro frame (causa provável: o Windows descarta parte da
+      primeira rajada para um IP novo enquanto resolve o ARP — visto no teste Windows → Linux)
+- [ ] Sincronizar relógios pelo Ping/Pong (estilo NTP: o Pong traz o relógio de quem responde), para
+      medir a latência de ida real entre PCs — no teste, os relógios diferiam ~0,7 s
 
 ## Fase 5 — Internet e segurança
 
