@@ -8,9 +8,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use fluxo_proto::{
-    CompletedFrame, PacketHeader, PacketKind, Reassembler, ReassemblerConfig, ReassemblerStats,
+    CompletedFrame, Feedback, PacketHeader, PacketKind, Reassembler, ReassemblerConfig, ReassemblerStats,
 };
 
+use crate::delay::QueueDelay;
 use crate::rtt::{RttEstimator, RttStats};
 use crate::{clock_diff_us, clock_us, is_transient, NetError};
 
@@ -32,6 +33,9 @@ pub struct ReceiverConfig {
     /// Sem pacotes do host por este tempo, aceitamos um host novo (ex.:
     /// o host reiniciou e veio de outra porta).
     pub peer_timeout: Duration,
+    /// Intervalo entre relatórios ([`Feedback`]) ao host, para o bitrate
+    /// adaptativo.
+    pub feedback_interval: Duration,
 }
 
 impl Default for ReceiverConfig {
@@ -41,6 +45,7 @@ impl Default for ReceiverConfig {
             ping_interval: Duration::from_millis(500),
             queue_frames: 120,
             peer_timeout: Duration::from_secs(2),
+            feedback_interval: Duration::from_millis(250),
         }
     }
 }
@@ -76,6 +81,11 @@ pub struct ReceiverStats {
     pub pings_answered: u64,
     /// Pedidos de keyframe enviados ao host.
     pub keyframe_requests: u64,
+    /// Relatórios de rede enviados ao host.
+    pub feedbacks_sent: u64,
+    /// Atraso de fila do último relatório, em ms: quanto os frames chegam
+    /// mais tarde que o normal (0 = rede sem fila).
+    pub queue_delay_ms: f64,
     pub rtt: RttStats,
 }
 
@@ -222,6 +232,11 @@ fn recv_loop(
     let mut last_from_peer = Instant::now();
     let mut next_ping = Instant::now();
     let mut ping_id = 0u32;
+    // Bitrate adaptativo: pacotes de vídeo/paridade que chegaram (todos,
+    // inclusive os que a remontagem descarta como sobra) e atraso de fila.
+    let mut pacotes_video = 0u32;
+    let mut fila = QueueDelay::default();
+    let mut next_feedback = Instant::now() + cfg.feedback_interval;
 
     while !shared.stop.load(Ordering::Relaxed) {
         if let Some(p) = peer {
@@ -231,6 +246,26 @@ fn recv_loop(
                 }
                 ping_id = ping_id.wrapping_add(1);
                 next_ping = Instant::now() + cfg.ping_interval;
+            }
+            if Instant::now() >= next_feedback {
+                let r = reasm.stats();
+                let f = Feedback {
+                    packets_received: pacotes_video,
+                    queue_delay_us: fila.current_us(),
+                    frames_lost: r.frames_lost as u32,
+                    fec_recovered: r.fec_recovered as u32,
+                };
+                let ok = PacketKind::Feedback
+                    .control(0, clock_us())
+                    .encode_with_payload(&f.to_bytes())
+                    .is_ok_and(|pkt| socket.send_to(&pkt, p).is_ok());
+                if ok {
+                    shared.with_stats(|s| {
+                        s.feedbacks_sent += 1;
+                        s.queue_delay_ms = f.queue_delay_us as f64 / 1000.0;
+                    });
+                }
+                next_feedback = Instant::now() + cfg.feedback_interval;
             }
         }
 
@@ -258,6 +293,7 @@ fn recv_loop(
             anterior => {
                 if anterior.is_some() {
                     reasm = Reassembler::new(cfg.reassembler);
+                    fila = QueueDelay::default();
                     shared.with_stats(|s| s.peer_changes += 1);
                 }
                 peer = Some(from);
@@ -268,8 +304,8 @@ fn recv_loop(
         last_from_peer = Instant::now();
 
         match h.kind {
-            // Só o host recebe pedidos de keyframe.
-            PacketKind::KeyframeRequest => {}
+            // Só o host recebe pedidos de keyframe e relatórios.
+            PacketKind::KeyframeRequest | PacketKind::Feedback => {}
             PacketKind::Ping => {
                 let pong = PacketHeader {
                     kind: PacketKind::Pong,
@@ -291,10 +327,12 @@ fn recv_loop(
                 shared.with_stats(|s| s.pongs_received += 1);
             }
             PacketKind::Video | PacketKind::Parity => {
+                pacotes_video = pacotes_video.wrapping_add(1);
                 let completed = reasm.push(&h, payload);
                 let mut dropped = false;
                 if let Some(frame) = completed {
                     let received_us = clock_us();
+                    fila.add(clock_diff_us(received_us, frame.timestamp_us), Instant::now());
                     let rf = ReceivedFrame {
                         transit_us: clock_diff_us(received_us, frame.timestamp_us),
                         received_us,

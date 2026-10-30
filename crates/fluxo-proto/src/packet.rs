@@ -29,7 +29,8 @@ pub const MAGIC: u16 = 0x464C;
 /// - 1: Video, Ping, Pong.
 /// - 2: + KeyframeRequest.
 /// - 3: + Parity (FEC) e o byte 13 do cabeçalho vira `fec_group`.
-pub const PROTOCOL_VERSION: u8 = 3;
+/// - 4: + Feedback (relatório do cliente para o bitrate adaptativo).
+pub const PROTOCOL_VERSION: u8 = 4;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 pub const FLAG_KEYFRAME: u8 = 0b0000_0001;
@@ -52,6 +53,9 @@ pub enum PacketKind {
     /// `frame_id`, `frag_count`, `flags` e `timestamp_us` iguais aos do
     /// frame; `frag_index` = número do grupo; `fec_group` = fragmentos por grupo.
     Parity = 5,
+    /// Cliente → host: relatório periódico (pacotes recebidos, atraso de fila,
+    /// perdas) para o bitrate adaptativo. Payload: [`crate::Feedback`].
+    Feedback = 6,
 }
 
 impl PacketKind {
@@ -62,6 +66,7 @@ impl PacketKind {
             3 => Some(Self::Pong),
             4 => Some(Self::KeyframeRequest),
             5 => Some(Self::Parity),
+            6 => Some(Self::Feedback),
             _ => None,
         }
     }
@@ -225,6 +230,12 @@ impl PacketHeader {
             return Err(ProtoError::BadFragment {
                 index: header.frag_index,
                 count: header.frag_count,
+            });
+        }
+        if kind == PacketKind::Feedback && actual != crate::feedback::FEEDBACK_LEN {
+            return Err(ProtoError::LengthMismatch {
+                declared: crate::feedback::FEEDBACK_LEN,
+                actual,
             });
         }
         if kind == PacketKind::Parity

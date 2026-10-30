@@ -55,8 +55,15 @@ pub(crate) struct NvencEncoder {
     nv12_view: ID3D11VideoProcessorOutputView,
     width: u32,
     height: u32,
+    fps: u32,
+    bitrate_kbps: u32,
     next_index: u64,
     name: String,
+    /// Configuração e parâmetros de inicialização, guardados para mudar o
+    /// bitrate depois (`nvEncReconfigureEncoder` recebe os dois de novo).
+    /// Em Box: `init` aponta para `config`, que não pode mudar de endereço.
+    config: Box<Blob<CONFIG_SIZE>>,
+    init: Box<Blob<INITIALIZE_PARAMS_SIZE>>,
 }
 
 impl NvencEncoder {
@@ -78,11 +85,15 @@ impl NvencEncoder {
             nv12_view,
             width: cfg.width,
             height: cfg.height,
+            fps: cfg.fps,
+            bitrate_kbps: cfg.bitrate_kbps,
             next_index: 0,
             name: format!(
                 "NVENC ({}), preset {PRESET_NAME}, ultra baixa latência",
                 adapter.name
             ),
+            config: Blob::new(),
+            init: Blob::new(),
         };
         me.init(device, cfg)?;
         Ok(me)
@@ -135,7 +146,7 @@ impl NvencEncoder {
         };
         api.check(enc, "nvEncGetEncodePresetConfigEx", st)?;
 
-        let mut config = Blob::<CONFIG_SIZE>::new();
+        let config = &mut self.config;
         config
             .bytes_mut()
             .copy_from_slice(&preset.bytes()[PC_PRESET_CFG..PC_PRESET_CFG + CONFIG_SIZE]);
@@ -144,11 +155,7 @@ impl NvencEncoder {
         config.set_u32(CFG_GOP_LENGTH, INFINITE_GOPLENGTH);
         config.set_u32(CFG_FRAME_INTERVAL_P, 1);
         config.set_u32(CFG_RC_MODE, RC_CBR);
-        config.set_u32(CFG_RC_AVERAGE_BITRATE, cfg.bitrate_bps());
-        config.set_u32(CFG_RC_MAX_BITRATE, cfg.bitrate_bps());
-        let um_frame = cfg.bitrate_bps() / cfg.fps;
-        config.set_u32(CFG_RC_VBV_BUFFER_SIZE, um_frame);
-        config.set_u32(CFG_RC_VBV_INITIAL_DELAY, um_frame);
+        set_rate(config, cfg.bitrate_bps(), cfg.fps);
         config.set_u32(CFG_H264_IDR_PERIOD, INFINITE_GOPLENGTH);
         config.set_bit(CFG_H264_REPEAT_SPSPPS, true);
         config.set_u32(CFG_H264_VUI_SIGNAL_TYPE_PRESENT, 1);
@@ -160,7 +167,7 @@ impl NvencEncoder {
         config.set_u32(CFG_H264_VUI_COLOUR_MATRIX, VUI_MATRIX_COEFFS_BT709);
 
         // 4. Inicializa.
-        let mut init = Blob::<INITIALIZE_PARAMS_SIZE>::new();
+        let init = &mut self.init;
         init.set_u32(IP_VERSION, INITIALIZE_PARAMS_VER);
         init.set_guid(IP_ENCODE_GUID, &CODEC_H264_GUID);
         init.set_guid(IP_PRESET_GUID, &PRESET);
@@ -176,7 +183,7 @@ impl NvencEncoder {
         init.set_u32(IP_MAX_ENCODE_WIDTH, cfg.width);
         init.set_u32(IP_MAX_ENCODE_HEIGHT, cfg.height);
         init.set_u32(IP_TUNING_INFO, TUNING_ULTRA_LOW_LATENCY);
-        // SAFETY: `config` vive até o fim desta função, depois da chamada.
+        // SAFETY: `config` fica guardado no encoder (Box), vivo enquanto ele existir.
         let st = unsafe { api.call(FL_INITIALIZE_ENCODER, enc, init.as_mut_ptr()) };
         api.check(enc, "nvEncInitializeEncoder", st)?;
 
@@ -271,6 +278,16 @@ impl NvencEncoder {
     }
 }
 
+/// Controle de taxa CBR com VBV de **um frame** (`bitrate / fps`): nenhum
+/// frame sai muito maior que a média, então nenhum demora a mais na rede.
+fn set_rate(config: &mut Blob<CONFIG_SIZE>, bitrate_bps: u32, fps: u32) {
+    let um_frame = bitrate_bps / fps.max(1);
+    config.set_u32(CFG_RC_AVERAGE_BITRATE, bitrate_bps);
+    config.set_u32(CFG_RC_MAX_BITRATE, bitrate_bps);
+    config.set_u32(CFG_RC_VBV_BUFFER_SIZE, um_frame);
+    config.set_u32(CFG_RC_VBV_INITIAL_DELAY, um_frame);
+}
+
 impl Encoder for NvencEncoder {
     fn backend(&self) -> Backend {
         Backend::Nvenc
@@ -278,6 +295,25 @@ impl Encoder for NvencEncoder {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn set_bitrate(&mut self, kbps: u32) -> Result<(), EncodeError> {
+        set_rate(&mut self.config, kbps.saturating_mul(1000), self.fps);
+        // Reconfiguração sem reset nem IDR: só o controle de taxa muda.
+        let mut rp = Blob::<RECONFIGURE_PARAMS_SIZE>::new();
+        rp.set_u32(RP_VERSION, RECONFIGURE_PARAMS_VER);
+        rp.bytes_mut()[RP_REINIT_PARAMS..RP_REINIT_PARAMS + INITIALIZE_PARAMS_SIZE]
+            .copy_from_slice(self.init.bytes());
+        // SAFETY: sessão aberta; os parâmetros copiados apontam para
+        // `self.config`, que vive (em Box) enquanto o encoder existir.
+        let st = unsafe { self.api.call(FL_RECONFIGURE_ENCODER, self.enc, rp.as_mut_ptr()) };
+        self.api.check(self.enc, "nvEncReconfigureEncoder", st)?;
+        self.bitrate_kbps = kbps;
+        Ok(())
+    }
+
+    fn bitrate_kbps(&self) -> u32 {
+        self.bitrate_kbps
     }
 
     fn encode(

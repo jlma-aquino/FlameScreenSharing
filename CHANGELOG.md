@@ -6,6 +6,16 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v4 — bitrate adaptativo:** pacote `Feedback` (`kind = 6`), que
+  o cliente manda a cada 250 ms com os pacotes recebidos (acumulado) e o
+  atraso de fila (trânsito de cada frame menos o menor dos últimos 10 s).
+  O host calcula a perda do intervalo e o `BitrateController` (AIMD: cai
+  ×0,85–0,7 com perda ≥ 3% ou fila ≥ 25 ms, sobe +8%/s com a rede folgada)
+  ajusta o encoder em tempo real (`Encoder::set_bitrate`: NVENC via
+  `nvEncReconfigureEncoder`, MF via `ICodecAPI`) e o pacing. `fluxo-host`:
+  `--mbps` vira teto, novos `--mbps-min`, `--bitrate-fixo` e
+  `--simular-banda M` (link simulado com fila e descarte, para testes).
+  `fluxo-bench encoders` testa a mudança de bitrate em cada backend.
 - **Protocolo v3 — FEC:** pacote `Parity` (`kind = 5`) com o XOR de um grupo
   de fragmentos; o byte 13 do cabeçalho vira `fec_group`. Novo módulo
   `fluxo_proto::fec`; `Fragmenter::with_fec_group` intercala a paridade
@@ -80,6 +90,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- Bitrate adaptativo num link simulado de 8 Mbps (host querendo 20, cliente
+  na mesma máquina, 15 s): frames perdidos de 255 (bitrate fixo) para 44,
+  mostrados de 470/593 para 762/873, captura → tela p99 de 223 para 95 ms;
+  desceu de 20 para ~6 Mbps em 2 s e ficou sem perda, com fila de 5–10 ms.
 - FEC (grupos de 10), exemplo `loopback` com 300 frames a 20 Mbps: com 1%
   de perda, 98,7% dos frames inteiros (sem FEC: 68%); com 3%, 85% (sem:
   35%; grupos de 5: 91%). No pipeline real com 1% de perda (cliente, 15 s):

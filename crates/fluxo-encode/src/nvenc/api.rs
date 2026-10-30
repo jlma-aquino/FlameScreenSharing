@@ -89,7 +89,7 @@ type FnPresetConfigEx = unsafe extern "system" fn(*mut c_void, GUID, GUID, u32, 
 type FnLastError = unsafe extern "system" fn(*mut c_void) -> *const c_char;
 
 /// Funções da lista que usamos; todas conferidas na carga.
-const USED: [(usize, &str); 16] = [
+const USED: [(usize, &str); 17] = [
     (FL_OPEN_ENCODE_SESSION_EX, "nvEncOpenEncodeSessionEx"),
     (FL_GET_ENCODE_GUID_COUNT, "nvEncGetEncodeGUIDCount"),
     (FL_GET_ENCODE_GUIDS, "nvEncGetEncodeGUIDs"),
@@ -106,6 +106,7 @@ const USED: [(usize, &str); 16] = [
     (FL_UNLOCK_BITSTREAM, "nvEncUnlockBitstream"),
     (FL_DESTROY_ENCODER, "nvEncDestroyEncoder"),
     (FL_GET_LAST_ERROR_STRING, "nvEncGetLastErrorString"),
+    (FL_RECONFIGURE_ENCODER, "nvEncReconfigureEncoder"),
 ];
 
 /// A DLL do driver, carregada uma vez por processo e nunca descarregada.

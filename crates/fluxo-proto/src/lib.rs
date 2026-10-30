@@ -25,11 +25,13 @@
 //! A especificação byte a byte está em `docs/PROTOCOLO.md`.
 
 pub mod fec;
+pub mod feedback;
 pub mod fragment;
 pub mod packet;
 pub mod reassembly;
 pub mod seq;
 
+pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
 pub use packet::{PacketHeader, PacketKind, ProtoError, HEADER_LEN, MAGIC, PROTOCOL_VERSION};
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};

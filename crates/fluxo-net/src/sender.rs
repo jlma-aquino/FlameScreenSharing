@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use fluxo_proto::{Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD};
+use fluxo_proto::{Feedback, Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD};
 
+use crate::bitrate::NetworkReport;
 use crate::pacer::Pacer;
 use crate::rtt::{RttEstimator, RttStats};
 use crate::{clock_diff_us, clock_us, is_transient, NetError};
@@ -31,12 +32,21 @@ pub struct SenderConfig {
     /// mais de pacotes, e uma perda por grupo é reconstruída no cliente sem
     /// pedir nada ao host. Ver `fluxo_proto::fec`.
     pub fec_group: u8,
+    /// **Só para testes:** simula um link com esta banda (bit/s; 0 = sem
+    /// limite). Os pacotes saem no máximo nesse ritmo, os frames esperam na
+    /// fila (o cliente vê o atraso crescer) e, passando de
+    /// [`SIMULATED_QUEUE_FRAMES`] na fila, são descartados — como num
+    /// roteador congestionado.
+    pub simulated_bandwidth_bps: u64,
 }
+
+/// Tamanho da "fila do roteador" da banda simulada, em frames (~66 ms a 60 fps).
+pub const SIMULATED_QUEUE_FRAMES: u64 = 4;
 
 impl SenderConfig {
     /// Configuração para um vídeo com este bitrate: pacing a 2,5× o
     /// bitrate (folga para keyframes e variações), rajadas de 10 pacotes,
-    /// ping a cada 500 ms, FEC com grupos de 10, sem perda simulada.
+    /// ping a cada 500 ms, FEC com grupos de 10, sem simulações.
     pub fn for_bitrate(bitrate_bps: u64) -> Self {
         Self {
             max_payload: DEFAULT_MAX_PAYLOAD,
@@ -45,9 +55,14 @@ impl SenderConfig {
             ping_interval: Duration::from_millis(500),
             simulated_loss: 0.0,
             fec_group: 10,
+            simulated_bandwidth_bps: 0,
         }
     }
 }
+
+/// Abaixo deste número de pacotes num intervalo, a taxa de perda não é
+/// calculada (tela parada: poucos pacotes, conta sem valor estatístico).
+const MIN_PACKETS_FOR_LOSS: u64 = 30;
 
 /// Espera máxima, na largada, pela resposta do primeiro ping antes de mandar
 /// o primeiro frame. Na primeira rajada para um IP novo, o sistema ainda
@@ -81,8 +96,15 @@ pub struct SenderStats {
     pub pings_answered: u64,
     /// Pedidos de keyframe recebidos do cliente.
     pub keyframe_requests: u64,
-    /// Pacotes descartados de propósito por [`SenderConfig::simulated_loss`].
+    /// Pacotes descartados de propósito por [`SenderConfig::simulated_loss`]
+    /// e pela fila cheia de [`SenderConfig::simulated_bandwidth_bps`].
     pub simulated_drops: u64,
+    /// Relatórios de rede recebidos do cliente.
+    pub feedbacks_received: u64,
+    /// Perda calculada no último relatório (fração), se houve pacotes suficientes.
+    pub last_loss: Option<f64>,
+    /// Atraso de fila do último relatório do cliente, em ms.
+    pub queue_delay_ms: f64,
     pub rtt: RttStats,
 }
 
@@ -99,6 +121,14 @@ struct Shared {
     pacing_bps: AtomicU64,
     stop: AtomicBool,
     keyframe_requested: AtomicBool,
+    /// Pacotes de vídeo/paridade que tentamos mandar (inclui os descartados
+    /// pelas simulações): base da conta de perda.
+    attempted: AtomicU64,
+    /// Contadores no último relatório usado na conta: (recebidos pelo
+    /// cliente, tentados por nós).
+    feedback_base: Mutex<Option<(u32, u64)>>,
+    /// Último relatório ainda não consumido por [`VideoSender::take_report`].
+    report: Mutex<Option<NetworkReport>>,
 }
 
 impl Shared {
@@ -147,6 +177,9 @@ impl VideoSender {
             pacing_bps: AtomicU64::new(cfg.pacing_bps),
             stop: AtomicBool::new(false),
             keyframe_requested: AtomicBool::new(false),
+            attempted: AtomicU64::new(0),
+            feedback_base: Mutex::new(None),
+            report: Mutex::new(None),
         });
         let (queue, jobs) = mpsc::channel();
 
@@ -194,6 +227,17 @@ impl VideoSender {
     /// chamada. Vários pedidos seguidos contam como um só.
     pub fn take_keyframe_request(&self) -> bool {
         self.shared.keyframe_requested.swap(false, Ordering::Relaxed)
+    }
+
+    /// O relatório de rede mais recente do cliente, uma vez (`None` se não
+    /// chegou nenhum desde a última chamada). Alimente um
+    /// [`BitrateController`](crate::BitrateController) com ele.
+    pub fn take_report(&self) -> Option<NetworkReport> {
+        self.shared
+            .report
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 
     /// Muda a taxa de pacing (0 desliga). Vale para os próximos pacotes.
@@ -327,7 +371,27 @@ fn send_job(
             return;
         }
     };
-    pacer.set_rate(shared.pacing_bps.load(Ordering::Relaxed), start);
+    shared
+        .attempted
+        .fetch_add(packets.len() as u64, Ordering::Relaxed);
+
+    // Banda simulada: fila do "roteador" cheia → o frame inteiro se perde
+    // (o fragmentador já numerou, então o cliente vê o buraco).
+    let fila = shared.stats.lock().map(|s| s.queue_len).unwrap_or(0);
+    if cfg.simulated_bandwidth_bps > 0 && fila > SIMULATED_QUEUE_FRAMES {
+        shared.with_stats(|s| {
+            s.queue_len = s.queue_len.saturating_sub(1);
+            s.simulated_drops += packets.len() as u64;
+        });
+        return;
+    }
+    let pacing = shared.pacing_bps.load(Ordering::Relaxed);
+    let pacing = match cfg.simulated_bandwidth_bps {
+        0 => pacing,
+        banda if pacing == 0 => banda,
+        banda => pacing.min(banda),
+    };
+    pacer.set_rate(pacing, start);
 
     let (mut sent, mut bytes, mut errors, mut dropped) = (0u64, 0u64, 0u64, 0u64);
     for p in &packets {
@@ -376,7 +440,7 @@ fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
                 continue;
             }
         };
-        let Ok((h, _)) = PacketHeader::decode(&buf[..n]) else {
+        let Ok((h, payload)) = PacketHeader::decode(&buf[..n]) else {
             continue; // lixo na porta: ignorar
         };
         match h.kind {
@@ -404,7 +468,52 @@ fn recv_loop(socket: UdpSocket, shared: Arc<Shared>) {
                 shared.keyframe_requested.store(true, Ordering::Relaxed);
                 shared.with_stats(|s| s.keyframe_requests += 1);
             }
+            PacketKind::Feedback => {
+                if let Ok(f) = Feedback::from_bytes(payload) {
+                    on_feedback(&shared, &f);
+                }
+            }
             PacketKind::Video | PacketKind::Parity => {} // o host não recebe vídeo
         }
     }
+}
+
+/// Transforma um relatório do cliente em [`NetworkReport`].
+///
+/// A perda do intervalo é `1 − recebidos/tentados` entre este relatório e o
+/// último usado. Os pacotes ainda em trânsito entram como "não recebidos",
+/// mas isso se compensa de um intervalo para o outro.
+fn on_feedback(shared: &Shared, f: &Feedback) {
+    let tentados = shared.attempted.load(Ordering::Relaxed);
+    let mut base = shared.feedback_base.lock().unwrap_or_else(|e| e.into_inner());
+    let loss = match *base {
+        Some((recebidos0, tentados0)) => {
+            let tentados_int = tentados.saturating_sub(tentados0);
+            if tentados_int >= MIN_PACKETS_FOR_LOSS {
+                let recebidos_int = f.packets_received.wrapping_sub(recebidos0) as u64;
+                *base = Some((f.packets_received, tentados));
+                Some((1.0 - recebidos_int as f64 / tentados_int as f64).clamp(0.0, 1.0))
+            } else {
+                // Poucos pacotes (tela parada): acumula com o próximo intervalo.
+                None
+            }
+        }
+        None => {
+            *base = Some((f.packets_received, tentados));
+            None
+        }
+    };
+    drop(base);
+    let report = NetworkReport {
+        loss,
+        queue_delay_ms: f.queue_delay_us as f64 / 1000.0,
+    };
+    *shared.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
+    shared.with_stats(|s| {
+        s.feedbacks_received += 1;
+        s.queue_delay_ms = report.queue_delay_ms;
+        if loss.is_some() {
+            s.last_loss = loss;
+        }
+    });
 }

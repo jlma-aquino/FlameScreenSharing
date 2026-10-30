@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 3
+# Protocolo de rede — versão 4
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -12,8 +12,8 @@ CHANGELOG.
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `3`. Versões diferentes são descartadas (histórico na seção 6). |
-| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity. |
+| 2 | 1 | `version` | `4`. Versões diferentes são descartadas (histórico na seção 6). |
+| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback. |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
@@ -48,6 +48,20 @@ cliente não tem imagem (largada). `frame_id` = número do pedido,
   próximo encode; com a tela parada, recodifica a última imagem enviada.
 - O keyframe periódico do host (padrão 10 s) fica só como rede de segurança
   para um pedido que se perca.
+
+### Feedback (`kind = 6`) — relatório para o bitrate adaptativo
+Cliente → host a cada 250 ms. Payload de 16 bytes (big-endian):
+`packets_received` (u32, acumulado: vídeo + paridade que chegaram),
+`queue_delay_us` (u32), `frames_lost` (u32, acumulado), `fec_recovered`
+(u32, acumulado). Os contadores são acumulados para que um relatório
+perdido não estrague a conta.
+
+- **Perda:** o host compara `packets_received` com quantos pacotes tentou
+  mandar entre dois relatórios: `perda = 1 − recebidos / tentados`. Com
+  menos de 30 pacotes no intervalo (tela parada) a conta não é feita.
+- **Atraso de fila:** o cliente compara o trânsito de cada frame com o
+  menor trânsito dos últimos 10 s (a rede vazia). A defasagem entre os
+  relógios se cancela, então vale entre PCs diferentes.
 
 ### Parity (`kind = 5`) — FEC
 Pacote de paridade XOR de um grupo de fragmentos de vídeo. Os fragmentos de
@@ -114,7 +128,6 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 
 ## 5. Planejado para próximas versões
 
-- `kind = 5` **Feedback** (cliente → host): perda, jitter, bitrate recebido.
 - **FEC mais forte** (Reed-Solomon) se a perda em rajada se mostrar comum:
   o XOR atual só recupera uma perda por grupo.
 - **Criptografia**: chave por sessão trocada no handshake; payload cifrado
@@ -129,3 +142,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 1 | Video, Ping, Pong. |
 | 2 | + KeyframeRequest (`kind = 4`). Pacotes da versão 1 são recusados. |
 | 3 | + Parity (`kind = 5`, FEC); byte 13 vira `fec_group`. Pacotes das versões 1 e 2 são recusados. |
+| 4 | + Feedback (`kind = 6`), relatório para o bitrate adaptativo. Versões anteriores recusadas. |

@@ -74,6 +74,12 @@ Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
 - **Largada aquecida.** O primeiro ping sai antes do primeiro frame, e o
   envio espera até 50 ms pela resposta, para o sistema resolver o endereço
   do cliente (ARP) antes da primeira rajada.
+- **Bitrate adaptativo** (padrão ligado): `--mbps` vira o teto, `--mbps-min`
+  o piso (padrão teto/8). Os relatórios do cliente decidem; quedas aparecem
+  na saída (`↓ bitrate 9.8 Mbps (perda 54%)`), e o relatório por segundo
+  mostra alvo, perda e fila. `--bitrate-fixo` desliga.
+- **`--simular-banda M`** (teste): simula um link de M Mbps com fila de ~4
+  frames e descarte quando enche.
 - **FEC** (`--fec K`, padrão 10): 1 pacote de paridade a cada K de dados;
   o cliente reconstrói uma perda por grupo sozinho. 0 desliga.
 - **`--simular-perda P`** (teste): descarta P% dos pacotes de vídeo antes de

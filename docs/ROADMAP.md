@@ -58,7 +58,11 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] FEC por paridade XOR (protocolo v3, `--fec K`, padrão 10 = +10% de pacotes). Com 1% de perda no
       pipeline real: frames perdidos de 236 para 8, tempo congelado de ~28% para ~0,6%
 - [ ] FEC Reed-Solomon (recupera 2+ perdas por grupo), se perdas em rajada aparecerem no Wi-Fi
-- [ ] Controle adaptativo de bitrate (perda + RTT)
+- [x] Bitrate adaptativo (protocolo v4, `Feedback`): o cliente relata perda e atraso de fila a cada 250 ms;
+      o host cai ×0,85–0,7 e sobe +8%/s. Link simulado de 8 Mbps: perdidos 255 → 44, p99 captura→tela
+      223 → 95 ms, regime estável sem perda e com fila de 5–10 ms
+- [ ] Ajuste fino do bitrate adaptativo no Wi-Fi real (hoje se acomoda em ~60% da banda simulada)
+- [x] Banda limitada simulada (`fluxo-host --simular-banda M`)
 - [x] Perda simulada (`fluxo-host --simular-perda P`)
 - [ ] Atraso/jitter simulados
 - [x] Não perder o 1º keyframe: o host manda um ping antes do primeiro frame e espera até 50 ms pela

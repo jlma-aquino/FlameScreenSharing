@@ -60,6 +60,7 @@ pub(crate) struct MfEncoder {
     width: u32,
     height: u32,
     fps: u32,
+    bitrate_kbps: u32,
     next_input: u64,
     next_output: u64,
     name: String,
@@ -192,6 +193,7 @@ impl MfEncoder {
                 width: cfg.width,
                 height: cfg.height,
                 fps: cfg.fps,
+                bitrate_kbps: cfg.bitrate_kbps,
                 next_input: 0,
                 next_output: 0,
                 name: format!("Media Foundation: {mft_name} ({})", adapter.name),
@@ -301,6 +303,32 @@ impl Encoder for MfEncoder {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn set_bitrate(&mut self, kbps: u32) -> Result<(), EncodeError> {
+        let Some(c) = &self.codec else {
+            return Err(unavailable(
+                "este MFT não aceita mudar o bitrate (sem ICodecAPI)".into(),
+            ));
+        };
+        let bps = kbps.saturating_mul(1000);
+        // SAFETY: propriedades dinâmicas do ICodecAPI; valem do próximo frame em diante.
+        unsafe {
+            c.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &variant_u32(bps))
+                .map_err(win_err("CODECAPI_AVEncCommonMeanBitRate"))?;
+            // Opcionais: alguns fabricantes recusam mudar estes em tempo real.
+            let _ = c.SetValue(&CODECAPI_AVEncCommonMaxBitRate, &variant_u32(bps));
+            let _ = c.SetValue(
+                &CODECAPI_AVEncCommonBufferSize,
+                &variant_u32(bps / self.fps.max(1)),
+            );
+        }
+        self.bitrate_kbps = kbps;
+        Ok(())
+    }
+
+    fn bitrate_kbps(&self) -> u32 {
+        self.bitrate_kbps
     }
 
     fn encode(

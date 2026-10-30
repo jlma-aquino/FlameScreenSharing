@@ -31,7 +31,10 @@ Opções:
   --destino IP:PORTA    para onde enviar (obrigatório), ex.: 192.168.0.20:9000
   --monitor N           monitor a transmitir (padrão 0)
   --encoder E           auto, nvenc ou mf (padrão auto)
-  --mbps M              bitrate do vídeo (padrão 20)
+  --mbps M              bitrate máximo do vídeo (padrão 20). O bitrate adaptativo
+                        desce quando a rede reclama e volta até este valor
+  --mbps-min M          piso do bitrate adaptativo (padrão mbps/8, mínimo 1)
+  --bitrate-fixo        desliga o bitrate adaptativo (fica sempre em --mbps)
   --fps F               máximo de frames por segundo (padrão 60); capturas mais
                         rápidas esperam o próximo horário, sem perder a última
   --pacing-mbps P       taxa de envio dos pacotes (padrão 2,5 × mbps; 0 = sem pacing)
@@ -42,6 +45,8 @@ Opções:
   --simular-perda P     TESTE: descarta P% dos pacotes de vídeo antes de enviar
   --fec K               FEC: 1 pacote de paridade a cada K de dados (padrão 10;
                         0 = sem FEC). Reconstrói 1 perda por grupo no cliente
+  --simular-banda M     TESTE: simula um link de M Mbps (fila de ~4 frames e
+                        descarte quando enche), como um Wi-Fi congestionado
 
 Para testar sem cliente, rode antes em outro terminal (ou outro PC):
   fluxo-bench receber --porta 9000";
@@ -61,6 +66,9 @@ struct Opts {
     porta_local: u16,
     simular_perda: f64,
     fec: u8,
+    mbps_min: Option<f64>,
+    bitrate_fixo: bool,
+    simular_banda: f64,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -76,6 +84,9 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         porta_local: 0,
         simular_perda: 0.0,
         fec: 10,
+        mbps_min: None,
+        bitrate_fixo: false,
+        simular_banda: 0.0,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -93,6 +104,9 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--segundos" => o.segundos = valor()?.parse().map_err(|_| "segundos inválido")?,
             "--porta-local" => o.porta_local = valor()?.parse().map_err(|_| "porta-local inválida")?,
             "--simular-perda" => o.simular_perda = valor()?.parse().map_err(|_| "simular-perda inválido")?,
+            "--mbps-min" => o.mbps_min = Some(valor()?.parse().map_err(|_| "mbps-min inválido")?),
+            "--bitrate-fixo" => o.bitrate_fixo = true,
+            "--simular-banda" => o.simular_banda = valor()?.parse().map_err(|_| "simular-banda inválido")?,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
@@ -143,6 +157,8 @@ struct Contadores {
     keyframe: bool,
     /// Pedidos de keyframe do cliente atendidos.
     pedidos: u64,
+    /// Mudanças de bitrate feitas pelo controle adaptativo.
+    mudancas: u64,
 }
 
 /// Codifica `textura` e enfileira o resultado na rede. Devolve o tamanho
@@ -224,7 +240,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
 
     use fluxo_capture::{enable_dpi_awareness, CaptureError, DesktopCapturer};
     use fluxo_encode::{open_encoder, EncoderConfig};
-    use fluxo_net::{clock_us, SenderConfig, VideoSender};
+    use fluxo_net::{clock_us, BitrateChange, BitrateController, SenderConfig, VideoSender};
 
     use crate::limite::FpsLimiter;
 
@@ -254,8 +270,19 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(SenderConfig::for_bitrate(bitrate_bps).pacing_bps),
         simulated_loss: o.simular_perda / 100.0,
         fec_group: o.fec,
+        simulated_bandwidth_bps: (o.simular_banda * 1e6).round() as u64,
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
+    // Bitrate adaptativo: o controlador decide, o encoder e o pacing seguem
+    // (o pacing só se não foi fixado à mão).
+    let max_kbps = (bitrate_bps / 1000) as u32;
+    let min_kbps = o
+        .mbps_min
+        .map(|m| (m * 1000.0) as u32)
+        .unwrap_or(max_kbps / 8)
+        .max(1000);
+    let mut abr = (!o.bitrate_fixo).then(|| BitrateController::new(min_kbps, max_kbps, Instant::now()));
+    let pacing_segue_bitrate = o.pacing_mbps.is_none();
     let pacing_mbps = net_cfg.pacing_bps as f64 / 1e6;
     let tx = VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?;
 
@@ -280,6 +307,17 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             false => String::new(),
         }
     );
+    match &abr {
+        Some(_) => println!(
+            "  bitrate adaptativo: entre {:.1} e {:.1} Mbps",
+            min_kbps as f64 / 1000.0,
+            max_kbps as f64 / 1000.0
+        ),
+        None => println!("  bitrate fixo (--bitrate-fixo)"),
+    }
+    if o.simular_banda > 0.0 {
+        println!("  TESTE: simulando um link de {} Mbps", o.simular_banda);
+    }
     if o.segundos <= 0.0 {
         println!("  Ctrl+C para encerrar.");
     }
@@ -298,6 +336,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let mut ultima: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
     let mut seg = Contadores::default();
     let mut total = Contadores::default();
+    // Menor bitrate alvo a que o adaptativo chegou (para o resumo).
+    let mut alvo_min = enc.bitrate_kbps();
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
         // Com um pendente, espera no máximo até o horário dele; sem pendente,
@@ -318,6 +358,37 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => return Err(e.into()),
         };
+
+        // Relatório do cliente → bitrate adaptativo.
+        if let Some(r) = tx.take_report() {
+            if let Some((kbps, motivo)) = abr.as_mut().and_then(|c| c.on_report(&r, Instant::now())) {
+                match enc.set_bitrate(kbps) {
+                    Ok(()) => {
+                        if pacing_segue_bitrate {
+                            tx.set_pacing_bps(kbps as u64 * 1000 * 5 / 2);
+                        }
+                        seg.mudancas += 1;
+                        if motivo != BitrateChange::Up {
+                            println!(
+                                "  ↓ bitrate {:.1} Mbps ({})",
+                                kbps as f64 / 1000.0,
+                                match motivo {
+                                    BitrateChange::DownLoss =>
+                                        format!("perda {:.1}%", r.loss.unwrap_or(0.0) * 100.0),
+                                    _ => format!("fila {:.0} ms", r.queue_delay_ms),
+                                }
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        println!(
+                            "(o encoder não aceitou mudar o bitrate: {e}; bitrate fixo daqui em diante)"
+                        );
+                        abr = None;
+                    }
+                }
+            }
+        }
 
         // Keyframe: pedido pelo cliente (perdeu algo) ou periódico (rede de
         // segurança, caso um pedido se perca).
@@ -366,6 +437,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         if let Some((w, h)) = recriar {
             println!("(resolução mudou para {w}x{h}; recriando o encoder, que começa com keyframe)");
             enc = open_encoder(&device, &config_para(w, h))?.encoder;
+            if let Some(c) = &abr {
+                // O encoder novo nasce no máximo; volta ao bitrate atual.
+                let _ = enc.set_bitrate(c.current_kbps());
+            }
             pendente = None;
             ultima = None;
             limite = FpsLimiter::new(o.fps);
@@ -374,20 +449,25 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         if inicio.elapsed() >= proximo_relatorio {
             let s = tx.stats();
             println!(
-                "  {:>4} s: {} fps ({} capturas adiadas, {} keyframes pedidos), {:.1} Mbps, encode {:.1} ms, envio {:.1} ms (fila {}), RTT {}",
+                "  {:>4} s: {} fps, {:.1} Mbps (alvo {:.1}), perda {}, fila {:.0} ms, encode {:.1} ms, envio {:.1} ms (fila de envio {}), RTT {}, {} capturas adiadas, {} keyframes pedidos",
                 proximo_relatorio.as_secs(),
                 seg.frames,
-                seg.adiadas,
-                seg.pedidos,
                 seg.bytes as f64 * 8.0 / 1e6,
+                enc.bitrate_kbps() as f64 / 1000.0,
+                s.last_loss.map_or("—".to_string(), |p| format!("{:.1}%", p * 100.0)),
+                s.queue_delay_ms,
                 seg.encode.as_secs_f64() * 1000.0 / seg.frames.max(1) as f64,
                 s.last_frame_send_ms,
                 s.queue_len,
                 match s.rtt.samples {
                     0 => "— (cliente não respondeu)".to_string(),
                     _ => format!("{:.2} ms", s.rtt.smoothed_ms),
-                }
+                },
+                seg.adiadas,
+                seg.pedidos,
             );
+            total.mudancas += seg.mudancas;
+            alvo_min = alvo_min.min(enc.bitrate_kbps());
             total.frames += seg.frames;
             total.bytes += seg.bytes;
             total.adiadas += seg.adiadas;
@@ -401,6 +481,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     total.bytes += seg.bytes;
     total.adiadas += seg.adiadas;
     total.pedidos += seg.pedidos;
+    total.mudancas += seg.mudancas;
+    alvo_min = alvo_min.min(enc.bitrate_kbps());
+    let alvo_final = enc.bitrate_kbps();
     drop(enc);
     let s = tx.stats();
     drop(tx); // espera a fila de envio esvaziar
@@ -427,6 +510,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             n => format!("; {n} pacotes descartados pela perda simulada"),
         }
     );
+    if abr.is_some() {
+        println!(
+            "  bitrate adaptativo: {} mudanças, chegou a {:.1} Mbps, terminou em {:.1} Mbps ({} relatórios do cliente)",
+            total.mudancas,
+            alvo_min as f64 / 1000.0,
+            alvo_final as f64 / 1000.0,
+            s.feedbacks_received
+        );
+    }
     println!(
         "  RTT: {:.2} ms suavizado, {:.2} ms mínimo ({} medições)",
         s.rtt.smoothed_ms, s.rtt.min_ms, s.rtt.samples

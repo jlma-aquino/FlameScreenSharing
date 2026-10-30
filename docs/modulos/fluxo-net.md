@@ -63,6 +63,38 @@ Medido com o exemplo `loopback` (300 frames, 20 Mbps):
 | 1% | 68% dos frames inteiros | 98,7% | — |
 | 3% | 35% | 85% | 91% |
 
+## Bitrate adaptativo
+
+- **Cliente** (`VideoReceiver`, automático): a cada 250 ms manda um
+  `Feedback` com os pacotes de vídeo/paridade recebidos (acumulado) e o
+  atraso de fila (`delay.rs`: trânsito de cada frame menos o menor dos
+  últimos 10 s, suavizado). `ReceiverStats::queue_delay_ms` mostra o valor.
+- **Host** (`VideoSender`): compara os recebidos com os pacotes que tentou
+  mandar no intervalo e calcula a perda; `take_report()` entrega um
+  `NetworkReport { loss, queue_delay_ms }`.
+- **Decisão** (`BitrateController`, lógica pura em `bitrate.rs`):
+
+| Situação | Ação |
+|---|---|
+| perda ≥ 10% ou fila ≥ 60 ms | × 0,7 |
+| perda ≥ 3% ou fila ≥ 25 ms | × 0,85 (no máximo 1 queda a cada 500 ms) |
+| perda < 1% e fila < 10 ms, 2 s sem quedas | + 8% (no máximo 1×/s) |
+
+  Perda abaixo de ~2% fica para o FEC. O host aplica a decisão no encoder
+  (`Encoder::set_bitrate`, sem keyframe) e no pacing (2,5× o bitrate).
+- **Banda simulada** (`SenderConfig::simulated_bandwidth_bps`, só testes):
+  envia no ritmo do "link"; com mais de 4 frames na fila, descarta o frame
+  inteiro — como um roteador congestionado.
+
+Medido (link simulado de 8 Mbps, host querendo 20, 15 s):
+
+| | Bitrate fixo | Adaptativo |
+|---|---|---|
+| Frames perdidos | 255 | 44 (quase todos nos 2 s iniciais) |
+| Frames mostrados | 470 de 593 (31 fps) | 762 de 873 (51 fps) |
+| Captura → tela p99 | 223 ms | 95 ms |
+| Regime estável | perda 45–65%, fila 60–125 ms | perda 0%, fila 5–10 ms |
+
 ## Pedido de keyframe
 
 - Cliente: `VideoReceiver::request_keyframe()` manda um `KeyframeRequest` ao

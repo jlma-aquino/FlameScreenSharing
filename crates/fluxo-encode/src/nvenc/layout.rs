@@ -1,17 +1,17 @@
 // GERADO por crates/fluxo-encode/nvenc/gen_layout.c a partir de
-// nvEncodeAPI.h 12.1. NÃO EDITE À MÃO: rode nvenc/gerar_layout.ps1.
+// nvEncodeAPI.h 12.1. N├âO EDITE ├Ç M├âO: rode nvenc/gerar_layout.ps1.
 #![allow(dead_code)]
 
 use windows::core::GUID;
 
-/// Posição de um bitfield de 1 bit dentro de uma struct.
+/// Posi├º├úo de um bitfield de 1 bit dentro de uma struct.
 #[derive(Debug, Clone, Copy)]
 pub struct Bit {
     pub byte: usize,
     pub bit: u8,
 }
 
-// --- Versões ---
+// --- Vers├╡es ---
 pub const API_MAJOR: u32 = 12;
 pub const API_MINOR: u32 = 1;
 pub const NVENCAPI_VERSION: u32 = 0x0100000C;
@@ -25,6 +25,7 @@ pub const CREATE_BITSTREAM_BUFFER_VER: u32 = 0x7101000C;
 pub const MAP_INPUT_RESOURCE_VER: u32 = 0x7104000C;
 pub const PIC_PARAMS_VER: u32 = 0xF106000C;
 pub const LOCK_BITSTREAM_VER: u32 = 0xF101000C;
+pub const RECONFIGURE_PARAMS_VER: u32 = 0xF101000C;
 
 // --- Constantes ---
 pub const INFINITE_GOPLENGTH: u32 = 0xFFFFFFFF;
@@ -76,6 +77,7 @@ pub const FL_REGISTER_RESOURCE: usize = 248;
 pub const FL_UNREGISTER_RESOURCE: usize = 256;
 pub const FL_GET_LAST_ERROR_STRING: usize = 304;
 pub const FL_GET_ENCODE_PRESET_CONFIG_EX: usize = 320;
+pub const FL_RECONFIGURE_ENCODER: usize = 264;
 
 // --- NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS ---
 pub const OPEN_SESSION_SIZE: usize = 1552;
@@ -126,6 +128,13 @@ pub const IP_MAX_ENCODE_WIDTH: usize = 96;
 pub const IP_MAX_ENCODE_HEIGHT: usize = 100;
 pub const IP_TUNING_INFO: usize = 136;
 
+// --- NV_ENC_RECONFIGURE_PARAMS ---
+pub const RECONFIGURE_PARAMS_SIZE: usize = 1824;
+pub const RP_VERSION: usize = 0;
+pub const RP_REINIT_PARAMS: usize = 8;
+pub const RP_RESET_ENCODER: Bit = Bit { byte: 1816, bit: 0 };
+pub const RP_FORCE_IDR: Bit = Bit { byte: 1816, bit: 1 };
+
 // --- NV_ENC_REGISTER_RESOURCE ---
 pub const REGISTER_RESOURCE_SIZE: usize = 1536;
 pub const RR_VERSION: usize = 0;
@@ -174,7 +183,7 @@ pub const LB_BITSTREAM_SIZE: usize = 36;
 pub const LB_BITSTREAM_PTR: usize = 56;
 pub const LB_PICTURE_TYPE: usize = 64;
 
-/// Nome do código de status NVENCSTATUS, para mensagens de erro.
+/// Nome do c├│digo de status NVENCSTATUS, para mensagens de erro.
 pub fn status_name(status: i32) -> &'static str {
     match status {
         0 => "NV_ENC_SUCCESS",

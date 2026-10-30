@@ -46,7 +46,9 @@
 //! # Ok::<(), fluxo_net::NetError>(())
 //! ```
 
+mod bitrate;
 mod clock;
+mod delay;
 mod pacer;
 mod receiver;
 mod rtt;
@@ -54,6 +56,7 @@ mod sender;
 
 use std::fmt;
 
+pub use bitrate::{BitrateChange, BitrateController, NetworkReport};
 pub use clock::{clock_diff_us, clock_us};
 pub use receiver::{ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
 pub use rtt::RttStats;

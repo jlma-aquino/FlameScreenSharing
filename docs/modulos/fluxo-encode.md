@@ -39,6 +39,7 @@ que falharam e por quê — mostre ao usuário.
 | `open_encoder(device, &cfg)` | Abre seguindo `cfg.backend`; `device` = `cap.d3d_device()` |
 | `probe_backend(device, &cfg, b)` | Abre exatamente o backend `b` (diagnóstico/comparação) |
 | `enc.encode(textura, forcar_keyframe)` | Devolve `Vec<EncodedFrame>` — normalmente 1 |
+| `enc.set_bitrate(kbps)` | Muda o bitrate a partir do próximo frame, sem keyframe (NVENC: `nvEncReconfigureEncoder`; MF: `ICodecAPI`) |
 | `EncodedFrame` | `data` (H.264 Annex B), `keyframe`, `index` |
 
 ## Configuração de baixa latência

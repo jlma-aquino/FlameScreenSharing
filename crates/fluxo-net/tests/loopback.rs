@@ -259,3 +259,69 @@ fn fec_salva_a_maioria_dos_frames_com_perda() {
     assert!(rec_com > 0, "o FEC não reconstruiu nada");
     assert!(com >= sem + 12, "sem FEC: {sem}/60, com FEC: {com}/60");
 }
+
+/// Manda frames num ritmo de 60 fps por `duracao` enquanto o cliente lê.
+fn transmitir(tx: &VideoSender, rx: &VideoReceiver, bytes: usize, duracao: Duration) {
+    let inicio = Instant::now();
+    let mut n = 0;
+    while inicio.elapsed() < duracao {
+        tx.send_frame(frame(n, bytes), n == 0, clock_us()).unwrap();
+        n += 1;
+        let alvo = inicio + Duration::from_micros(16_667 * n as u64);
+        while Instant::now() < alvo {
+            let _ = rx.recv_frame(Duration::from_millis(1));
+        }
+    }
+}
+
+#[test]
+fn relatorio_do_cliente_mede_a_perda() {
+    let rx = VideoReceiver::bind("127.0.0.1:0", ReceiverConfig::default()).unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            pacing_bps: 0,
+            simulated_loss: 0.10,
+            fec_group: 0,
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
+    .unwrap();
+    transmitir(&tx, &rx, 12_000, Duration::from_millis(1500));
+    let s = tx.stats();
+    assert!(s.feedbacks_received >= 3, "{s:?}");
+    let perda = s.last_loss.expect("perda calculada");
+    assert!(
+        (0.04..0.18).contains(&perda),
+        "perda medida {perda:.3}, simulada 0,10"
+    );
+    assert!(tx.take_report().is_some());
+    assert!(tx.take_report().is_none(), "o relatório é consumido uma vez");
+}
+
+#[test]
+fn banda_simulada_gera_fila_e_descartes() {
+    let rx = VideoReceiver::bind("127.0.0.1:0", ReceiverConfig::default()).unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            // 25 KB a 60 fps = 12 Mbps num link de 4 Mbps.
+            simulated_bandwidth_bps: 4_000_000,
+            ..SenderConfig::for_bitrate(12_000_000)
+        },
+    )
+    .unwrap();
+    transmitir(&tx, &rx, 25_000, Duration::from_millis(1500));
+    let (h, c) = (tx.stats(), rx.stats());
+    assert!(
+        h.simulated_drops > 0,
+        "a fila do roteador simulado deveria transbordar: {h:?}"
+    );
+    assert!(
+        c.queue_delay_ms > 20.0,
+        "atraso de fila {:.1} ms",
+        c.queue_delay_ms
+    );
+}

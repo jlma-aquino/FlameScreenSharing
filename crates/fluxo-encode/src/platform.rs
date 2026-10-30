@@ -34,6 +34,13 @@ pub trait Encoder {
         texture: &ID3D11Texture2D,
         force_keyframe: bool,
     ) -> Result<Vec<EncodedFrame>, EncodeError>;
+
+    /// Muda o bitrate alvo (kbit/s) a partir do próximo frame, sem keyframe
+    /// e sem recriar o encoder — para o bitrate adaptativo.
+    fn set_bitrate(&mut self, kbps: u32) -> Result<(), EncodeError>;
+
+    /// Bitrate alvo atual, em kbit/s.
+    fn bitrate_kbps(&self) -> u32;
 }
 
 /// Resultado de [`open_encoder`].

@@ -94,7 +94,8 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
 3. ✅ FEC (correção de erro): 1 pacote de paridade XOR a cada 10 reconstrói
    uma perda por grupo sem esperar retransmissão. Com 1% de perda: 98,7% dos
    frames inteiros, contra 68% sem FEC.
-4. ⏳ Controle de bitrate pela taxa de perda e RTT.
+4. ✅ Bitrate adaptativo: o cliente relata perda e atraso de fila (pacote
+   `Feedback`); o host baixa o bitrate rápido e sobe devagar (AIMD).
 5. ⏳ Criptografia e travessia de NAT (STUN + *hole punching*, relay de
    fallback).
 
