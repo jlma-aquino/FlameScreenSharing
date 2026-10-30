@@ -76,7 +76,10 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let mut com_perda_antes = 0u64;
     let mut transitos: Vec<i32> = Vec::new();
     let mut proximo_relatorio = Duration::from_secs(1);
-    let (mut frames_seg, mut bytes_seg, mut transito_seg, mut transito_max_seg) = (0u64, 0u64, 0i64, 0i32);
+    let (mut frames_seg, mut bytes_seg, mut transito_seg, mut transito_max_seg) =
+        (0u64, 0u64, 0i64, i32::MIN);
+    // Máximo começa no menor valor possível: entre PCs com relógios diferentes
+    // o trânsito pode ser negativo, e começar em 0 escondia o máximo real.
 
     loop {
         if let (Some(t0), Some(d)) = (inicio, duracao) {
@@ -124,11 +127,15 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                     proximo_relatorio.as_secs(),
                     bytes_seg as f64 * 8.0 / 1e6,
                     transito_seg as f64 / frames_seg.max(1) as f64 / 1000.0,
-                    transito_max_seg as f64 / 1000.0,
+                    if frames_seg == 0 {
+                        0.0
+                    } else {
+                        transito_max_seg as f64 / 1000.0
+                    },
                     s.reassembly.frames_lost,
                     s.rtt.smoothed_ms
                 );
-                (frames_seg, bytes_seg, transito_seg, transito_max_seg) = (0, 0, 0, 0);
+                (frames_seg, bytes_seg, transito_seg, transito_max_seg) = (0, 0, 0, i32::MIN);
                 proximo_relatorio += Duration::from_secs(1);
             }
         }
