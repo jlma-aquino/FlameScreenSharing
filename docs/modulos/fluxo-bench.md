@@ -25,8 +25,8 @@ fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
                        [--saida arquivo.h264] [--verificar] [--refresh N] [--perder-a-cada S]
 fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
-fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra]
-fluxo-bench enviar     --destino IP:PORTA (--codigo C | --sem-cifra) [--mbps M] [--fps F] [--segundos S] [--fec K]
+fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra] [--sinal SERVIDOR]
+fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR) (--codigo C | --sem-cifra) [--mbps M] [--fps F] [--segundos S] [--fec K]
 ```
 
 ## Lendo o resultado do `bench`
@@ -140,6 +140,16 @@ fluxo-bench enviar --destino <IP>:9000 --mbps 40 --segundos 21 --codigo K7M4-QX9
 
 Foi assim que se mediu que o Wi-Fi de teste não perde nada até ~40 Mbps e
 que, acima da capacidade, perde em rajadas (ver `fluxo-net.md`, FEC).
+
+Pelo servidor de sinalização ([fluxo-sinal](fluxo-sinal.md)), sem saber o
+IP de quem recebe: os dois usam `--sinal` no lugar de `--porta`/`--destino`.
+O `receber` avisa quando o servidor confirma o registro (e o endereço
+público com que ele o viu).
+
+```bash
+fluxo-bench receber --segundos 20 --sinal meu-servidor.com --codigo K7M4-QX9P
+fluxo-bench enviar --sinal meu-servidor.com --mbps 30 --segundos 21 --codigo K7M4-QX9P
+```
 
 ## `decode`
 

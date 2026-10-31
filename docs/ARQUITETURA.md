@@ -37,10 +37,11 @@ thread da janela só processa mensagens — arrastar a janela não para a imagem
 | `fluxo-capture` | Captura frames da tela como textura D3D11 | Encode, rede | Windows (stub nos outros) |
 | `fluxo-encode` | Textura → H.264 via GPU (NVENC ou Media Foundation) | Captura | Windows (tipos em qualquer) |
 | `fluxo-crypto` | Código de pareamento, handshake SPAKE2, cifra ChaCha20-Poly1305 por pacote | I/O | Qualquer |
-| `fluxo-net` | Sockets UDP, pacing, RTT, pareamento e cifra no socket (NAT traversal na fase 5) | Formato dos bytes, algoritmos de cripto | Qualquer |
+| `fluxo-net` | Sockets UDP, pacing, RTT, pareamento e cifra no socket, sinalização e furo de NAT | Formato dos bytes, algoritmos de cripto | Qualquer |
 | `fluxo-decode` | H.264 → textura NV12 via GPU (Media Foundation + DXVA) | Rede, tela | Windows (erro em qualquer) |
 | `apps/fluxo-host` | Captura → encode → rede | Decode, tela | Windows |
 | `apps/fluxo-client` | Rede → decode → janela (swapchain flip model) | Captura | Windows |
+| `apps/fluxo-sinal` | Servidor de sinalização: apresenta host e cliente em redes diferentes | Vídeo (nunca passa por ele) | Qualquer |
 
 **Regra de dependência:** crates de baixo nível nunca dependem de crates de
 alto nível. `fluxo-proto` e `fluxo-crypto` não dependem de outros crates do
@@ -102,8 +103,9 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
    `Feedback`); o host baixa o bitrate rápido e sobe devagar (AIMD).
 5. ✅ Pareamento por código (SPAKE2) e cifra de todo pacote (ChaCha20-Poly1305),
    protocolo v8 (ADR-008).
-6. ⏳ Travessia de NAT (STUN + *hole punching*, relay de
-   fallback).
+6. ✅ Travessia de NAT: servidor de sinalização próprio (faz o papel do STUN)
+   e *hole punching*, protocolo v9 (ADR-009).
+7. ⏳ Relay de fallback (NAT simétrico dos dois lados, CGNAT restritivo).
 
 ## 6. Tratamento de erros
 

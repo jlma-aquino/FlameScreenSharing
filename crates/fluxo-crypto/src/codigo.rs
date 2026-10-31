@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use sha2::{Digest, Sha256};
+
 use crate::CryptoError;
 
 /// Letras e números sem os que se confundem (0/O, 1/I/L): 31 símbolos.
@@ -54,7 +56,24 @@ impl PairingCode {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
+
+    /// Número da sala no servidor de sinalização: [`BITS_DA_SALA`] bits do
+    /// SHA-256 do código. O servidor vê a sala, não o código: sobram ~20
+    /// bits que ele não tem como deduzir, e o PAKE só deixa testar um
+    /// palpite por pareamento (quem controla o servidor acerta 1 vez em
+    /// ~800 mil). Duas pessoas na mesma sala ao mesmo tempo é raro (1 em
+    /// ~1 milhão por par); o servidor recusa a segunda.
+    pub fn room(&self) -> u32 {
+        let h = Sha256::new()
+            .chain_update(b"fluxo sala v1")
+            .chain_update(self.0)
+            .finalize();
+        u32::from_be_bytes([h[0], h[1], h[2], h[3]]) >> (32 - BITS_DA_SALA)
+    }
 }
+
+/// Bits do código que o servidor de sinalização vê (ver [`PairingCode::room`]).
+pub const BITS_DA_SALA: u32 = 20;
 
 impl fmt::Display for PairingCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -107,5 +126,14 @@ mod tests {
     fn debug_nao_mostra_o_codigo() {
         let c = PairingCode::parse("K7M4-QX9P").unwrap();
         assert!(!format!("{c:?}").contains("K7M4"));
+    }
+
+    #[test]
+    fn sala_e_fixa_por_codigo_e_cabe_em_20_bits() {
+        let c = PairingCode::parse("K7M4-QX9P").unwrap();
+        assert_eq!(c.room(), PairingCode::parse("k7m4qx9p").unwrap().room());
+        assert!(c.room() < 1 << BITS_DA_SALA);
+        let outro = PairingCode::parse("K7M4-QX9Q").unwrap();
+        assert_ne!(c.room(), outro.room());
     }
 }

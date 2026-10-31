@@ -16,6 +16,7 @@ members = [
     "apps/fluxo-bench",
     "apps/fluxo-host",
     "apps/fluxo-client",
+    "apps/fluxo-sinal",
 ]
 
 [workspace.package]

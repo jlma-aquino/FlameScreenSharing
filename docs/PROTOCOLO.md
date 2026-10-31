@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 8
+# Protocolo de rede — versão 9
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -12,8 +12,8 @@ CHANGELOG.
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `8`. Versões diferentes são descartadas (histórico na seção 6). |
-| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply. |
+| 2 | 1 | `version` | `9`. Versões diferentes são descartadas (histórico na seção 6). |
+| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply, `9` = Signal, `10` = Punch. |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
@@ -128,7 +128,8 @@ consegue testar códigos depois, gravando a troca.
   confirmação (ChaCha20-Poly1305 de um bloco vazio, dado autenticado
   `fluxo: o cliente confirma a chave`, com uma chave derivada só para isso).
   O host confere e, se não bater, para com "o código não confere". Um
-  PairInit repetido recebe a mesma resposta.
+  PairInit repetido (mesmo conteúdo, venha de qualquer endereço: o host
+  tenta todos os endereços do cliente de uma vez) recebe a mesma resposta.
 - **Chaves:** HKDF-SHA256 do segredo do SPAKE2 (sal `fluxo protocolo v8`)
   dá uma chave por sentido (`host -> cliente`, `cliente -> host`) e a de
   confirmação. Cada pareamento gera chaves novas.
@@ -146,8 +147,9 @@ vídeo, paridade, pings, pongs, relatórios, pedidos — vai cifrado:
   anteriores; pacote repetido ou mais de 64 atrás é recusado (como no IPsec
   e no DTLS). Depois de 2³² pacotes num sentido (~10 dias a 5 000/s), é
   preciso parear de novo.
-- **Endereços:** o host envia para um `IP:porta` informado à mão. O cliente
-  só aceita pacotes que decifrem com a sessão; o endereço do host passa a
+- **Endereços:** o host envia para um `IP:porta` informado à mão ou achado
+  pelo servidor de sinalização (seção 2.2) — o endereço que respondeu ao
+  pareamento. O cliente só aceita pacotes que decifrem com a sessão; o endereço do host passa a
   ser o do último pacote autenticado (se o NAT mudar a porta, a conexão
   segue). Um PairInit novo cria uma sessão **candidata**, que só substitui
   a atual quando um pacote decifrar com ela — um intruso sem o código não
@@ -156,6 +158,66 @@ vídeo, paridade, pings, pongs, relatórios, pedidos — vai cifrado:
   claro; o cliente aceita o primeiro endereço que mandar um pacote válido e,
   após 2 s sem pacotes dele, aceita um novo. Os dois modos não se misturam:
   cada lado descarta o que vier no modo do outro.
+
+## 2.2. Sinalização e furo de NAT (redes diferentes)
+
+Quando host e cliente estão em redes diferentes, um não sabe o endereço
+público do outro, e o NAT de cada um descarta pacotes que não respondem a
+algo que saiu. Um **servidor de sinalização** (`fluxo-sinal`, num endereço
+público) apresenta os dois; depois eles falam direto. Vídeo nunca passa
+pelo servidor.
+
+```text
+cliente                       servidor                        host
+ Register{sala, locais} ─────►  guarda a sala
+ ◄──────── Registered{público}
+                                ◄──────────── Lookup{sala, locais}
+ ◄──── Found{host: público, locais}  Found{cliente: público, locais} ────►
+ Punch ──► cada endereço do host        PairInit ──► cada endereço do cliente
+ (abre o NAT do cliente)                (abre o NAT do host)
+ ◄─────────────────────────── PairInit ───────────────── (agora passa)
+ PairReply ─────────────────────────────────────────────►  sessão; vídeo
+```
+
+- **Signal** (`kind = 9`, sempre em claro): `frame_id` = número do pedido,
+  ecoado na resposta. Payload:
+
+  | Byte 0 | Mensagem | Sentido | Resto do payload |
+  |---:|---|---|---|
+  | 1 | Register | cliente → servidor | sala (u32), lista de endereços locais; completado com zeros até 100 bytes |
+  | 2 | Lookup | host → servidor | idem |
+  | 3 | Registered | servidor → cliente | endereço público do cliente |
+  | 4 | Found | servidor → os dois | endereço público do outro lado, lista dos locais dele |
+  | 5 | NotFound | servidor → host | — (sala vazia) |
+  | 6 | RoomTaken | servidor → cliente | — (outro cliente na sala) |
+
+  Endereço: família (1 byte, 4 ou 6), IP (4 ou 16 bytes), porta (u16).
+  Lista: quantidade (1 byte, até 4) e os endereços. Pedidos com menos de 100
+  bytes são ignorados; toda resposta é menor, para o servidor não servir de
+  amplificador contra um endereço forjado.
+- **Sala:** os 20 bits mais altos do SHA-256 de `"fluxo sala v1"` + código.
+  O servidor nunca vê o código; vendo a sala, sobram ~20 bits que ele não
+  deduz, e o SPAKE2 só aceita um palpite por pareamento (quem controla o
+  servidor engana 1 vez em ~800 mil). A sala expira 30 s depois do último
+  Register (o cliente renova a cada 5 s, o que também mantém vivo o
+  mapeamento do NAT). Outro IP na mesma sala recebe RoomTaken; o mesmo IP
+  em outra porta toma o lugar (o mesmo PC reabriu).
+- **Endereço público:** o de onde o pedido chegou ao servidor, pelo mesmo
+  socket que depois leva o vídeo — o servidor faz o papel de STUN, e o
+  mapeamento é exatamente o que interessa.
+- **Punch** (`kind = 10`, cliente → host, sem payload, em claro): abre o
+  NAT do cliente na direção do host. O cliente manda um a cada endereço do
+  host a cada Found (o host repete o Lookup a cada 250 ms até parear). O host
+  ignora, mas um Punch vindo de um endereço que ele não conhecia vira
+  candidato (NAT que muda a porta conforme o destino).
+- **Host:** manda PairInit a todos os candidatos (até 8) a cada 250 ms; o
+  primeiro PairReply de um candidato que confere define o destino. Um
+  candidato que responde com outra chave (outro cliente Fluxo que calhou de
+  estar naquele endereço) sai da lista, e o handshake recomeça com os
+  outros.
+- **Limites:** NAT simétrico dos dois lados (porta nova a cada destino)
+  não fura assim: fica para o relay (fase 5). O servidor deve ficar fora da
+  rede do cliente; na mesma rede, o endereço "público" visto é o local.
 
 ## 3. Fragmentação (emissor)
 
@@ -204,6 +266,10 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 - ~~**Criptografia** e **handshake**~~ — feitos na versão 8 (seções 2 e 2.1).
   Um ID de sessão no cabeçalho não foi preciso: pacote de outra sessão não
   decifra.
+- ~~**Sinalização e furo de NAT**~~ — feitos na versão 9 (seção 2.2).
+- **Relay** para quando o furo não passa (NAT simétrico dos dois lados,
+  CGNAT restritivo): o servidor repassaria os pacotes já cifrados, sem a
+  chave.
 
 ## 6. Histórico de versões
 
@@ -217,3 +283,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 6 | Cabeçalho de 24 bytes: + `send_us` (hora de saída de cada pacote), base do atraso de fila. Versões anteriores recusadas. |
 | 7 | Flags de onda de intra-refresh no vídeo (bits 1 e 2); KeyframeRequest com bit 0 = "só keyframe serve". Versões anteriores recusadas. |
 | 8 | Cabeçalho de 28 bytes (+ `seq`), PairInit e PairReply (pareamento SPAKE2), payload cifrado com ChaCha20-Poly1305 (bit 3 de `flags`) e anti-replay; payload máximo 1180. Versões anteriores recusadas. |
+| 9 | + Signal (`kind = 9`, servidor de sinalização) e Punch (`kind = 10`, furo de NAT); um PairInit repetido é reconhecido pelo conteúdo, venha de onde vier. Versões anteriores recusadas. |

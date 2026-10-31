@@ -126,6 +126,26 @@ verdade (perdas, RTT, bitrate) com o host no Windows.
 O "trânsito" medido entre dois PCs depende dos relógios estarem
 sincronizados (NTP); o RTT e as perdas são confiáveis sempre.
 
+### Redes diferentes (servidor de sinalização)
+
+O `fluxo-sinal` compila em qualquer sistema e só troca endereços. Rode num
+PC com endereço público e a porta **UDP 7000** liberada (uma VPS Linux
+barata serve), e use `--sinal` nos dois lados no lugar do IP:
+
+```bash
+cargo build --release -p fluxo-sinal
+./target/release/fluxo-sinal
+```
+
+```powershell
+.\target\release\fluxo-client.exe --sinal <endereço do servidor>
+.\target\release\fluxo-host.exe --sinal <endereço do servidor> --codigo <código mostrado pelo cliente>
+```
+
+Para testar o fluxo numa rede só, o servidor pode rodar no notebook Linux
+(o host acha o cliente pelo endereço local). Detalhes e limitações:
+[modulos/fluxo-sinal.md](modulos/fluxo-sinal.md).
+
 ## 7. Testar o protocolo de rede
 
 ```powershell

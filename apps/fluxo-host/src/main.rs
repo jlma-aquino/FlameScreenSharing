@@ -3,15 +3,15 @@
 //! Lado de quem compartilha a tela: captura → encode → rede.
 //!
 //! ```text
-//! fluxo-host --destino IP:PORTA [--monitor N] [--encoder auto|nvenc|mf]
+//! fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
 //!            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S]
 //!            [--segundos S] [--porta-local P]
 //! ```
 //!
-//! Por enquanto o destino é informado à mão (o cliente escuta numa porta;
-//! descoberta e NAT ficam para a fase 5), e keyframes saem a cada poucos
-//! segundos para que um cliente que entrar depois consiga começar (o pedido
-//! de keyframe pelo cliente vem na fase 4).
+//! O cliente é achado pelo endereço (`--destino`, mesma rede) ou pelo
+//! servidor de sinalização (`--sinal`, redes diferentes), e o pareamento com
+//! o código vem antes de qualquer imagem. Keyframes saem quando o cliente
+//! pede (e, de segurança, a cada `--keyframe-a-cada` segundos).
 //!
 //! Detalhes e como ler a saída: `docs/modulos/fluxo-host.md`.
 
@@ -26,9 +26,12 @@ fluxo-host — transmite a tela para um cliente Fluxo
 
 Uso:
   fluxo-host --destino IP:PORTA --codigo XXXX-XXXX [opções]
+  fluxo-host --sinal SERVIDOR --codigo XXXX-XXXX [opções]
 
 Opções:
-  --destino IP:PORTA    para onde enviar (obrigatório), ex.: 192.168.0.20:9000
+  --destino IP:PORTA    para onde enviar, ex.: 192.168.0.20:9000 (mesma rede)
+  --sinal SERVIDOR      acha o cliente pelo servidor de sinalização (fluxo-sinal),
+                        ex.: meu-servidor.com ou 203.0.113.5:7000 (redes diferentes)
   --codigo XXXX-XXXX    código de pareamento mostrado pelo fluxo-client (obrigatório):
                         só o cliente com esse código recebe, e tudo vai cifrado
   --sem-cifra           TESTE: sem pareamento nem cifra (o cliente também)
@@ -68,6 +71,7 @@ Para testar sem cliente, rode antes em outro terminal (ou outro PC):
 #[derive(Debug, Clone)]
 struct Opts {
     destino: String,
+    sinal: Option<String>,
     monitor: usize,
     encoder: fluxo_encode::BackendChoice,
     mbps: f64,
@@ -92,6 +96,7 @@ struct Opts {
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         destino: String::new(),
+        sinal: None,
         monitor: 0,
         encoder: Default::default(),
         mbps: 20.0,
@@ -117,6 +122,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         let mut valor = || it.next().ok_or(format!("{a} precisa de um valor"));
         match a.as_str() {
             "--destino" => o.destino = valor()?.clone(),
+            "--sinal" => o.sinal = Some(valor()?.clone()),
             "--monitor" => o.monitor = valor()?.parse().map_err(|_| "monitor inválido")?,
             "--encoder" => o.encoder = valor()?.parse()?,
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
@@ -146,8 +152,11 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
     }
-    if o.destino.is_empty() {
-        return Err("falta --destino IP:PORTA".into());
+    match (o.destino.is_empty(), &o.sinal) {
+        (true, None) => return Err("falta --destino IP:PORTA (mesma rede) ou --sinal SERVIDOR".into()),
+        (false, Some(_)) => return Err("use --destino ou --sinal, não os dois".into()),
+        (_, Some(_)) if o.sem_cifra => return Err("--sinal precisa do código (sem --sem-cifra)".into()),
+        _ => {}
     }
     match (&o.codigo, o.sem_cifra) {
         (None, false) => {
@@ -344,9 +353,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         pairing_timeout: Duration::from_secs(30),
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
-    match &net_cfg.pairing_code {
-        Some(c) => println!("Pareando com {} (código {c})…", o.destino),
-        None => println!("TESTE: sem pareamento nem cifra (--sem-cifra)"),
+    let servidor = o
+        .sinal
+        .as_deref()
+        .map(fluxo_net::resolve_signal_server)
+        .transpose()?;
+    match (&net_cfg.pairing_code, servidor) {
+        (Some(c), Some(s)) => println!("Procurando o cliente pelo servidor de sinalização {s} (código {c})…"),
+        (Some(c), None) => println!("Pareando com {} (código {c})…", o.destino),
+        (None, _) => println!("TESTE: sem pareamento nem cifra (--sem-cifra)"),
     }
     // Bitrate adaptativo: o controlador decide, o encoder e o pacing seguem
     // (o pacing só se não foi fixado à mão).
@@ -360,7 +375,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .then(|| BitrateController::new(min_kbps, max_kbps, Instant::now()).with_queue_limit(o.fila_max));
     let pacing_segue_bitrate = o.pacing_mbps.is_none();
     let pacing_mbps = net_cfg.pacing_bps as f64 / 1e6;
-    let tx = VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?;
+    let tx = match servidor {
+        Some(s) => VideoSender::connect_via_signal(("0.0.0.0", o.porta_local), s, net_cfg)?,
+        None => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,
+    };
 
     println!(
         "Transmitindo monitor {} ({}x{}) de {} para {}\n  {}\n  {} Mbps, até {} fps, pacing {:.0} Mbps, FEC {}, keyframe de segurança a cada {} s{}",

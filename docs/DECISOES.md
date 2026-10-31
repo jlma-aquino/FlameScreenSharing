@@ -208,6 +208,46 @@ isoladas no `fluxo-crypto`; nenhum algoritmo escrito à mão.
   protocolo de vídeo cifrado por pacote.
 - 🔁 Reavaliar ao chegar a sinalização pela internet: o código também vai
   servir para achar o outro lado no servidor, que não deve conseguir lê-lo.
+  **Feito no ADR-009:** o servidor vê só 20 bits derivados do código.
+
+---
+
+## ADR-009 — Internet: sinalização própria por UDP e furo de NAT
+
+**Status:** Aceito (2026-10-31)
+
+**Contexto.** Em redes diferentes, cada lado está atrás de um NAT: não sabe
+o próprio endereço público, e o NAT descarta o que chega sem ter saído algo
+antes para aquele destino. É preciso um ponto de encontro público. Opções:
+
+| Opção | Prós | Contras |
+|---|---|---|
+| ICE/WebRTC (biblioteca) | Completo (STUN, TURN, candidatos) | Dependência grande, negociação lenta (SDP), outro socket e outro formato fora do nosso controle |
+| STUN público (Google) + sinalização à parte | Sem servidor nosso para descobrir o endereço | Ainda precisa de um servidor para trocar endereços; depende de terceiros |
+| **Servidor próprio por UDP, no mesmo socket do vídeo** | Um servidor só faz as duas coisas; o endereço visto é o do socket certo; mensagens minúsculas | Hospedar e manter o servidor (uma VPS barata basta) |
+
+**Decisão.** `fluxo-sinal`: o cliente registra a **sala** do código, o host
+procura a sala, e o servidor conta a cada um o endereço público do outro
+(de onde o pedido chegou: o papel do STUN) e os locais que cada um
+informou. Depois o cliente manda um Punch e o host o PairInit a cada
+endereço do outro, abrindo os dois NATs; o primeiro PairReply válido define
+o caminho. O servidor nunca vê vídeo nem o código: a sala são 20 bits do
+SHA-256 do código, e o SPAKE2 limita quem controla o servidor a um palpite
+por pareamento (1 em ~800 mil). Pedidos são completados até 100 bytes e as
+respostas são menores, para o servidor não amplificar ataques.
+
+**Consequências.**
+- ➕ Sem dependências novas; o mesmo protocolo e o mesmo socket do vídeo.
+- ➕ Na mesma rede, o endereço local informado faz o pareamento direto.
+- ➕ Medido com o servidor no notebook: pareamento e vídeo normais nos dois
+  sentidos, tela real a 20 Mbps com p50 18,1 ms (sem NAT entre os PCs).
+- ➖ Alguém precisa hospedar o servidor num endereço público (porta UDP
+  7000 aberta).
+- ➖ NAT simétrico dos dois lados não fura: precisa de relay (próximo item
+  da fase 5). Ainda não testado atrás de NATs de verdade (precisa de duas
+  redes e o servidor na internet).
+- 🔁 Se muitos usuários ficarem sem conexão direta, avaliar o relay ou só
+  a parte ICE de uma biblioteca (ADR-003).
 
 ---
 

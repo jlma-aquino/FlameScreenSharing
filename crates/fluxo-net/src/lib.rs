@@ -7,6 +7,7 @@
 //! |---|---|---|
 //! | [`VideoSender`] | host | Fragmenta frames, envia com *pacing*, mede RTT |
 //! | [`VideoReceiver`] | cliente | Recebe, remonta frames, responde/mede pings |
+//! | [`SignalServer`] | servidor | Apresenta host e cliente em redes diferentes (sinalização) |
 //!
 //! Os dois rodam em threads próprias: enviar um frame com pacing leva alguns
 //! milissegundos, e a captura/encode não pode esperar por isso; do lado do
@@ -55,6 +56,7 @@ mod receiver;
 mod recovery;
 mod rtt;
 mod sender;
+mod signal;
 mod sim;
 mod sync;
 
@@ -66,6 +68,7 @@ pub use receiver::{ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender};
+pub use signal::{SignalEvent, SignalServer, ROOM_TTL};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
 pub use fluxo_proto::{FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
 // Código de pareamento (`SenderConfig`/`ReceiverConfig::pairing_code`).
@@ -135,4 +138,54 @@ pub(crate) fn pong_clock(payload: &[u8]) -> Option<u32> {
     Some(u32::from_be_bytes(
         payload.get(..fluxo_proto::PONG_LEN)?.try_into().ok()?,
     ))
+}
+
+/// IP deste PC na rede local: o da interface que leva à internet. Descoberto
+/// sem mandar nada (só pergunta ao sistema a rota até um IP público).
+pub fn local_ip() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("8.8.8.8:53").ok()?;
+    Some(s.local_addr().ok()?.ip()).filter(|ip| !ip.is_unspecified())
+}
+
+/// Endereços locais para informar ao servidor de sinalização: o IP da rede
+/// local com a porta do socket (o outro lado tenta direto, se estiver na
+/// mesma rede).
+pub(crate) fn local_candidates(socket: &std::net::UdpSocket) -> Vec<std::net::SocketAddr> {
+    let porta = socket.local_addr().map(|a| a.port()).unwrap_or(0);
+    local_ip()
+        .filter(|_| porta != 0)
+        .map(|ip| std::net::SocketAddr::new(ip, porta))
+        .into_iter()
+        .collect()
+}
+
+/// Porta padrão do servidor de sinalização (`fluxo-sinal`).
+pub const SIGNAL_PORT: u16 = 7000;
+
+/// Lê o endereço de um servidor de sinalização como digitado: `host:porta`,
+/// ou só `host` (porta [`SIGNAL_PORT`]); nomes são resolvidos (DNS),
+/// preferindo IPv4.
+pub fn resolve_signal_server(texto: &str) -> Result<std::net::SocketAddr, NetError> {
+    use std::net::ToSocketAddrs;
+    let erro = |message: String| NetError::Io {
+        context: "servidor de sinalização",
+        message,
+    };
+    let com_porta = match texto.parse::<std::net::SocketAddr>() {
+        Ok(a) => return Ok(a),
+        // Sem ":porta" (IPv6 puro tem vários ":"; aí a porta é obrigatória).
+        Err(_) if !texto.contains(':') => format!("{texto}:{SIGNAL_PORT}"),
+        Err(_) => texto.to_string(),
+    };
+    let enderecos: Vec<_> = com_porta
+        .to_socket_addrs()
+        .map_err(|e| erro(format!("{texto}: {e}")))?
+        .collect();
+    enderecos
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or(enderecos.first())
+        .copied()
+        .ok_or_else(|| erro(format!("{texto}: nenhum endereço")))
 }

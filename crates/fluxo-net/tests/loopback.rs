@@ -2,7 +2,14 @@
 
 use std::time::{Duration, Instant};
 
-use fluxo_net::{clock_us, NetError, PairingCode, ReceiverConfig, SenderConfig, VideoReceiver, VideoSender};
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
+
+use fluxo_net::{
+    clock_us, NetError, PairingCode, ReceiverConfig, SenderConfig, SignalServer, VideoReceiver, VideoSender,
+};
 
 /// Conteúdo reconhecível: cada frame tem bytes derivados do seu número.
 fn frame(n: usize, len: usize) -> Vec<u8> {
@@ -191,6 +198,9 @@ fn perda_simulada_descarta_pacotes_e_o_receptor_percebe() {
         SenderConfig {
             pacing_bps: 0,
             simulated_loss: 0.2,
+            // Sem FEC: cada pacote perdido estraga o frame (com FEC, ~31%
+            // se salvariam e o limite abaixo falharia de vez em quando).
+            fec_group: 0,
             ..SenderConfig::for_bitrate(20_000_000)
         },
     )
@@ -208,8 +218,8 @@ fn perda_simulada_descarta_pacotes_e_o_receptor_percebe() {
         completos += 1;
     }
     let (s, r) = (tx.stats(), rx.stats());
-    // 40 frames × 10 pacotes a 20% de perda: ~80 descartes; quase todo
-    // frame perde algum pacote (só ~11% saem inteiros).
+    // 40 frames × 11 pacotes a 20% de perda: ~88 descartes; quase todo
+    // frame perde algum pacote (só ~9% saem inteiros).
     assert!(s.simulated_drops > 30, "{s:?}");
     assert!(completos < 20, "{completos} frames completos");
     assert!(r.reassembly.frames_lost > 0);
@@ -584,4 +594,184 @@ fn intruso_nao_atrapalha_a_sessao() {
     }
     assert_eq!(rx.stats().peer_changes, 0);
     assert!(rx.stats().invalid_packets > 0);
+}
+
+/// Servidor de sinalização numa thread, em 127.0.0.1; para ao sair de escopo.
+struct Servidor {
+    endereco: SocketAddr,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Servidor {
+    fn novo() -> Self {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let endereco = socket.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let s = stop.clone();
+        let thread = std::thread::spawn(move || SignalServer::default().run(&socket, &s, |_| {}));
+        Self {
+            endereco,
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for Servidor {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+fn cliente_no_servidor(servidor: SocketAddr, texto: &str) -> VideoReceiver {
+    VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            pairing_code: Some(codigo(texto)),
+            signal_server: Some(servidor),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap()
+}
+
+fn host_pelo_servidor(servidor: SocketAddr, texto: &str, prazo: Duration) -> Result<VideoSender, NetError> {
+    VideoSender::connect_via_signal(
+        "127.0.0.1:0",
+        servidor,
+        SenderConfig {
+            pairing_code: Some(codigo(texto)),
+            pairing_timeout: prazo,
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
+}
+
+#[test]
+fn host_acha_o_cliente_pelo_servidor_de_sinalizacao() {
+    let srv = Servidor::novo();
+    let rx = cliente_no_servidor(srv.endereco, "K7M4-QX9P");
+    let limite = Instant::now() + Duration::from_secs(2);
+    while rx.stats().public_addr.is_none() && Instant::now() < limite {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        rx.stats().public_addr,
+        Some(rx.local_addr()),
+        "o servidor vê o nosso endereço"
+    );
+
+    let tx = host_pelo_servidor(srv.endereco, "K7M4-QX9P", Duration::from_secs(3)).expect("pareamento");
+    assert_eq!(tx.peer_addr(), rx.local_addr());
+    for n in 0..5 {
+        tx.send_frame(frame(n, 20_000), n == 0, clock_us()).unwrap();
+        let f = rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
+        assert_eq!(f.frame.data, frame(n, 20_000));
+    }
+    let c = rx.stats();
+    assert!(c.encrypted && c.punches_sent > 0, "{c:?}");
+}
+
+#[test]
+fn sala_vazia_e_codigo_errado_pelo_servidor() {
+    let srv = Servidor::novo();
+    let erro = host_pelo_servidor(srv.endereco, "K7M4-QX9P", Duration::from_millis(600))
+        .err()
+        .expect("ninguém na sala");
+    assert!(erro.to_string().contains("nenhum cliente"), "{erro}");
+
+    // Outro código cai em outra sala: o host nem acha o cliente.
+    let _rx = cliente_no_servidor(srv.endereco, "K7M4-QX9P");
+    std::thread::sleep(Duration::from_millis(100));
+    let erro = host_pelo_servidor(srv.endereco, "K7M4-QX9Q", Duration::from_millis(600))
+        .err()
+        .expect("sala de outro código");
+    assert!(erro.to_string().contains("nenhum cliente"), "{erro}");
+}
+
+#[test]
+fn servidor_mudo_e_sinalizacao_sem_codigo() {
+    // Porta sem ninguém: o host desiste com um motivo claro.
+    let mudo = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let erro = host_pelo_servidor(mudo, "K7M4-QX9P", Duration::from_millis(600))
+        .err()
+        .expect("sem servidor");
+    assert!(erro.to_string().contains("não respondeu"), "{erro}");
+
+    let sem_codigo = ReceiverConfig {
+        signal_server: Some(mudo),
+        ..ReceiverConfig::default()
+    };
+    assert!(matches!(
+        VideoReceiver::bind("127.0.0.1:0", sem_codigo),
+        Err(NetError::Pairing(_))
+    ));
+}
+
+#[test]
+fn impostor_com_outro_codigo_nao_derruba_o_pareamento_pelo_servidor() {
+    use fluxo_proto::{PacketHeader, PacketKind};
+
+    let srv = Servidor::novo();
+    // Host numa porta conhecida, para o impostor furar até ela.
+    let host = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let servidor = srv.endereco;
+    let tx = std::thread::spawn(move || host_pelo_servidor_em(host, servidor, "K7M4-QX9P"));
+
+    // Impostor: outro cliente Fluxo (outro código) num endereço que o host
+    // conhece pelo furo. Responde ao PairInit com a chave dele.
+    let impostor = UdpSocket::bind("127.0.0.1:0").unwrap();
+    impostor
+        .set_read_timeout(Some(Duration::from_millis(10)))
+        .unwrap();
+    let furo = PacketKind::Punch.control(0, 0).encode_with_payload(&[]).unwrap();
+    let mut buf = [0u8; 2048];
+    let limite = Instant::now() + Duration::from_secs(2);
+    let mut respondeu = false;
+    while !respondeu && Instant::now() < limite {
+        impostor.send_to(&furo, host).unwrap();
+        let Ok((n, de)) = impostor.recv_from(&mut buf) else {
+            continue;
+        };
+        if let Ok((h, init)) = PacketHeader::decode(&buf[..n]) {
+            if h.kind == PacketKind::PairInit {
+                let (_, resposta) = fluxo_crypto::respond(&codigo("K7M4-QX9Q"), init).unwrap();
+                let pacote = PacketKind::PairReply
+                    .control(h.frame_id, 0)
+                    .encode_with_payload(&resposta)
+                    .unwrap();
+                impostor.send_to(&pacote, de).unwrap();
+                respondeu = true;
+            }
+        }
+    }
+    assert!(respondeu, "o host devia ter tentado o impostor");
+
+    // Só agora o cliente de verdade aparece no servidor.
+    let rx = cliente_no_servidor(servidor, "K7M4-QX9P");
+    let tx = tx.join().unwrap().expect("pareia com o cliente certo");
+    assert_eq!(tx.peer_addr(), rx.local_addr());
+    tx.send_frame(frame(0, 5_000), true, clock_us()).unwrap();
+    let f = rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
+    assert_eq!(f.frame.data, frame(0, 5_000));
+}
+
+fn host_pelo_servidor_em(
+    bind: SocketAddr,
+    servidor: SocketAddr,
+    texto: &str,
+) -> Result<VideoSender, NetError> {
+    VideoSender::connect_via_signal(
+        bind,
+        servidor,
+        SenderConfig {
+            pairing_code: Some(codigo(texto)),
+            pairing_timeout: Duration::from_secs(4),
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    )
 }

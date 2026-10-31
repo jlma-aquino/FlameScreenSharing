@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use fluxo_crypto::{HostHandshake, Opener, PairingCode, Sealer, Session, TAG_LEN};
+use fluxo_crypto::{CryptoError, HostHandshake, Opener, PairingCode, Sealer, Session, TAG_LEN};
 use fluxo_proto::{
-    prepare_seal, stamp_send_time, Feedback, Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD,
-    HEADER_LEN,
+    prepare_seal, stamp_send_time, Feedback, Fragmenter, PacketHeader, PacketKind, SignalMessage,
+    DEFAULT_MAX_PAYLOAD, HEADER_LEN,
 };
 
 use crate::bitrate::NetworkReport;
@@ -87,40 +87,147 @@ impl SenderConfig {
 /// Intervalo entre reenvios do `PairInit` enquanto o cliente não responde.
 const REENVIO_PAREAMENTO: Duration = Duration::from_millis(250);
 
-/// Handshake com o cliente pelo socket já conectado: manda `PairInit` até
-/// chegar o `PairReply` correspondente (ou acabar o prazo).
-fn parear(socket: &UdpSocket, codigo: &PairingCode, prazo: Duration) -> Result<Session, NetError> {
-    let hs = HostHandshake::start(codigo);
-    let id = clock_us();
-    let init = PacketKind::PairInit
-        .control(id, clock_us())
-        .encode_with_payload(hs.message())
-        .map_err(NetError::Proto)?;
+/// Endereços do cliente tentados ao mesmo tempo, no máximo (o público e os
+/// locais que o servidor informou, mais os de onde chegou furo).
+const MAX_CANDIDATOS: usize = 8;
+
+/// Como achar o cliente.
+enum Rota {
+    /// Endereço conhecido (mesma rede, ou porta aberta no roteador dele).
+    Direta(SocketAddr),
+    /// Pelo servidor de sinalização, na sala do código.
+    Sinal(SocketAddr),
+}
+
+/// Uma tentativa de handshake: o `PairInit` e o estado para conferir a resposta.
+struct Tentativa {
+    hs: HostHandshake,
+    id: u32,
+    init: Vec<u8>,
+}
+
+impl Tentativa {
+    fn nova(codigo: &PairingCode) -> Result<Self, NetError> {
+        let hs = HostHandshake::start(codigo);
+        let id = clock_us();
+        let init = PacketKind::PairInit
+            .control(id, clock_us())
+            .encode_with_payload(hs.message())
+            .map_err(NetError::Proto)?;
+        Ok(Self { hs, id, init })
+    }
+}
+
+/// Handshake com o cliente: manda `PairInit` a cada candidato até chegar o
+/// `PairReply` correspondente (ou acabar o prazo). Devolve a sessão e o
+/// endereço que respondeu, que vira o destino do vídeo.
+///
+/// Pela sinalização, a cada volta também pede a sala ao servidor, que
+/// devolve os endereços do cliente e avisa o cliente para furar o NAT dele
+/// na nossa direção; os nossos `PairInit` furam o nosso. Um furo do cliente
+/// vindo de um endereço desconhecido (NAT que troca a porta por destino)
+/// vira candidato também. Um candidato que responde com outra chave é outro
+/// cliente Fluxo que calhou de estar naquele endereço (um endereço local
+/// que, na nossa rede, é de outro PC): sai da lista, e o handshake recomeça
+/// com os outros.
+fn parear(
+    socket: &UdpSocket,
+    codigo: &PairingCode,
+    prazo: Duration,
+    rota: &Rota,
+) -> Result<(Session, SocketAddr), NetError> {
+    let mut t = Tentativa::nova(codigo)?;
+    let (mut candidatos, servidor) = match *rota {
+        Rota::Direta(peer) => (vec![peer], None),
+        Rota::Sinal(servidor) => (Vec::new(), Some(servidor)),
+    };
+    let procura = match servidor {
+        Some(_) => Some(
+            PacketKind::Signal
+                .control(t.id, clock_us())
+                .encode_with_payload(
+                    &SignalMessage::Lookup {
+                        room: codigo.room(),
+                        locals: crate::local_candidates(socket),
+                    }
+                    .to_bytes(),
+                )
+                .map_err(NetError::Proto)?,
+        ),
+        None => None,
+    };
+    let mut servidor_respondeu = false;
+    let mut recusados: Vec<SocketAddr> = Vec::new();
     socket
         .set_read_timeout(Some(Duration::from_millis(50)))
         .map_err(NetError::io("configurar socket"))?;
     let limite = Instant::now() + prazo;
     let mut buf = [0u8; 2048];
     while Instant::now() < limite {
-        // Erro de envio (porta do cliente ainda fechada, por exemplo): tenta de novo.
-        let _ = socket.send(&init);
+        // Erro de envio (porta do outro lado ainda fechada, por exemplo):
+        // tenta de novo na próxima volta.
+        if let (Some(s), Some(p)) = (servidor, &procura) {
+            let _ = socket.send_to(p, s);
+        }
+        for c in &candidatos {
+            let _ = socket.send_to(&t.init, c);
+        }
         let reenvio = Instant::now() + REENVIO_PAREAMENTO;
         while Instant::now() < reenvio {
-            let Ok(n) = socket.recv(&mut buf) else {
+            let Ok((n, de)) = socket.recv_from(&mut buf) else {
                 continue;
             };
-            match PacketHeader::decode(&buf[..n]) {
-                Ok((h, resposta)) if h.kind == PacketKind::PairReply && h.frame_id == id => {
-                    return hs.finish(resposta).map_err(|e| NetError::Pairing(e.to_string()));
+            let Ok((h, payload)) = PacketHeader::decode(&buf[..n]) else {
+                continue; // lixo na porta
+            };
+            match h.kind {
+                PacketKind::Signal if Some(de) == servidor => {
+                    servidor_respondeu = true;
+                    if let Ok(SignalMessage::Found { public, locals }) = SignalMessage::from_bytes(payload) {
+                        for c in std::iter::once(public).chain(locals) {
+                            novo_candidato(&mut candidatos, &recusados, c);
+                        }
+                    }
                 }
-                _ => {} // outra coisa na porta: ignora
+                PacketKind::Punch => novo_candidato(&mut candidatos, &recusados, de),
+                // Só de um candidato: quem não sabe por onde o cliente anda
+                // não derruba o pareamento com uma resposta falsa.
+                PacketKind::PairReply if h.frame_id == t.id && candidatos.contains(&de) => {
+                    let feita = std::mem::replace(&mut t, Tentativa::nova(codigo)?);
+                    match feita.hs.finish(payload) {
+                        Ok(sessao) => return Ok((sessao, de)),
+                        Err(CryptoError::WrongCode) if servidor.is_some() => {
+                            candidatos.retain(|c| *c != de);
+                            recusados.push(de);
+                        }
+                        Err(e) => return Err(NetError::Pairing(e.to_string())),
+                    }
+                }
+                _ => {}
             }
         }
     }
+    let motivo = match (servidor, servidor_respondeu, candidatos.is_empty()) {
+        (Some(s), false, _) => format!("o servidor de sinalização {s} não respondeu"),
+        (Some(_), true, true) if !recusados.is_empty() => {
+            "achei um cliente, mas o código de pareamento não confere".to_string()
+        }
+        (Some(_), true, true) => "nenhum cliente com esse código no servidor de sinalização".to_string(),
+        (Some(_), true, false) => {
+            "o cliente foi achado, mas os pacotes não passaram (NAT dos dois lados restritivo?)".to_string()
+        }
+        (None, ..) => "endereço, firewall ou cliente sem código?".to_string(),
+    };
     Err(NetError::Pairing(format!(
-        "o cliente não respondeu em {} s (endereço, firewall ou cliente sem código?)",
+        "o cliente não respondeu em {} s ({motivo})",
         prazo.as_secs()
     )))
+}
+
+fn novo_candidato(candidatos: &mut Vec<SocketAddr>, recusados: &[SocketAddr], c: SocketAddr) {
+    if !candidatos.contains(&c) && !recusados.contains(&c) && candidatos.len() < MAX_CANDIDATOS {
+        candidatos.push(c);
+    }
 }
 
 /// Espera máxima, na largada, pela resposta do primeiro ping antes de mandar
@@ -246,16 +353,47 @@ impl VideoSender {
         peer: impl ToSocketAddrs,
         cfg: SenderConfig,
     ) -> Result<Self, NetError> {
+        let peer = peer
+            .to_socket_addrs()
+            .map_err(NetError::io("resolver destino"))?
+            .next()
+            .ok_or_else(|| NetError::Io {
+                context: "resolver destino",
+                message: "nenhum endereço".into(),
+            })?;
+        Self::start(bind, Rota::Direta(peer), cfg)
+    }
+
+    /// Como [`connect`](Self::connect), mas acha o cliente pelo servidor de
+    /// sinalização em `server` (redes diferentes, atrás de NAT), na sala do
+    /// [`SenderConfig::pairing_code`] — obrigatório aqui.
+    pub fn connect_via_signal(
+        bind: impl ToSocketAddrs,
+        server: SocketAddr,
+        cfg: SenderConfig,
+    ) -> Result<Self, NetError> {
+        if cfg.pairing_code.is_none() {
+            return Err(NetError::Pairing(
+                "a sinalização precisa do código de pareamento".into(),
+            ));
+        }
+        Self::start(bind, Rota::Sinal(server), cfg)
+    }
+
+    fn start(bind: impl ToSocketAddrs, rota: Rota, cfg: SenderConfig) -> Result<Self, NetError> {
         let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
-        socket.connect(peer).map_err(NetError::io("definir destino"))?;
-        // Pareamento antes de qualquer outro pacote: com código, nada sai em claro.
-        let (cifra, opener) = match &cfg.pairing_code {
-            Some(codigo) => {
-                let s = parear(&socket, codigo, cfg.pairing_timeout)?;
-                (Some(Arc::new(Mutex::new(s.sealer))), Some(s.opener))
+        // Pareamento antes de qualquer outro pacote: com código, nada sai em
+        // claro. O socket só se prende ao cliente depois, no endereço que
+        // respondeu.
+        let (cifra, opener, peer) = match (&cfg.pairing_code, &rota) {
+            (Some(codigo), _) => {
+                let (s, peer) = parear(&socket, codigo, cfg.pairing_timeout, &rota)?;
+                (Some(Arc::new(Mutex::new(s.sealer))), Some(s.opener), peer)
             }
-            None => (None, None),
+            (None, Rota::Direta(peer)) => (None, None, *peer),
+            (None, Rota::Sinal(_)) => unreachable!("conferido em connect_via_signal"),
         };
+        socket.connect(peer).map_err(NetError::io("definir destino"))?;
         // Timeout curto na leitura: a thread de recepção confere `stop` a cada volta.
         socket
             .set_read_timeout(Some(Duration::from_millis(100)))
@@ -711,9 +849,15 @@ fn on_packet(
                 on_feedback(shared, &f);
             }
         }
-        // O host não recebe vídeo; pareamento depois da sessão pronta é sobra
-        // (reenvio de uma resposta que já chegou).
-        PacketKind::Video | PacketKind::Parity | PacketKind::PairInit | PacketKind::PairReply => {}
+        // O host não recebe vídeo; pareamento, sinalização e furo depois da
+        // sessão pronta são sobra
+        // (reenvios de quem ainda não sabia que deu certo).
+        PacketKind::Video
+        | PacketKind::Parity
+        | PacketKind::PairInit
+        | PacketKind::PairReply
+        | PacketKind::Signal
+        | PacketKind::Punch => {}
     }
 }
 

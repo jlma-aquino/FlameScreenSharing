@@ -24,6 +24,11 @@ bits. Sorteado com o gerador do sistema, com rejeição para não favorecer
 nenhum símbolo. Ao ler, aceita minúsculas e ignora hífens e espaços. O
 `Debug` não mostra o código, para ele não vazar em logs.
 
+`room()` dá o número da **sala** no servidor de sinalização: os 20 bits mais
+altos do SHA-256 de `"fluxo sala v1"` + código (`BITS_DA_SALA`). O servidor
+vê a sala, nunca o código: sobram ~20 bits que ele não deduz, e o SPAKE2 só
+deixa testar um palpite por pareamento.
+
 ## Handshake
 
 ```text
@@ -59,8 +64,8 @@ host                                       cliente
 cargo test -p fluxo-crypto
 ```
 
-14 testes: código (sorteio, leitura, recusa de ambíguos, `Debug`
-escondido), handshake (mesmo código nos dois sentidos, código errado,
+15 testes: código (sorteio, leitura, recusa de ambíguos, `Debug`
+escondido, sala), handshake (mesmo código nos dois sentidos, código errado,
 chaves novas a cada pareamento, mensagens malformadas) e cifra (ida e volta,
 alteração detectada, chave errada, repetido recusado, fora de ordem aceito,
 velho demais recusado, esgotamento do `seq`). Os testes de ponta a ponta

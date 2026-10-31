@@ -1,0 +1,11 @@
+[package]
+name = "fluxo-sinal"
+description = "Servidor de sinalização do Fluxo: apresenta host e cliente em redes diferentes (não passa vídeo)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Só fluxo-net: roda em qualquer sistema (a ideia é um servidor Linux barato).
+[dependencies]
+fluxo-net = { workspace = true }

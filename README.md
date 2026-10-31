@@ -4,10 +4,12 @@ Streaming de tela **P2P** de baixa latência para Windows, escrito em Rust.
 Meta: **1080p a 60 fps** (com espaço para 1440p/4K e 120 fps) e latência de
 ponta a ponta abaixo de **40 ms em rede local**.
 
-> **Status:** Fase 3 em andamento — o pipeline completo funciona: o
+> **Status:** Fase 5 em andamento — o pipeline completo funciona: o
 > `fluxo-host` captura, codifica (NVENC ou Media Foundation) e transmite por
 > UDP; o `fluxo-client` decodifica na GPU e mostra numa janela. Medido na
-> mesma máquina: captura → tela em ~3 ms (p50). Veja o [ROADMAP](docs/ROADMAP.md).
+> mesma máquina: captura → tela em ~3 ms (p50). Pareamento por código, tudo
+> cifrado, e conexão entre redes diferentes por um servidor de sinalização.
+> Veja o [ROADMAP](docs/ROADMAP.md).
 
 ## Como funciona (resumo)
 
@@ -35,12 +37,14 @@ fluxo/
 │   ├── fluxo-proto/        protocolo de rede (puro Rust, sem I/O, 100% testável)
 │   ├── fluxo-capture/      captura de tela via DXGI Desktop Duplication
 │   ├── fluxo-encode/       encoder H.264 por hardware: NVENC ou Media Foundation
-│   ├── fluxo-net/          transporte UDP: pacing, remontagem, RTT
+│   ├── fluxo-crypto/       código de pareamento, handshake SPAKE2, cifra dos pacotes
+│   ├── fluxo-net/          transporte UDP: pacing, remontagem, RTT, sinalização
 │   └── fluxo-decode/       decoder H.264 na GPU (Media Foundation + DXVA)
 ├── apps/                   executáveis
 │   ├── fluxo-host/         transmite a tela (captura → encode → rede)
 │   ├── fluxo-client/       mostra a tela recebida (rede → decode → janela)
-│   └── fluxo-bench/        CLI para testar e medir cada etapa isoladamente
+│   ├── fluxo-bench/        CLI para testar e medir cada etapa isoladamente
+│   └── fluxo-sinal/        servidor de sinalização (acha o outro lado pela internet)
 └── docs/
     ├── ARQUITETURA.md      desenho do sistema, threads, orçamento de latência
     ├── PROTOCOLO.md        formato dos pacotes byte a byte
@@ -73,6 +77,15 @@ transmitir, e tudo vai cifrado:
 ```powershell
 .\target\release\fluxo-client.exe --porta 9000
 .\target\release\fluxo-host.exe --destino <IP de quem assiste>:9000 --codigo <código do cliente>
+```
+
+Em redes diferentes, sem saber o IP nem abrir porta no roteador: rode o
+servidor de sinalização num endereço público (uma VPS barata) e use
+`--sinal` nos dois lados ([fluxo-sinal](docs/modulos/fluxo-sinal.md)):
+
+```powershell
+.\target\release\fluxo-client.exe --sinal meu-servidor.com
+.\target\release\fluxo-host.exe --sinal meu-servidor.com --codigo <código do cliente>
 ```
 
 Sem janela, só medindo e gravando o que chega: troque o cliente por

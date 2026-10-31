@@ -53,21 +53,34 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         (Some(c), false) => Some(PairingCode::parse(c)?),
         (None, false) => Some(PairingCode::generate()?),
     };
+    let servidor = o
+        .sinal
+        .as_deref()
+        .map(fluxo_net::resolve_signal_server)
+        .transpose()?;
+    if servidor.is_some() && codigo.is_none() {
+        return Err("--sinal precisa do código (sem --sem-cifra)".into());
+    }
     let rx = VideoReceiver::bind(
         ("0.0.0.0", o.porta),
         ReceiverConfig {
             pairing_code: codigo.clone(),
+            signal_server: servidor,
             ..ReceiverConfig::default()
         },
     )?;
     let saida = o.saida.clone().unwrap_or_else(|| "recebido.h264".into());
-    match &codigo {
-        Some(c) => println!(
+    match (&codigo, &o.sinal) {
+        (Some(c), Some(s)) => println!(
+            "Escutando em {}, código de pareamento {c}. No host: --sinal {s} --codigo {c}",
+            rx.local_addr(),
+        ),
+        (Some(c), None) => println!(
             "Escutando em {}, código de pareamento {c}. No host: --destino <IP deste PC>:{} --codigo {c}",
             rx.local_addr(),
             o.porta
         ),
-        None => println!(
+        (None, _) => println!(
             "Escutando em {} SEM cifra. No host: --destino <IP deste PC>:{} --sem-cifra",
             rx.local_addr(),
             o.porta
@@ -100,6 +113,7 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let mut proximo_relatorio = Duration::from_secs(1);
     let (mut frames_seg, mut bytes_seg) = (0u64, 0u64);
     let mut latencias_seg: Vec<i32> = Vec::new();
+    let mut avisou_registro = false;
 
     loop {
         if let (Some(t0), Some(d)) = (inicio, duracao) {
@@ -117,6 +131,17 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                 rx.request_refresh();
             }
             RecoveryRequest::None => {}
+        }
+        if servidor.is_some() && !avisou_registro {
+            let s = rx.stats();
+            if let Some(publico) = s.public_addr {
+                println!("Registrado no servidor de sinalização; endereço público {publico}");
+                avisou_registro = true;
+            } else if s.room_taken {
+                return Err(
+                    "o servidor recusou a sala deste código (outro cliente nela); use outro código".into(),
+                );
+            }
         }
         let recebido = rx.recv_frame(Duration::from_millis(20))?;
 

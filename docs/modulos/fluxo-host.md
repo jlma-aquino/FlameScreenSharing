@@ -8,7 +8,7 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 ## Uso
 
 ```text
-fluxo-host --destino IP:PORTA --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
+fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S] [--refresh N] [--fec K]
            [--segundos S] [--porta-local P] [--sem-cifra]
 ```
@@ -28,6 +28,19 @@ O host espera até 30 s pelo pareamento; com o código errado, para na hora
 tudo vai cifrado (ver [fluxo-net](fluxo-net.md), "Pareamento e cifra").
 `--sem-cifra` (nos dois lados) desliga tudo isso, só para teste. Na mesma
 máquina, use `--destino 127.0.0.1:9000`.
+
+Em redes diferentes, os dois usam um servidor de sinalização
+([fluxo-sinal](fluxo-sinal.md)) no lugar do endereço:
+
+```powershell
+.\target\release\fluxo-client.exe --sinal meu-servidor.com
+.\target\release\fluxo-host.exe --sinal meu-servidor.com --codigo K7M4-QX9P
+```
+
+O host acha o cliente pela sala do código, os dois furam os NATs e o vídeo
+vai direto; a saída mostra "Procurando o cliente pelo servidor…" e depois o
+endereço que respondeu. Se não der, o erro diz onde parou (servidor mudo,
+nenhum cliente com esse código, ou pacotes barrados pelos NATs).
 
 ## Firewall
 
@@ -69,7 +82,10 @@ Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
 
 ## Decisões provisórias
 
-- **Destino manual.** Sem descoberta nem NAT (fase 5).
+- **Destino manual ou pela sinalização.** `--destino` serve na mesma rede;
+  em redes diferentes, `--sinal SERVIDOR` acha o cliente pelo
+  [fluxo-sinal](fluxo-sinal.md) e fura os NATs (ver [fluxo-net](fluxo-net.md)).
+  NAT simétrico dos dois lados ainda não passa (falta o relay).
 - **Keyframes sob pedido.** O cliente pede um keyframe quando perde algo
   (ou ao começar); o host força keyframe no próximo encode e, com a tela
   parada, recodifica a última imagem enviada (guardada como cópia na GPU).

@@ -92,8 +92,13 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       código errado é recusado na hora, intruso sem o código não derruba a sessão)
 - [x] Criptografia ChaCha20-Poly1305 de todo pacote, com anti-replay (ADR-008). Wi-Fi a 30 Mbps: p50 13,7 ms
       cifrado contra 13,2 ms em claro
-- [ ] Servidor de sinalização mínimo (troca de endereços)
-- [ ] STUN + UDP hole punching
+- [x] Servidor de sinalização mínimo (`fluxo-sinal`, protocolo v9, ADR-009): o cliente registra a sala do
+      código, o host procura; o servidor vê 20 bits do código, nunca o código nem o vídeo
+- [x] STUN + UDP hole punching: o próprio servidor de sinalização faz o papel do STUN (mesmo socket do
+      vídeo); o cliente manda Punch e o host PairInit a todos os endereços do outro. Testado com o servidor
+      no notebook, nos dois sentidos (tela real a 20 Mbps: p50 18,1 ms, 0 perdas)
+- [ ] Teste atrás de NATs de verdade (servidor numa VPS, os dois PCs em redes diferentes, ex.: um no
+      roteador do celular)
 - [ ] Relay de fallback para CGNAT
 
 ## Fase 6 — Interação e conforto

@@ -16,6 +16,7 @@ sockets — isso é da camada de rede. Formato byte a byte em
 | `src/reassembly.rs` | `Reassembler`: pacotes → frames, `ReassemblerStats`, reconstrução por FEC |
 | `src/fec.rs` | Paridade XOR: `parity`, `recover`, `group_count`, `group_range` |
 | `src/seq.rs` | `is_newer` / `is_newer_or_equal` com wrap-around |
+| `src/signal.rs` | `SignalMessage`: mensagens do servidor de sinalização (PROTOCOLO.md, seção 2.2) |
 | `examples/loopback.rs` | Teste de carga via UDP local |
 
 ## Uso típico

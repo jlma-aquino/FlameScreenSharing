@@ -6,6 +6,20 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v9 — conexão entre redes diferentes** (fase 5, ADR-009):
+  servidor de sinalização `fluxo-sinal` (novo app, roda em qualquer
+  sistema). O cliente (`--sinal SERVIDOR`) registra a sala do código; o host
+  (`fluxo-host --sinal SERVIDOR --codigo ...`) procura a sala, recebe os
+  endereços público e locais do cliente e fura os NATs (pacotes Signal e
+  Punch). O servidor faz o papel do STUN pelo mesmo socket do vídeo, vê só
+  20 bits derivados do código e nunca vê o vídeo; respostas menores que os
+  pedidos (sem amplificação). Erros dizem onde parou (servidor mudo, sala
+  vazia, NATs barrando). Também no `fluxo-bench receber`/`enviar`.
+- `fluxo-net`: `VideoSender::connect_via_signal`,
+  `ReceiverConfig::signal_server`, `SignalServer`, `local_ip`,
+  `resolve_signal_server`; `ReceiverStats::public_addr`/`room_taken`/
+  `punches_sent`. `fluxo-crypto`: `PairingCode::room`. `fluxo-proto`:
+  `SignalMessage`.
 - **Protocolo v8 — pareamento e cifra** (fase 5, ADR-008): o cliente mostra
   um código de 8 caracteres (`K7M4-QX9P`) e o comando pronto para o host;
   `fluxo-host --codigo` faz o handshake SPAKE2 (PairInit/PairReply) e daí em
@@ -116,6 +130,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - `fluxo-bench decode`: captura → encode → decode, mede o decoder isolado.
 
 ### Alterado
+- O cliente reconhece um PairInit repetido pelo conteúdo, não pelo
+  endereço: o host tenta todos os endereços do cliente de uma vez, e o mesmo
+  pedido chegando por dois caminhos não pode gerar duas sessões.
+- O IP local do `fluxo-client` agora vem de `fluxo_net::local_ip`.
 - `fluxo-host`: keyframe periódico padrão passou de 2 s para 10 s (só rede
   de segurança, agora que o cliente pede quando precisa); com a tela parada,
   a espera por captura caiu de 100 para 10 ms para atender pedidos rápido.
@@ -135,6 +153,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Teste `perda_simulada_descarta_pacotes_e_o_receptor_percebe` falhava às
+  vezes: com o FEC ligado por padrão, ~31% dos frames se salvavam e o limite
+  de 20 completos estourava; o teste agora roda sem FEC.
 - Teste `pedido_de_keyframe_chega_ao_host_uma_vez` falhava às vezes: o ping
   de largada do host chegava antes da checagem "sem host, sem pedido".
 - `fluxo-client`: arrastar ou redimensionar a janela parava a imagem (o

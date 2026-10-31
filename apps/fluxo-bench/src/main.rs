@@ -12,8 +12,8 @@
 //!                        [--mbps M] [--fps F] [--keyframe-a-cada S] [--saida arquivo.h264]
 //!                        [--verificar] [--refresh N] [--perder-a-cada S]
 //! fluxo-bench decode    [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
-//! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
-//! fluxo-bench enviar     --destino IP:PORTA [--mbps M] [--fps F] [--segundos S] [--fec K]
+//! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--sinal SERVIDOR]
+//! fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR) [--mbps M] [--fps F] [--segundos S] [--fec K]
 //! ```
 //!
 //! Detalhes e como interpretar os números: `docs/modulos/fluxo-bench.md`.
@@ -48,6 +48,8 @@ struct Opts {
     porta: u16,
     /// Destino do `enviar` (IP:PORTA).
     destino: Option<String>,
+    /// Servidor de sinalização do `receber` (registra) e do `enviar` (procura).
+    sinal: Option<String>,
     /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
     fec: u8,
     /// Código de pareamento do `receber` (padrão: sorteado) e do `enviar`.
@@ -74,6 +76,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         verificar: false,
         porta: 9000,
         destino: None,
+        sinal: None,
         fec: 10,
         codigo: None,
         sem_cifra: false,
@@ -91,6 +94,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--verificar" => o.verificar = true,
             "--porta" => o.porta = valor()?.parse().map_err(|_| "porta inválida")?,
             "--destino" => o.destino = Some(valor()?.clone()),
+            "--sinal" => o.sinal = Some(valor()?.clone()),
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--codigo" => o.codigo = Some(valor()?.clone()),
             "--sem-cifra" => o.sem_cifra = true,
@@ -139,6 +143,8 @@ Opções:
                         no receber, confere que todo frame decodifica
   --porta P             porta UDP do receber (padrão 9000)
   --destino IP:PORTA    destino do enviar (o PC que roda o receber)
+  --sinal SERVIDOR      servidor de sinalização (fluxo-sinal): o receber se registra
+                        nele e o enviar acha o receber por ele (redes diferentes)
   --fec K               no enviar: 1 paridade a cada K pacotes (padrão 10; 0 = sem)
   --codigo XXXX-XXXX    código de pareamento: o receber mostra um sorteado (ou usa
                         este); o enviar precisa do código do receber

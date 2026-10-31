@@ -19,7 +19,7 @@ mod handshake;
 use std::fmt;
 
 pub use cifra::{Opener, Sealer, TAG_LEN};
-pub use codigo::PairingCode;
+pub use codigo::{PairingCode, BITS_DA_SALA};
 pub use handshake::{respond, HostHandshake, Session, INIT_LEN, REPLY_LEN};
 
 /// Erros de criptografia. Nenhum leva detalhes que ajudem um atacante.

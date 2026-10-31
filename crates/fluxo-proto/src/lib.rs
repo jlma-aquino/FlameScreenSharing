@@ -8,10 +8,11 @@
 //!
 //! | Módulo | Responsabilidade |
 //! |---|---|
-//! | [`packet`] | Cabeçalho binário fixo de 20 bytes (codificar/decodificar). |
+//! | [`packet`] | Cabeçalho binário fixo de 28 bytes (codificar/decodificar). |
 //! | [`fragment`] | Quebrar um frame de vídeo codificado em pacotes que cabem no MTU. |
 //! | [`reassembly`] | Juntar os pacotes recebidos de volta em frames completos. |
 //! | [`seq`] | Comparação de números de sequência que "dão a volta" (wrap-around). |
+//! | [`signal`] | Mensagens do servidor de sinalização (achar o outro lado pela internet). |
 //!
 //! ## Fluxo de dados
 //!
@@ -30,6 +31,7 @@ pub mod fragment;
 pub mod packet;
 pub mod reassembly;
 pub mod seq;
+pub mod signal;
 
 pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
@@ -38,6 +40,7 @@ pub use packet::{
     FLAG_REFRESH_END, FLAG_REFRESH_START, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION,
 };
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};
+pub use signal::SignalMessage;
 
 /// Tamanho máximo padrão do *payload* de cada pacote, em bytes.
 ///

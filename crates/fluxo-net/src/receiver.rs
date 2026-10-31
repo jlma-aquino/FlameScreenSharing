@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use fluxo_crypto::{Opener, PairingCode, Sealer, Session, TAG_LEN};
 use fluxo_proto::{
     prepare_seal, CompletedFrame, Feedback, PacketHeader, PacketKind, Reassembler, ReassemblerConfig,
-    ReassemblerStats, FLAG_KEYFRAME, HEADER_LEN,
+    ReassemblerStats, SignalMessage, FLAG_KEYFRAME, HEADER_LEN,
 };
 
 use crate::delay::QueueDelay;
@@ -43,7 +43,19 @@ pub struct ReceiverConfig {
     /// handshake com o mesmo código, e tudo trafega cifrado; pacotes em
     /// claro são descartados. `None`: sem cifra (rede de teste).
     pub pairing_code: Option<PairingCode>,
+    /// Servidor de sinalização: registra a sala do código nele, para um host
+    /// em outra rede achar este cliente ([`VideoSender::connect_via_signal`]).
+    /// Exige [`pairing_code`](Self::pairing_code).
+    ///
+    /// [`VideoSender::connect_via_signal`]: crate::VideoSender::connect_via_signal
+    pub signal_server: Option<SocketAddr>,
 }
+
+/// Registro na sala renovado a cada... (mantém a sala e o mapeamento do NAT
+/// vivos; os NATs costumam esquecer um mapeamento UDP parado em 30 s ou mais).
+const REGISTRO_VIVO: Duration = Duration::from_secs(5);
+/// ...ou, enquanto o servidor não confirmou, a cada 1 s.
+const REGISTRO_PENDENTE: Duration = Duration::from_secs(1);
 
 impl Default for ReceiverConfig {
     fn default() -> Self {
@@ -54,6 +66,7 @@ impl Default for ReceiverConfig {
             peer_timeout: Duration::from_secs(2),
             feedback_interval: Duration::from_millis(250),
             pairing_code: None,
+            signal_server: None,
         }
     }
 }
@@ -111,6 +124,14 @@ pub struct ReceiverStats {
     pub pairings: u64,
     /// Há uma sessão cifrada com o host (o handshake deu certo).
     pub encrypted: bool,
+    /// Com sinalização: nosso endereço visto da internet, depois que o
+    /// servidor confirmou o registro.
+    pub public_addr: Option<SocketAddr>,
+    /// Com sinalização: o servidor recusou a sala (outro cliente com um
+    /// código da mesma sala). Sorteie outro código.
+    pub room_taken: bool,
+    /// Pacotes de furo mandados aos endereços de hosts que o servidor avisou.
+    pub punches_sent: u64,
 }
 
 struct Shared {
@@ -175,6 +196,11 @@ const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(50);
 impl VideoReceiver {
     /// Escuta em `bind` (ex.: `"0.0.0.0:9000"`).
     pub fn bind(bind: impl ToSocketAddrs, cfg: ReceiverConfig) -> Result<Self, NetError> {
+        if cfg.signal_server.is_some() && cfg.pairing_code.is_none() {
+            return Err(NetError::Pairing(
+                "a sinalização precisa do código de pareamento".into(),
+            ));
+        }
         let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
         socket
             .set_read_timeout(Some(Duration::from_millis(50)))
@@ -296,12 +322,80 @@ struct Candidata {
     sessao: Session,
 }
 
-/// Resposta já mandada a um `PairInit`: reenviada se ele chegar de novo
-/// (o host reenvia enquanto a resposta não chega).
+/// Resposta já mandada a um `PairInit`: reenviada se o mesmo `PairInit`
+/// chegar de novo — reenvio do host, ou o mesmo pedido por outro caminho (o
+/// host tenta todos os endereços nossos de uma vez). Gerar outra sessão
+/// para ele desencontraria as chaves.
 struct Respondido {
-    id: u32,
-    de: SocketAddr,
+    init: Vec<u8>,
     pacote: Vec<u8>,
+}
+
+/// Registro no servidor de sinalização.
+struct Sinalizacao {
+    servidor: SocketAddr,
+    /// Pedido `Register` pronto (sempre o mesmo).
+    registro: Vec<u8>,
+    proximo: Instant,
+    confirmado: bool,
+}
+
+impl Sinalizacao {
+    fn new(servidor: SocketAddr, codigo: &PairingCode, socket: &UdpSocket) -> Self {
+        let msg = SignalMessage::Register {
+            room: codigo.room(),
+            locals: crate::local_candidates(socket),
+        };
+        let registro = PacketKind::Signal
+            .control(0, clock_us())
+            .encode_with_payload(&msg.to_bytes())
+            .expect("mensagem de sinalização cabe num pacote");
+        Self {
+            servidor,
+            registro,
+            proximo: Instant::now(),
+            confirmado: false,
+        }
+    }
+
+    /// Renova o registro, se está na hora.
+    fn renovar(&mut self, socket: &UdpSocket) {
+        if Instant::now() >= self.proximo {
+            let _ = socket.send_to(&self.registro, self.servidor);
+            let espera = if self.confirmado {
+                REGISTRO_VIVO
+            } else {
+                REGISTRO_PENDENTE
+            };
+            self.proximo = Instant::now() + espera;
+        }
+    }
+
+    /// Trata uma mensagem do servidor. Um host procurando por nós: manda um
+    /// furo a cada endereço dele, para os `PairInit` passarem pelo nosso NAT.
+    fn tratar(&mut self, payload: &[u8], socket: &UdpSocket, shared: &Shared) {
+        match SignalMessage::from_bytes(payload) {
+            Ok(SignalMessage::Registered { public }) => {
+                self.confirmado = true;
+                shared.with_stats(|s| {
+                    s.public_addr = Some(public);
+                    s.room_taken = false;
+                });
+            }
+            Ok(SignalMessage::Found { public, locals }) => {
+                let Ok(furo) = PacketKind::Punch.control(0, clock_us()).encode_with_payload(&[]) else {
+                    return;
+                };
+                let mut n = 0;
+                for destino in std::iter::once(public).chain(locals) {
+                    n += socket.send_to(&furo, destino).is_ok() as u64;
+                }
+                shared.with_stats(|s| s.punches_sent += n);
+            }
+            Ok(SignalMessage::RoomTaken) => shared.with_stats(|s| s.room_taken = true),
+            _ => shared.with_stats(|s| s.invalid_packets += 1),
+        }
+    }
 }
 
 fn recv_loop(
@@ -327,8 +421,15 @@ fn recv_loop(
     let mut ativa: Option<Opener> = None;
     let mut candidata: Option<Candidata> = None;
     let mut respondido: Option<Respondido> = None;
+    let mut sinal = match (cfg.signal_server, &cfg.pairing_code) {
+        (Some(servidor), Some(codigo)) => Some(Sinalizacao::new(servidor, codigo, &socket)),
+        _ => None,
+    };
 
     while !shared.stop.load(Ordering::Relaxed) {
+        if let Some(s) = sinal.as_mut() {
+            s.renovar(&socket);
+        }
         if let Some(p) = peer {
             if Instant::now() >= next_ping {
                 let ping = PacketKind::Ping
@@ -375,6 +476,18 @@ fn recv_loop(
             shared.with_stats(|s| s.invalid_packets += 1);
             continue;
         };
+        // Sinalização (só do nosso servidor) e furos (só abrem caminho).
+        match h.kind {
+            PacketKind::Signal => {
+                match sinal.as_mut().filter(|s| s.servidor == from) {
+                    Some(s) => s.tratar(payload, &socket, &shared),
+                    None => shared.with_stats(|s| s.invalid_packets += 1),
+                }
+                continue;
+            }
+            PacketKind::Punch => continue,
+            _ => {}
+        }
 
         // Daqui sai o pacote em claro, e se ele inaugura uma sessão (host novo).
         let claro: Vec<u8>;
@@ -468,12 +581,14 @@ fn recv_loop(
         last_from_peer = Instant::now();
 
         match h.kind {
-            // Só o host recebe pedidos de keyframe e relatórios; pareamento
-            // já foi tratado acima.
+            // Só o host recebe pedidos de keyframe e relatórios; pareamento,
+            // sinalização e furo já foram tratados acima.
             PacketKind::KeyframeRequest
             | PacketKind::Feedback
             | PacketKind::PairInit
-            | PacketKind::PairReply => {}
+            | PacketKind::PairReply
+            | PacketKind::Signal
+            | PacketKind::Punch => {}
             PacketKind::Ping => {
                 if pong_for(&h).is_some_and(|p| shared.enviar(&socket, p, from)) {
                     shared.with_stats(|s| s.pings_answered += 1);
@@ -547,7 +662,7 @@ fn responder_pareamento(
     candidata: &mut Option<Candidata>,
     respondido: &mut Option<Respondido>,
 ) {
-    if let Some(r) = respondido.as_ref().filter(|r| r.id == h.frame_id && r.de == from) {
+    if let Some(r) = respondido.as_ref().filter(|r| r.init == payload) {
         let _ = socket.send_to(&r.pacote, from);
         return;
     }
@@ -563,8 +678,7 @@ fn responder_pareamento(
     };
     let _ = socket.send_to(&pacote, from);
     *respondido = Some(Respondido {
-        id: h.frame_id,
-        de: from,
+        init: payload.to_vec(),
         pacote,
     });
     *candidata = Some(Candidata { sessao });

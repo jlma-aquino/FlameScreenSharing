@@ -15,10 +15,16 @@ use fluxo_net::{clock_us, PairingCode, SenderConfig, VideoSender};
 use crate::Opts;
 
 pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
-    let destino = o
-        .destino
+    let servidor = o
+        .sinal
         .as_deref()
-        .ok_or("enviar precisa de --destino IP:PORTA")?;
+        .map(fluxo_net::resolve_signal_server)
+        .transpose()?;
+    let destino = match (o.destino.as_deref(), servidor) {
+        (Some(d), None) => Some(d),
+        (None, Some(_)) => None,
+        _ => return Err("enviar precisa de --destino IP:PORTA ou --sinal SERVIDOR (um dos dois)".into()),
+    };
     let bitrate_bps = (o.mbps * 1e6).round() as u64;
     let fps = o.fps.max(1);
     let tamanho = (bitrate_bps / 8 / fps as u64).max(1) as usize;
@@ -35,7 +41,14 @@ pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let pacing = cfg.pacing_bps;
-    let tx = VideoSender::connect("0.0.0.0:0", destino, cfg)?;
+    let tx = match (destino, servidor) {
+        (Some(d), _) => VideoSender::connect("0.0.0.0:0", d, cfg)?,
+        (None, Some(s)) => {
+            println!("Procurando o receber pelo servidor de sinalização {s}…");
+            VideoSender::connect_via_signal("0.0.0.0:0", s, cfg)?
+        }
+        (None, None) => unreachable!("conferido acima"),
+    };
     println!(
         "Enviando para {} : {} Mbps ({} fps × {:.1} KB), pacing {:.0} Mbps, FEC {}, {} s",
         tx.peer_addr(),

@@ -18,6 +18,7 @@ biblioteca padrão — roda e é testado em qualquer sistema.
 | `src/sync.rs` | `ClockSync` — diferença entre os relógios pelos Ping/Pong |
 | `src/sim.rs` | Atraso e jitter simulados (só testes): `DelayModel`, `DelayLine` |
 | `src/recovery.rs` | `Recovery` — quando mostrar a imagem e o que pedir ao host depois de perdas (cliente) |
+| `src/signal.rs` | `SignalServer` — servidor de sinalização (salas, endereços; lógica testável sem rede) |
 | `tests/loopback.rs` | Testes com sockets reais em 127.0.0.1 |
 
 ## Threads
@@ -211,6 +212,40 @@ Com `SenderConfig`/`ReceiverConfig::pairing_code` (o padrão nos apps), o
   `invalid_packets` no cliente, `rejected_packets` no host.
 - Medido no Wi-Fi (Windows → notebook Linux, 30 Mbps sintéticos, 20 s):
   latência p50 13,7 ms cifrado contra 13,2 ms em claro; nenhuma perda.
+
+## Sinalização e furo de NAT (redes diferentes)
+
+Formato e sequência: [PROTOCOLO.md](../PROTOCOLO.md), seção 2.2. Servidor:
+[fluxo-sinal](fluxo-sinal.md).
+
+- **Cliente** (`ReceiverConfig::signal_server`, exige código): manda
+  `Register` com a sala do código (`PairingCode::room`) e o próprio
+  endereço local a cada 1 s até o servidor confirmar, depois a cada 5 s
+  (mantém a sala e o mapeamento do NAT). A cada `Found` (um host
+  procurando), manda um `Punch` a cada endereço do host. Estatísticas:
+  `public_addr` (como a internet nos vê), `room_taken`, `punches_sent`.
+- **Host** (`VideoSender::connect_via_signal`): o socket fica solto durante
+  o pareamento. A cada 250 ms manda `Lookup` ao servidor e `PairInit` a
+  todos os candidatos (público e locais do cliente, mais quem mandou furo;
+  até 8). O primeiro `PairReply` válido de um candidato define o destino, e
+  só então o socket se prende a ele (`connect`). Um candidato que responde
+  com outra chave sai da lista e o handshake recomeça. Se nada der certo, o
+  erro diz onde parou: servidor mudo, sala vazia, ou cliente achado mas
+  pacotes barrados (NAT restritivo nos dois lados).
+- `local_ip()` descobre o IP da rede local sem mandar pacote (rota até um
+  IP público); `resolve_signal_server` aceita `host`, `host:porta` ou IP,
+  com a porta padrão 7000.
+
+Medido com o servidor no notebook, nos dois sentidos, pelo Wi-Fi (sem NAT
+entre os dois: prova o fluxo, não o furo de um NAT de verdade):
+
+| Teste | Resultado |
+|---|---|
+| `enviar` (Windows) acha o `receber` (notebook), 30 Mbps, 5 s | pareado pelo endereço local do cliente (registrado pelo 127.0.0.1); 0 perdas, latência 15–17 ms |
+| `enviar` (notebook) acha o `receber` (Windows), 30 Mbps, 8 s | 0 perdas, p50 17,5 ms |
+| `fluxo-host` (tela real, 20 Mbps) acha o `receber` (notebook), 10 s | 0 perdas, 1 keyframe pedido na largada, p50 18,1 ms |
+
+O servidor só aparece no começo: depois do `Found`, nada mais passa por ele.
 
 ## Host único e reinício (sem cifra)
 

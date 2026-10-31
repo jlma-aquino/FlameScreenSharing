@@ -8,7 +8,7 @@ Lado de quem assiste: rede (`fluxo-net`) → decode (`fluxo-decode`) → tela.
 
 ```text
 fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
-             [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra]
+             [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR]
 ```
 
 `--no-topo` mantém a janela sempre por cima das outras: útil para acompanhar
@@ -21,6 +21,11 @@ o IP provável deste PC, descoberto sem mandar nenhum pacote). Só um host com
 esse código consegue transmitir, e tudo vai cifrado; o painel e o título
 mostram "cifrado" durante a transmissão. `--codigo` fixa um código (útil em
 scripts); `--sem-cifra` desliga o pareamento, só para teste.
+
+Em redes diferentes, `--sinal SERVIDOR` registra o código num servidor de
+sinalização ([fluxo-sinal](fluxo-sinal.md)) e o comando mostrado vira
+`fluxo-host --sinal SERVIDOR --codigo ...`: o host acha este PC pelo
+servidor, sem precisar do IP nem de abrir porta no roteador.
 
 ```powershell
 # No PC que assiste

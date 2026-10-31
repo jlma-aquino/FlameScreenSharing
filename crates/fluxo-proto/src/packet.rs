@@ -44,7 +44,8 @@ pub const MAGIC: u16 = 0x464C;
 ///   onda de intra-refresh em vez de keyframe.
 /// - 8: cabeçalho de 28 bytes (+ `seq`), pacotes de pareamento (PairInit,
 ///   PairReply) e payload cifrado ([`FLAG_ENCRYPTED`]).
-pub const PROTOCOL_VERSION: u8 = 8;
+/// - 9: sinalização pela internet (Signal) e furo de NAT (Punch).
+pub const PROTOCOL_VERSION: u8 = 9;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 /// Num [`PacketKind::KeyframeRequest`]: o cliente **precisa** de um keyframe
@@ -94,6 +95,13 @@ pub enum PacketKind {
     /// Cliente → host: resposta do pareamento (mensagem SPAKE2 + confirmação
     /// da chave). Em claro; `frame_id` igual ao do PairInit.
     PairReply = 8,
+    /// Com o servidor de sinalização, nos dois sentidos: payload
+    /// [`crate::SignalMessage`]. Em claro (o servidor não tem chave);
+    /// `frame_id` = número do pedido, ecoado na resposta.
+    Signal = 9,
+    /// Cliente → host, sem payload: abre o caminho no NAT/firewall do
+    /// cliente para os pacotes do host. Quem recebe ignora. Em claro.
+    Punch = 10,
 }
 
 impl PacketKind {
@@ -107,6 +115,8 @@ impl PacketKind {
             6 => Some(Self::Feedback),
             7 => Some(Self::PairInit),
             8 => Some(Self::PairReply),
+            9 => Some(Self::Signal),
+            10 => Some(Self::Punch),
             _ => None,
         }
     }
@@ -114,6 +124,14 @@ impl PacketKind {
     /// `true` nos pacotes de pareamento, que nunca vão cifrados.
     pub fn is_pairing(self) -> bool {
         matches!(self, Self::PairInit | Self::PairReply)
+    }
+
+    /// `true` nos tipos que nunca vão cifrados: pareamento, sinalização e furo.
+    pub fn is_always_clear(self) -> bool {
+        matches!(
+            self,
+            Self::PairInit | Self::PairReply | Self::Signal | Self::Punch
+        )
     }
 
     /// Cabeçalho de um pacote de controle (sem payload nem fragmentos).
@@ -178,6 +196,8 @@ pub enum ProtoError {
     BadFragment { index: u16, count: u16 },
     /// Tentativa de codificar um payload maior que 65535 bytes.
     PayloadTooLarge(usize),
+    /// Mensagem de sinalização malformada ou curta demais.
+    BadSignal,
 }
 
 impl fmt::Display for ProtoError {
@@ -194,6 +214,7 @@ impl fmt::Display for ProtoError {
                 write!(f, "fragmento inválido {index}/{count}")
             }
             Self::PayloadTooLarge(n) => write!(f, "payload de {n} bytes excede 65535"),
+            Self::BadSignal => write!(f, "mensagem de sinalização inválida"),
         }
     }
 }
