@@ -101,8 +101,10 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       chat (`fluxo-client --internet`, `fluxo-host --conexao`)
 - [x] Teste atrás de NATs de verdade: casa (CGNAT) → notebook no roteador do celular, com os códigos de
       conexão, nos dois sentidos: 0% de perda, RTT ~50 ms, com os pedidos em TTL 12 até o furo chegar
-- [ ] Teste entre redes com a tela real (`fluxo-host --conexao` → `fluxo-client --internet`)
-- [ ] UPnP (um código só, quando o roteador do cliente deixar) e IPv6 nos códigos
+- [x] Teste entre redes com a tela real: `fluxo-host --conexao` → notebook no celular, pelo IPv6, 59,9 fps,
+      9,1 Mbps, 0% de perda, RTT 58 ms
+- [x] UPnP (abre a porta só sem CGNAT na frente; a marca no código faz o host ir direto) e IPv6 nos códigos e
+      nos sockets (pareia pela família que responder primeiro)
 - [ ] Relay de fallback para CGNAT (exige alguém hospedando um servidor; opcional)
 
 ## Fase 6 — Interação e conforto

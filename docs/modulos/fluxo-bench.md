@@ -25,7 +25,7 @@ fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
                        [--saida arquivo.h264] [--verificar] [--refresh N] [--perder-a-cada S]
 fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
-fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra] [--sinal SERVIDOR | --internet]
+fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra] [--sinal SERVIDOR | --internet [--sem-upnp]]
 fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR) (--codigo C | --sem-cifra) [--mbps M] [--fps F] [--segundos S] [--fec K]
 fluxo-bench enviar     --conexao CÓDIGO [--mbps M] [--fps F] [--segundos S] [--fec K]
 fluxo-bench nat
@@ -182,6 +182,10 @@ Mesma porta para todos os destinos: bom para o furo de NAT.
 | NAT simétrico (portas diferentes) | Só conecta se o outro lado não for simétrico; portas sequenciais dão para prever |
 | IPs diferentes | NAT com vários IPs: o furo dificilmente passa |
 | Só 1 respondeu / nenhum | Não deu para comparar / a rede bloqueia UDP |
+
+No fim, uma linha sobre o UPnP do roteador (só consulta, não abre porta):
+"sem UPnP", "IP público: basta um código" ou "atrás de CGNAT" (o caso da rede
+de casa de teste: o roteador vê `100.66.x.x`).
 
 ## `decode`
 

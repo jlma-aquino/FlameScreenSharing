@@ -21,6 +21,9 @@ biblioteca padrão — roda e é testado em qualquer sistema.
 | `src/signal.rs` | `SignalServer` — servidor de sinalização (salas, endereços; lógica testável sem rede) |
 | `src/stun.rs` | `discover_public_addr` — endereço público pelo STUN, com detecção de NAT simétrico |
 | `src/conexao.rs` | `ConnectionCode` / `ReplyCode` — os códigos que vão pelo chat, sem servidor |
+| `src/internet.rs` | `Internet` — sockets IPv4/IPv6, STUN e UPnP de uma ponta, e os códigos |
+| `src/portas.rs` | Par de sockets IPv4/IPv6: escuta nos dois até parear, depois só no que pareou |
+| `src/upnp.rs` | UPnP (IGD): achar o roteador, IP externo, abrir/fechar porta UDP |
 | `tests/loopback.rs` | Testes com sockets reais em 127.0.0.1 |
 
 ## Threads
@@ -321,6 +324,25 @@ sentidos, e virou o padrão; `--ttl-furo N` no host e no `enviar` muda.
 A latência entre as duas redes tem erro de ±21 ms (a sincronização dos
 relógios pelos pings é menos precisa pela internet do celular); o RTT não
 depende disso.
+
+**IPv6 e UPnP.** `Internet::open` abre o socket IPv4 e um IPv6
+(`[::]:0`), pergunta ao STUN os endereços públicos de cada um e, no
+cliente, tenta o UPnP (`open_port`: só abre se o IP externo do roteador for
+o que o STUN viu). `VideoReceiver::with_sockets` e
+`VideoSender::connect_with_sockets` recebem os dois sockets (`Portas`):
+antes do pareamento a leitura alterna entre eles (metade do timeout em
+cada); o PairInit vai para todos os candidatos, e o socket da família que
+respondeu primeiro fica — o outro é fechado, e o vídeo não paga nada por
+ele. O TTL baixo vale só no IPv4.
+
+| Teste (2026-10-31) | Resultado |
+|---|---|
+| Os dois PCs aqui em casa, `receber --internet` / `enviar --conexao` | pareou por IPv6 antes do código de resposta (no IPv4, o roteador não faz *hairpin*) |
+| `fluxo-bench nat` / UPnP aqui | roteador com UPnP, IP externo `100.66.x.x` (CGNAT): porta não pedida |
+| **Tela real**, `fluxo-host --conexao` → notebook no celular | **IPv6**, pareou na hora, sem código de resposta; 59,9 fps, 9,1 Mbps de 10, 0% de perda, RTT 58 ms, encode 2,4 ms |
+
+O celular deixa o IPv6 entrar no notebook sem furo; o IPv4 ainda precisa
+do código de resposta e do TTL baixo (testes acima).
 
 ## Host único e reinício (sem cifra)
 

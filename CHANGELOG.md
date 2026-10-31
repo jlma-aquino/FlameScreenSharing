@@ -6,6 +6,17 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **IPv6 e UPnP na conexão sem servidor:** host e cliente abrem um socket
+  IPv6 ao lado do IPv4, e os códigos levam o endereço IPv6 (48 símbolos);
+  o pareamento tenta as duas famílias e segue pela que responder primeiro.
+  O cliente abre a porta IPv4 no roteador por UPnP quando não há CGNAT na
+  frente (`--sem-upnp` desliga), e a marca no código faz o host ir direto.
+  `fluxo-bench nat` mostra se há UPnP e CGNAT. Tela real pela internet
+  (`fluxo-host --conexao` → notebook no celular): pareou por IPv6 sem código
+  de resposta, 59,9 fps, 9,1 Mbps, 0% de perda, RTT 58 ms.
+- `fluxo-net`: `Internet`, `VideoReceiver::with_sockets`,
+  `VideoSender::connect_with_sockets`, `find_gateway`/`open_port`/
+  `PortMapping`, `ConnectionCode::candidates`, `ReplyCode::candidates`.
 - **Conexão sem servidor próprio** (fase 5, ADR-010): `fluxo-client
   --internet` pergunta a servidores STUN públicos o endereço público e
   mostra um código de conexão (pareamento + endereço, com conferência);
@@ -177,6 +188,12 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Conferência dos códigos de conexão: o peso da 31ª posição era 31 (zero em
+  módulo 31), e um erro de digitação ali passava nos códigos longos (IPv6).
+  Pesos agora em ciclo de 1 a 30.
+- Teste `perda_simulada_descarta_pacotes_e_o_receptor_percebe` falhava às
+  vezes no notebook: com 40 frames, às vezes nenhum chegava inteiro e
+  nenhuma perda era contada; agora usa 120.
 - Teste `perda_simulada_descarta_pacotes_e_o_receptor_percebe` falhava às
   vezes: com o FEC ligado por padrão, ~31% dos frames se salvavam e o limite
   de 20 completos estourava; o teste agora roda sem FEC.

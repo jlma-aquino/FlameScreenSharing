@@ -283,8 +283,15 @@ hospedar um e pular os códigos.
 - ➖ Duas mensagens para conectar (UPnP e IPv6 podem tirar uma depois).
 - ➖ NAT simétrico dos dois lados não conecta: sem servidor não há relay.
   Avisamos quando o STUN detecta NAT simétrico.
-- 🔁 Medir com o notebook no roteador do celular; se o copia-e-cola
-  incomodar, avaliar UPnP e a DHT.
+- 🔁 Medido no celular: o IPv4 precisou de TTL baixo até o furo (ver
+  `modulos/fluxo-net.md`); se o copia-e-cola incomodar, avaliar a DHT.
+- **Atualização (IPv6 e UPnP):** os códigos levam também o endereço IPv6
+  (48 símbolos em vez de 19) e uma marca de porta aberta por UPnP. No teste
+  com o notebook no celular, o IPv6 pareou na hora, **sem código de
+  resposta** (o celular deixa o IPv6 entrar), e levou a tela real a 60 fps
+  e 9 Mbps sem perda. O UPnP só abre porta quando o roteador tem o IP que o
+  STUN viu; nas duas redes de teste há CGNAT ou não há UPnP, então ele
+  ficou só detectado.
 
 ---
 

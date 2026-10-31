@@ -226,35 +226,60 @@ chat que já usam. Nada muda nos pacotes do Fluxo: furo (Punch) e pareamento
 são os da seção 2.2; só muda quem entrega os endereços.
 
 ```text
-cliente: STUN → endereço público ─► código de conexão ──(chat)──► host
-host:    STUN → endereço público ─► código de resposta ─(chat)──► cliente
+cliente: STUN → endereços públicos (IPv4, IPv6) ─► código de conexão ──(chat)──► host
+host:    STUN → endereços públicos ─► código de resposta ─(chat)──► cliente
 host:    PairInit a cada 250 ms para o cliente (abre o NAT do host)
 cliente: Punch a cada 250 ms para o host (abre o NAT do cliente) → PairInit passa
 ```
 
 - **STUN** (RFC 5389, só o *Binding Request*): o cliente e o host perguntam
   a servidores públicos (`stun.l.google.com:19302`,
-  `stun.cloudflare.com:3478`) o endereço público **do socket que vai levar o
-  vídeo**. Se os dois servidores veem portas diferentes, o NAT é simétrico,
-  e o programa avisa. Pacotes STUN não são do Fluxo: quem recebe os ignora.
+  `stun.cloudflare.com:3478`, `stun1.l.google.com:19302`) o endereço
+  público **do socket que vai levar o vídeo**, pelo IPv4 e, se a máquina
+  tiver, pelo IPv6 (outro socket). Se os servidores veem portas diferentes,
+  o NAT é simétrico, e o programa avisa. Pacotes STUN não são do Fluxo:
+  quem recebe os ignora.
 - **Código de conexão** (cliente → host): 8 símbolos do código de pareamento
-  + 10 do endereço IPv4:porta + 1 de conferência, ex.
-  `K7M4-QX9P-ABCD-EFGH-JK`. **Código de resposta** (host → cliente): 10 do
-  endereço + 1 de conferência, ex. `ABCD-EFGH-JKM`. Mesmo alfabeto de 31
-  símbolos do código de pareamento; o endereço (48 bits) vira um número em
-  base 31, com o símbolo mais significativo primeiro. Conferência:
-  `Σ (i+1)·símbolo_i mod 31` sobre todos os anteriores, que pega qualquer
-  símbolo trocado e qualquer par de vizinhos invertido.
-- **Host:** manda PairInit ao endereço do código de conexão por até 5 min
-  (tempo de o código de resposta ir e voltar). Um Punch de um endereço
-  desconhecido vira candidato, como na seção 2.2.
-- **Cliente:** enquanto nenhum host chega, repete o pedido STUN a cada 15 s
-  para o NAT não esquecer o mapeamento que está no código. Recebido o
-  código de resposta, manda Punch a cada 250 ms por até 1 min, ou até o host
-  aparecer.
-- **Limites:** só IPv4 nos códigos; NAT simétrico dos dois lados não fura.
-  Com os dois atrás do mesmo roteador, só funciona se ele fizer *hairpin* (na
-  mesma rede, use `--destino`).
+  + os endereços + 1 de conferência. **Código de resposta** (host →
+  cliente): os endereços + 1 de conferência. Mesmo alfabeto de 31 símbolos
+  do código de pareamento. Os endereços são um número em base 31 (símbolo
+  mais significativo primeiro), feito dos bytes big-endian:
+
+  | Bytes | Conteúdo | Símbolos |
+  |---|---|---|
+  | `[marca][IPv4 4][porta 2]` | só IPv4 | 10 (conexão: 19 ao todo; resposta: 11) |
+  | `… + [IPv6 16][porta 2]` | IPv4 e IPv6 | 39 (conexão: 48; resposta: 40) |
+
+  A marca é 1 quando a porta IPv4 foi aberta no roteador por UPnP (só no
+  código de conexão), 0 nos outros casos; valores maiores são recusados.
+  IPv4 `0.0.0.0:0` = sem IPv4. O host só põe IPv6 na resposta se o código de
+  conexão tinha IPv6 (senão não serviria, e a resposta fica com 11).
+  Conferência: `Σ pᵢ·símbolo_i mod 31` com pesos `pᵢ = (i mod 30) + 1` (de
+  1 a 30, nunca 31, que seria 0): pega qualquer símbolo trocado e qualquer
+  par de vizinhos invertido, em qualquer tamanho.
+- **Host:** abre um socket IPv4 e um IPv6 e manda PairInit a todos os
+  endereços do código (IPv6 primeiro) por até 5 min (tempo de o código de
+  resposta ir e voltar); o vídeo segue pelo que responder primeiro. No IPv4,
+  os pedidos vão com TTL baixo (12; `--ttl-furo`) até o primeiro Punch
+  chegar, para não chegarem ao NAT do cliente antes do furo dele (ver
+  `modulos/fluxo-net.md`); com a marca de UPnP, vão com TTL normal desde o
+  começo. No IPv6 não há NAT para ocupar a porta, e o TTL é sempre o
+  normal. Um Punch de um endereço desconhecido vira candidato, como na
+  seção 2.2.
+- **Cliente:** escuta nos dois sockets até o host aparecer; depois só no da
+  família que pareou. Enquanto nenhum host chega, repete o pedido STUN a
+  cada 15 s para o NAT não esquecer o mapeamento que está no código.
+  Recebido o código de resposta, manda Punch a cada 250 ms para cada
+  endereço dele por até 1 min, ou até o host aparecer.
+- **UPnP** (IGD; descoberta SSDP em `239.255.255.250:1900`, comandos SOAP):
+  o cliente abre a sua porta IPv4 no roteador (`AddPortMapping`, UDP,
+  validade de 1 h, apagada ao sair) **só** se o IP externo do roteador for
+  o mesmo que o STUN viu; atrás de CGNAT (o roteador vê um IP privado, ex.
+  `100.64.x.x`) não pede nada. `--sem-upnp` desliga.
+- **Limites:** NAT simétrico dos dois lados no IPv4, sem IPv6 de um dos
+  lados, não fura. Com os dois atrás do mesmo roteador, o IPv4 só funciona
+  se ele fizer *hairpin* (o IPv6, se houver, passa; na mesma rede, use
+  `--destino`).
 
 ## 3. Fragmentação (emissor)
 

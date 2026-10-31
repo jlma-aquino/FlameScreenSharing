@@ -53,7 +53,10 @@ e manda o código de conexão pelo chat; aqui:
 
 O código de conexão já traz o código de pareamento (sem `--codigo`). O host
 espera até 5 min pelo código de resposta ir e voltar, e avisa se esta rede
-tem NAT simétrico.
+tem NAT simétrico. Se os dois lados têm IPv6, o código de conexão já traz o
+endereço IPv6 do cliente, e o host costuma conectar por ele na hora, antes
+da resposta (no teste com o notebook na rede do celular: tela real a 60 fps
+e 9 Mbps, sem perda, RTT 58 ms).
 
 ## Firewall
 
