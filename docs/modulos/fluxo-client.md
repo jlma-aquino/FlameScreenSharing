@@ -8,6 +8,7 @@ Lado de quem assiste: rede (`fluxo-net`) → decode (`fluxo-decode`) → tela.
 
 ```text
 fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
+             [--sem-painel]
 ```
 
 `--no-topo` mantém a janela sempre por cima das outras: útil para acompanhar
@@ -22,26 +23,39 @@ em segundo plano (o Windows não deixa essa janela tomar o foco).
 ```
 
 Na janela: **F11** ou **Alt+Enter** alterna tela cheia sem bordas; **Esc**
-sai da tela cheia. Teste na mesma máquina (`--destino 127.0.0.1:9000`)
+sai da tela cheia; **F2** mostra/esconde o painel de estatísticas sobre a
+imagem (`--sem-painel` começa escondido). Teste na mesma máquina (`--destino 127.0.0.1:9000`)
 funciona, mas a janela aparece dentro da própria imagem ("espelho infinito").
 
 ## Arquivos
 
 | Arquivo | Conteúdo |
 |---|---|
-| `src/main.rs` | Opções, laço principal, estatísticas |
-| `src/window.rs` | Janela Win32: redimensionar, tela cheia, fechar |
+| `src/main.rs` | Opções e a thread da janela (mensagens, teclas, título) |
+| `src/exibir.rs` | Thread de exibição: rede → decode → tela, estatísticas, resumo |
+| `src/window.rs` | Janela Win32: redimensionar, tela cheia, fechar, F2 |
 | `src/present.rs` | Swapchain e Video Processor (NV12 → tela, escala, barras pretas) |
+| `src/overlay.rs` | Painel de estatísticas sobre a imagem (Direct2D + DirectWrite) |
 
-## Laço principal
+## Threads
 
 ```text
-pump() das mensagens da janela
-recv_frame(2 ms) ──► decodifica TODOS os frames que chegaram
-                     (cada P-frame depende do anterior)
-                 ──► mostra só o mais novo (se atrasou, alcança)
-1×/s: estatísticas no título da janela
+janela (main)                          exibição (exibir.rs)
+ mensagens do Windows                   recv_frame(5 ms) ──► decodifica TODOS os frames
+ F11/Esc → tela cheia                                        (cada P-frame depende do anterior)
+ WM_SIZE ──── tamanho novo ──────────►                   ──► mostra só o mais novo
+ F2 ───────── painel liga/desliga ───►                       (se atrasou, alcança)
+ X ────────── fechar ────────────────►  1×/s: texto do painel e do título
+ título ◄──── estatísticas ───────────
 ```
+
+Quando a janela é arrastada ou redimensionada, o Windows prende a thread
+dela num laço interno até soltar o mouse. Com decode e apresentação nessa
+thread, a imagem parava e os frames se acumulavam: medido segurando a janela
+3 s, um frame esperou **5,6 s** entre chegar e ser processado. Com a thread
+de exibição, a maior espera ficou em **22 ms**. Device, decoder e swapchain
+são criados e usados só na thread de exibição (o contexto do D3D11 não é
+seguro entre threads); a janela só repassa comandos.
 
 Quem decide o que fazer com cada frame é o `fluxo_net::Recovery`:
 
@@ -69,7 +83,10 @@ Quem decide o que fazer com cada frame é o `fluxo_net::Recovery`:
 
 ## Lendo os números
 
-Título da janela, a cada segundo:
+Painel sobre a imagem (F2) e título da janela, a cada segundo. O painel
+também mostra a fila (atraso de fila da rede) e os fragmentos reconstruídos
+pelo FEC; custa ~0,13 ms de CPU por frame (apresentação média de 0,28 ms com
+painel, 0,15 ms sem).
 
 | Campo | Significado | Bom (mesma máquina) |
 |---|---|---|
@@ -80,7 +97,9 @@ Título da janela, a cada segundo:
 | perdidos | Frames que não chegaram inteiros | 0 |
 
 Ao fechar, o terminal mostra o resumo (percentis de captura→tela, decode,
-perdas, erros).
+apresentação, perdas, erros). **Espera no cliente** é quanto cada frame
+esperou entre chegar pela rede e ser processado: perto de zero no normal;
+um valor alto aponta travamento do cliente, não da rede.
 
 ## Medições (mesma máquina, RTX 5050, 1080p, 20 Mbps)
 
@@ -99,11 +118,6 @@ roadmap.
 
 ## Limitações conhecidas
 
-- **Estatísticas no título**, não sobre a imagem (overlay desenhado fica
-  para depois).
-- **Arrastar/redimensionar a janela** pausa o laço (o Windows segura a thread
-  durante o arraste); os frames esperam na fila do `fluxo-net` (até 120) e o
-  cliente alcança depois. Arrastes mais longos que ~2 s descartam frames.
 - A janela não toma o foco se for aberta por outro programa em segundo
   plano: clique nela na barra de tarefas ou use `--no-topo`.
 - Sem áudio, mouse ou teclado remotos (fase 6).

@@ -4,14 +4,20 @@
 //!
 //! ```text
 //! fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
+//!              [--sem-painel]
 //! ```
 //!
 //! Escuta numa porta UDP, decodifica com o `fluxo-decode` e mostra numa
-//! janela (F11 ou Alt+Enter: tela cheia). As estatísticas aparecem no título
-//! da janela, uma vez por segundo, e um resumo no terminal ao fechar.
+//! janela (F11 ou Alt+Enter: tela cheia). As estatísticas aparecem num painel
+//! sobre a imagem (F2 esconde) e no título da janela, uma vez por segundo, e
+//! um resumo no terminal ao fechar.
 //!
 //! Detalhes e como ler os números: `docs/modulos/fluxo-client.md`.
 
+#[cfg(windows)]
+mod exibir;
+#[cfg(windows)]
+mod overlay;
 #[cfg(windows)]
 mod present;
 #[cfg(windows)]
@@ -32,8 +38,10 @@ Opções:
   --largura L     largura inicial da janela (padrão 1280)
   --altura A      altura inicial da janela (padrão 720)
   --no-topo       janela sempre por cima das outras
+  --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
 
-Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia.
+Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
+F2 mostra/esconde o painel de estatísticas.
 No PC que compartilha:  fluxo-host --destino <IP deste PC>:9000";
 
 struct Opts {
@@ -43,6 +51,7 @@ struct Opts {
     largura: u32,
     altura: u32,
     no_topo: bool,
+    sem_painel: bool,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -53,6 +62,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         largura: 1280,
         altura: 720,
         no_topo: false,
+        sem_painel: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -64,6 +74,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--largura" => o.largura = valor()?.parse().map_err(|_| "largura inválida")?,
             "--altura" => o.altura = valor()?.parse().map_err(|_| "altura inválida")?,
             "--no-topo" => o.no_topo = true,
+            "--sem-painel" => o.sem_painel = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
@@ -98,232 +109,61 @@ fn run(_: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     Err("o fluxo-client só roda no Windows".into())
 }
 
-/// Durações em ms, com percentis.
-#[cfg(windows)]
-#[derive(Default)]
-struct Serie(Vec<f64>);
-
-#[cfg(windows)]
-impl Serie {
-    fn push(&mut self, ms: f64) {
-        self.0.push(ms);
-    }
-    fn media(&self) -> f64 {
-        self.0.iter().sum::<f64>() / self.0.len().max(1) as f64
-    }
-    fn percentil(&mut self, p: f64) -> f64 {
-        if self.0.is_empty() {
-            return 0.0;
-        }
-        self.0.sort_by(f64::total_cmp);
-        self.0[((self.0.len() - 1) as f64 * p).round() as usize]
-    }
-}
-
+/// Thread da janela: só processa mensagens e repassa comandos; rede, decode
+/// e apresentação rodam na thread de exibição ([`exibir`]), que continua
+/// mostrando frames enquanto a janela é arrastada.
 #[cfg(windows)]
 fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
-    use std::time::{Duration, Instant};
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::Duration;
 
-    use fluxo_decode::{create_device, VideoDecoder};
-    use fluxo_net::{
-        clock_diff_us, clock_us, FrameAction, ReceiverConfig, Recovery, RecoveryRequest, VideoReceiver,
-    };
+    use fluxo_net::{ReceiverConfig, VideoReceiver};
 
-    use crate::present::Presenter;
+    use crate::exibir::{exibir, Compartilhado, Config};
     use crate::window::Window;
 
     let rx = VideoReceiver::bind(("0.0.0.0", o.porta), ReceiverConfig::default())?;
-    let device = create_device()?;
-    let mut decoder = VideoDecoder::new(&device)?;
     let mut janela = Window::new(
         &format!("Fluxo — aguardando o host na porta {}", o.porta),
         o.largura,
         o.altura,
         o.no_topo,
     )?;
-    let mut tela = Presenter::new(&device, janela.hwnd(), janela.client_size(), o.vsync)?;
-    println!(
-        "Escutando em {} | decoder: {} | {}",
-        rx.local_addr(),
-        decoder.name(),
-        if tela.tearing() {
-            "sem vsync (tearing permitido)"
-        } else if o.vsync {
-            "com vsync"
-        } else {
-            "sem vsync (o sistema não permite tearing nesta janela)"
+    let comp = Arc::new(Compartilhado::default());
+    comp.painel.store(!o.sem_painel, Ordering::Relaxed);
+    let cfg = Config {
+        hwnd: janela.hwnd().0 as isize,
+        tamanho: janela.client_size(),
+        vsync: o.vsync,
+        segundos: o.segundos,
+    };
+    let c = comp.clone();
+    let exibicao = std::thread::Builder::new()
+        .name("fluxo-exibicao".into())
+        .spawn(move || exibir(rx, cfg, &c).map_err(|e| e.to_string()))?;
+
+    while !exibicao.is_finished() {
+        janela.wait_messages(Duration::from_millis(10));
+        if janela.closed() {
+            comp.fechar.store(true, Ordering::Relaxed);
         }
-    );
-
-    let duracao = (o.segundos > 0.0).then(|| Duration::from_secs_f64(o.segundos));
-    let mut inicio: Option<Instant> = None;
-    // Quando mostrar e o que pedir ao host: keyframe na largada e depois de
-    // erro do decoder; depois de uma perda, uma onda de intra-refresh (ou
-    // keyframe, se o host não tiver).
-    let mut recuperacao = Recovery::new(Instant::now());
-    // Quanto a imagem ficou congelada em cada recuperação (fora a largada).
-    let mut recuperacoes = Serie::default();
-    let mut ja_mostrou = false;
-    let mut escondidos = 0u64;
-    let mut proximo_titulo = Instant::now() + Duration::from_secs(1);
-
-    // Estatísticas: por segundo (título) e totais (resumo).
-    let (mut frames_seg, mut bytes_seg) = (0u64, 0u64);
-    let mut latencia_seg = Serie::default();
-    let mut latencias = Serie::default();
-    let mut decodes = Serie::default();
-    let (mut recebidos, mut mostrados, mut pulados, mut erros_decode) = (0u64, 0u64, 0u64, 0u64);
-
-    while !janela.closed() {
-        if let (Some(t0), Some(d)) = (inicio, duracao) {
-            if t0.elapsed() >= d {
-                break;
-            }
+        if janela.take_painel_toggle() {
+            comp.painel.fetch_xor(true, Ordering::Relaxed);
         }
-        janela.pump();
         if janela.take_fullscreen_toggle() {
             janela.toggle_fullscreen();
         }
         if janela.take_resized() {
-            tela.resize(janela.client_size())?;
+            *comp.tamanho.lock().unwrap_or_else(|e| e.into_inner()) = Some(janela.client_size());
         }
-
-        // Imagem não está boa: pede ao host. Pode chamar a cada volta: o
-        // fluxo-net segura pedidos repetidos.
-        match recuperacao.request(Instant::now()) {
-            RecoveryRequest::Keyframe => {
-                rx.request_keyframe();
-            }
-            RecoveryRequest::Refresh => {
-                rx.request_refresh();
-            }
-            RecoveryRequest::None => {}
-        }
-
-        // Espera curta para a janela continuar responsiva sem frames.
-        let Some(primeiro) = rx.recv_frame(Duration::from_millis(2))? else {
-            if Instant::now() >= proximo_titulo {
-                proximo_titulo += Duration::from_secs(1);
-            }
-            continue;
-        };
-        inicio.get_or_insert_with(Instant::now);
-
-        // Decodifica tudo o que chegou (cada P-frame depende do anterior),
-        // mas só mostra o mais novo: se o cliente atrasou, ele alcança.
-        let mut chegou = Some(primeiro);
-        let mut para_mostrar = None;
-        while let Some(f) = chegou.take() {
-            recebidos += 1;
-            bytes_seg += f.frame.data.len() as u64;
-            // Depois de uma perda os P-frames apontam para uma imagem que o
-            // decoder não tem: continua decodificando (para o decoder
-            // acompanhar a onda de limpeza), mas congela a última imagem boa
-            // na tela até a recuperação terminar.
-            let sujo_desde = recuperacao.dirty_since();
-            match recuperacao.on_frame(&f.frame, Instant::now()) {
-                FrameAction::Skip => pulados += 1,
-                FrameAction::Decode { show } => {
-                    let t = Instant::now();
-                    match decoder.decode(&f.frame.data) {
-                        Ok(Some(d)) if show => para_mostrar = Some((d, f.frame.timestamp_us)),
-                        Ok(_) => escondidos += !show as u64,
-                        Err(e) => {
-                            // Bitstream estragado: recomeça no próximo
-                            // keyframe com um decoder limpo.
-                            erros_decode += 1;
-                            eprintln!("(decode falhou: {e}; pedindo keyframe)");
-                            decoder = VideoDecoder::new(&device)?;
-                            recuperacao.on_decode_error(Instant::now());
-                        }
-                    }
-                    decodes.push(t.elapsed().as_secs_f64() * 1000.0);
-                }
-            }
-            if let (Some(t), true) = (sujo_desde, recuperacao.is_clean()) {
-                if ja_mostrou {
-                    recuperacoes.push(t.elapsed().as_secs_f64() * 1000.0);
-                }
-                ja_mostrou = true;
-            }
-            chegou = rx.recv_frame(Duration::ZERO)?;
-        }
-
-        if let Some((d, capturado_us)) = para_mostrar {
-            tela.present(&d)?;
-            drop(d); // devolve a superfície ao decoder
-            mostrados += 1;
-            frames_seg += 1;
-            // Captura no host → frame entregue ao monitor aqui. A captura vem
-            // no relógio do host; somando a diferença entre os relógios
-            // (medida pelos pings) ela vira o nosso relógio.
-            if let Some(dif_ms) = rx.stats().clock_offset_ms {
-                let ms = clock_diff_us(clock_us(), capturado_us) as f64 / 1000.0 + dif_ms;
-                latencia_seg.push(ms);
-                latencias.push(ms);
-            }
-        }
-
-        if Instant::now() >= proximo_titulo {
-            let s = rx.stats();
-            let latencia = match latencia_seg.0.is_empty() {
-                true => "sincronizando relógios".to_string(),
-                false => format!(
-                    "captura→tela {:.1} ms (máx {:.1})",
-                    latencia_seg.media(),
-                    latencia_seg.percentil(1.0)
-                ),
-            };
-            janela.set_title(&format!(
-                "Fluxo — {frames_seg} fps · {:.1} Mbps · {latencia} · RTT {:.1} ms · perdidos {}",
-                bytes_seg as f64 * 8.0 / 1e6,
-                s.rtt.smoothed_ms,
-                s.reassembly.frames_lost,
-            ));
-            (frames_seg, bytes_seg) = (0, 0);
-            latencia_seg = Serie::default();
-            proximo_titulo = Instant::now() + Duration::from_secs(1);
+        if let Some(t) = comp.titulo.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            janela.set_title(&t);
         }
     }
-
-    let s = rx.stats();
-    let total = inicio.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
-    println!("\nResultado ({:.1} s)", total);
-    println!(
-        "  frames: {recebidos} recebidos, {mostrados} mostrados ({:.1} fps), {pulados} pulados esperando keyframe, \
-         {escondidos} decodificados sem mostrar (esperando limpeza)",
-        mostrados as f64 / total.max(0.001)
-    );
-    println!(
-        "  perdidos na rede: {} | reconstruídos pelo FEC: {} fragmentos | erros de decode: {erros_decode} | descartados na fila: {}",
-        s.reassembly.frames_lost, s.reassembly.fec_recovered, s.frames_dropped
-    );
-    println!(
-        "  recuperação:      {} perdas, {} pedidos de limpeza e {} de keyframe; {} recuperações, imagem congelada média {:.1} ms, máx {:.1} ms",
-        recuperacao.losses(),
-        s.refresh_requests,
-        s.keyframe_requests,
-        recuperacoes.0.len(),
-        recuperacoes.media(),
-        recuperacoes.percentil(1.0)
-    );
-    println!(
-        "  decode (CPU):     média {:.2} ms, p99 {:.2} ms",
-        decodes.media(),
-        decodes.percentil(0.99)
-    );
-    println!(
-        "  captura → tela:   p50 {:.1} ms, p99 {:.1} ms, máx {:.1} ms",
-        latencias.percentil(0.5),
-        latencias.percentil(0.99),
-        latencias.percentil(1.0)
-    );
-    if let (Some(dif), Some(erro)) = (s.clock_offset_ms, s.clock_error_ms) {
-        println!("  relógios:         host {dif:+.1} ms em relação a este PC (sincronizados pelos pings, erro ±{erro:.1} ms)");
-    }
-    println!(
-        "  RTT:              {:.2} ms suavizado, {:.2} ms mínimo",
-        s.rtt.smoothed_ms, s.rtt.min_ms
-    );
+    // A swapchain (na outra thread) já foi solta; agora a janela pode fechar.
+    exibicao
+        .join()
+        .map_err(|_| "a thread de exibição terminou com pânico")??;
     Ok(())
 }

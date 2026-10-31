@@ -1,5 +1,6 @@
 //! Janela Win32 mínima: redimensionável, tela cheia sem bordas (F11 ou
-//! Alt+Enter; Esc sai), e eventos lidos pelo laço principal.
+//! Alt+Enter; Esc sai), F2 mostra/esconde o painel, e eventos lidos pelo laço
+//! principal.
 //!
 //! A *window procedure* do Windows é um callback; ela só anota o que
 //! aconteceu em [`State`], e o laço principal reage depois de `pump()`.
@@ -14,7 +15,7 @@ use windows::Win32::Graphics::Gdi::{
     MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_F11, VK_RETURN};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_F11, VK_F2, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const CLASS: PCWSTR = w!("FluxoClient");
@@ -25,6 +26,7 @@ struct State {
     closed: Cell<bool>,
     resized: Cell<bool>,
     toggle_fullscreen: Cell<bool>,
+    toggle_painel: Cell<bool>,
     fullscreen: Cell<bool>,
 }
 
@@ -84,6 +86,11 @@ impl Window {
                 Some(instance.into()),
                 Some(&*state as *const State as *const c_void),
             )?;
+            // Aberto por outro programa (terminal, script), o Windows aplica
+            // na primeira exibição o modo de quem nos lançou — às vezes
+            // minimizado. A segunda chamada vale sempre: janela normal.
+            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
             Ok(Self {
                 hwnd,
                 state,
@@ -94,6 +101,16 @@ impl Window {
 
     pub fn hwnd(&self) -> HWND {
         self.hwnd
+    }
+
+    /// Espera até chegar uma mensagem (ou `timeout`) e processa todas as
+    /// pendentes.
+    pub fn wait_messages(&self, timeout: std::time::Duration) {
+        // SAFETY: espera sem handles, só pela fila de mensagens desta thread.
+        unsafe {
+            MsgWaitForMultipleObjects(None, false, timeout.as_millis() as u32, QS_ALLINPUT);
+        }
+        self.pump();
     }
 
     /// Processa todas as mensagens pendentes, sem bloquear.
@@ -115,6 +132,11 @@ impl Window {
     /// `true` uma vez depois de cada mudança de tamanho.
     pub fn take_resized(&self) -> bool {
         self.state.resized.replace(false)
+    }
+
+    /// `true` uma vez depois de cada F2 (mostra/esconde o painel de estatísticas).
+    pub fn take_painel_toggle(&self) -> bool {
+        self.state.toggle_painel.replace(false)
     }
 
     /// `true` uma vez depois de F11 / Alt+Enter / Esc em tela cheia.
@@ -207,6 +229,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             WM_SIZE => s.resized.set(true),
             WM_ERASEBKGND => return LRESULT(1), // a swapchain pinta tudo
             WM_KEYDOWN if tecla == VK_F11.0 => s.toggle_fullscreen.set(true),
+            WM_KEYDOWN if tecla == VK_F2.0 => s.toggle_painel.set(true),
             WM_KEYDOWN if tecla == VK_ESCAPE.0 && s.fullscreen.get() => s.toggle_fullscreen.set(true),
             WM_SYSKEYDOWN if tecla == VK_RETURN.0 => {
                 s.toggle_fullscreen.set(true);

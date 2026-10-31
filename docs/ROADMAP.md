@@ -44,9 +44,10 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] Teste ponta a ponta na mesma máquina (464/464 frames, captura→tela p99 9,3 ms)
 - [x] Conferência visual da imagem na janela do cliente (`--no-topo` para a janela ficar por cima)
 - [x] Fila do receptor de 120 frames: um travamento curto do cliente não descarta frames (antes: 242 descartes a ~160 fps)
-- [ ] Overlay de estatísticas desenhado sobre a imagem (Direct2D)
+- [x] Overlay de estatísticas desenhado sobre a imagem (Direct2D + DirectWrite; F2 liga/desliga, ~0,13 ms por frame)
 - [ ] Primeiro teste ponta a ponta em LAN, medindo latência real (cronômetro filmado)
-- [ ] Não travar a recepção enquanto a janela é arrastada (decode/apresentação em thread própria)
+- [x] Não travar a recepção enquanto a janela é arrastada: decode e apresentação em thread própria
+      (janela presa 3 s: maior espera de um frame de 5,6 s para 22 ms)
 
 ## Fase 4 — Robustez de rede (em andamento)
 

@@ -6,6 +6,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Painel de estatísticas sobre a imagem** no `fluxo-client` (Direct2D +
+  DirectWrite): fps, Mbps, captura→tela, RTT, fila, perdidos e FEC; F2
+  mostra/esconde, `--sem-painel` começa escondido. Custa ~0,13 ms de CPU por
+  frame. O resumo ganhou "espera no cliente" e "apresentação (CPU)".
 - **Protocolo v7 — intra-refresh opcional** (`fluxo-host --refresh N`,
   NVENC): depois de uma perda, o host pode redesenhar a imagem em faixas ao
   longo de N frames em vez de mandar keyframe. Flags de início/fim da onda no
@@ -114,6 +118,13 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- `fluxo-client`: arrastar ou redimensionar a janela parava a imagem (o
+  Windows prende a thread da janela até soltar o mouse; frames esperavam até
+  5,6 s). Decode e apresentação agora rodam numa thread própria (`exibir.rs`):
+  maior espera de 22 ms com a janela presa 3 s.
+- `fluxo-client`: aberto por outro programa, a janela podia nascer
+  minimizada (o Windows aplica o modo de quem lançou); agora sempre abre
+  normal.
 - `fluxo-host --fec K` aparecia na ajuda, mas a linha de comando o recusava.
 - Bitrate adaptativo no Wi-Fi: a "fila" incluía encode, espera do limite de
   fps e pacing, e o bitrate caía sem congestionamento (com limite de 10 ms,

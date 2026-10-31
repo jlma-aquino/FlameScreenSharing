@@ -12,3 +12,5 @@ fluxo-decode = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
+# Tipo da posição do texto no Direct2D (`DrawTextLayout`); já vem com o `windows`.
+windows-numerics = "0.2"

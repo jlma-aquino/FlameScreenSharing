@@ -27,6 +27,7 @@ dependencies = [
  "fluxo-decode",
  "fluxo-net",
  "windows",
+ "windows-numerics",
 ]
 
 [[package]]

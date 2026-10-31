@@ -46,6 +46,10 @@ windows = { version = "0.61", features = [
     "Win32_System_Ole",
     "Win32_System_Variant",
     "Win32_UI_HiDpi",
+    # fluxo-client: painel de estatísticas (Direct2D + DirectWrite).
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
     # fluxo-client: janela Win32 e teclado.
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",

@@ -25,8 +25,9 @@ de acumular: em streaming ao vivo, fila longa = latência alta.
 
 **Hoje (fase 3):** no host, captura e encode dividem uma thread (o encode é
 síncrono e leva ~2,5 ms); a rede tem duas threads próprias (envio com pacing
-e pings). No `fluxo-client`, uma thread de rede remonta os frames e a thread
-da janela decodifica e apresenta (decode leva ~0,3 ms de CPU com DXVA).
+e pings). No `fluxo-client`, uma thread de rede remonta os frames, uma thread de
+exibição decodifica e apresenta (decode ~0,3 ms de CPU com DXVA) e a
+thread da janela só processa mensagens — arrastar a janela não para a imagem.
 
 ## 2. Crates e responsabilidades
 

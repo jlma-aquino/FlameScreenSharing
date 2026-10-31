@@ -36,6 +36,8 @@ use windows::Win32::Graphics::Dxgi::{
 
 use fluxo_decode::DecodedFrame;
 
+use crate::overlay::Overlay;
+
 type Resultado<T> = windows::core::Result<T>;
 
 /// Video Processor configurado para um par (tamanho do vídeo, tamanho da janela).
@@ -58,6 +60,9 @@ pub struct Presenter {
     size: (u32, u32),
     output_view: Option<ID3D11VideoProcessorOutputView>,
     processor: Option<Processor>,
+    /// Painel de estatísticas (`None` se o Direct2D não abriu).
+    overlay: Option<Overlay>,
+    mostrar_overlay: bool,
 }
 
 impl Presenter {
@@ -104,6 +109,14 @@ impl Presenter {
                 size,
                 output_view: None,
                 processor: None,
+                overlay: match Overlay::new(device) {
+                    Ok(o) => Some(o),
+                    Err(e) => {
+                        eprintln!("(painel de estatísticas indisponível: {e})");
+                        None
+                    }
+                },
+                mostrar_overlay: false,
             };
             me.create_output_view()?;
             Ok(me)
@@ -115,6 +128,15 @@ impl Presenter {
         self.tearing && !self.vsync
     }
 
+    /// Texto do painel de estatísticas sobre a imagem; `None` esconde o painel.
+    pub fn set_overlay(&mut self, texto: Option<&str>) -> Resultado<()> {
+        self.mostrar_overlay = texto.is_some();
+        match (texto, &mut self.overlay) {
+            (Some(t), Some(o)) => o.set_text(t),
+            _ => Ok(()),
+        }
+    }
+
     /// A janela mudou de tamanho.
     pub fn resize(&mut self, size: (u32, u32)) -> Resultado<()> {
         if size == self.size {
@@ -123,6 +145,9 @@ impl Presenter {
         // Todas as referências ao back buffer precisam sumir antes do resize.
         self.output_view = None;
         self.processor = None;
+        if let Some(o) = &mut self.overlay {
+            o.release_target();
+        }
         // SAFETY: nenhuma view do back buffer existe neste ponto.
         unsafe {
             self.swapchain.ResizeBuffers(
@@ -280,6 +305,11 @@ impl Presenter {
             r
         };
         blt?;
+        if self.mostrar_overlay {
+            if let Some(o) = &mut self.overlay {
+                o.draw(&self.swapchain)?;
+            }
+        }
 
         let (sync, flags) = match (self.vsync, self.tearing) {
             (true, _) => (1, DXGI_PRESENT(0)),
