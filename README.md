@@ -79,9 +79,18 @@ transmitir, e tudo vai cifrado:
 .\target\release\fluxo-host.exe --destino <IP de quem assiste>:9000 --codigo <código do cliente>
 ```
 
-Em redes diferentes, sem saber o IP nem abrir porta no roteador: rode o
-servidor de sinalização num endereço público (uma VPS barata) e use
-`--sinal` nos dois lados ([fluxo-sinal](docs/modulos/fluxo-sinal.md)):
+Em redes diferentes, **sem servidor nenhum**: o cliente mostra um código de
+conexão, que vai pelo chat para quem compartilha; o host responde com um
+código de resposta, que o cliente cola no terminal (ADR-010):
+
+```powershell
+.\target\release\fluxo-client.exe --internet
+.\target\release\fluxo-host.exe --conexao <código de conexão do cliente>
+```
+
+Ou, com um servidor de sinalização num endereço público (uma VPS), sem os
+códigos de ida e volta: `--sinal` nos dois lados
+([fluxo-sinal](docs/modulos/fluxo-sinal.md)):
 
 ```powershell
 .\target\release\fluxo-client.exe --sinal meu-servidor.com

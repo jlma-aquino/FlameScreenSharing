@@ -9,7 +9,7 @@ use crate::CryptoError;
 /// Letras e números sem os que se confundem (0/O, 1/I/L): 31 símbolos.
 /// 8 deles dão ~39,6 bits — com o PAKE, cada tentativa de quem não sabe o
 /// código vale um palpite só, online (8,5 × 10¹¹ possibilidades).
-const ALFABETO: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+pub const ALFABETO: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 const TAMANHO: usize = 8;
 
 /// Código de pareamento normalizado (maiúsculas, sem separadores).

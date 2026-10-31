@@ -27,11 +27,15 @@ fluxo-host — transmite a tela para um cliente Fluxo
 Uso:
   fluxo-host --destino IP:PORTA --codigo XXXX-XXXX [opções]
   fluxo-host --sinal SERVIDOR --codigo XXXX-XXXX [opções]
+  fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
 
 Opções:
   --destino IP:PORTA    para onde enviar, ex.: 192.168.0.20:9000 (mesma rede)
   --sinal SERVIDOR      acha o cliente pelo servidor de sinalização (fluxo-sinal),
                         ex.: meu-servidor.com ou 203.0.113.5:7000 (redes diferentes)
+  --conexao C           código de conexão mostrado pelo fluxo-client --internet (redes
+                        diferentes, sem servidor): já traz o código de pareamento; o
+                        host mostra um código de resposta para mandar de volta
   --codigo XXXX-XXXX    código de pareamento mostrado pelo fluxo-client (obrigatório):
                         só o cliente com esse código recebe, e tudo vai cifrado
   --sem-cifra           TESTE: sem pareamento nem cifra (o cliente também)
@@ -72,6 +76,8 @@ Para testar sem cliente, rode antes em outro terminal (ou outro PC):
 struct Opts {
     destino: String,
     sinal: Option<String>,
+    /// Código de conexão do cliente (sem servidor): pareamento + endereço dele.
+    conexao: Option<fluxo_net::ConnectionCode>,
     monitor: usize,
     encoder: fluxo_encode::BackendChoice,
     mbps: f64,
@@ -97,6 +103,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         destino: String::new(),
         sinal: None,
+        conexao: None,
         monitor: 0,
         encoder: Default::default(),
         mbps: 20.0,
@@ -123,6 +130,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         match a.as_str() {
             "--destino" => o.destino = valor()?.clone(),
             "--sinal" => o.sinal = Some(valor()?.clone()),
+            "--conexao" => {
+                o.conexao =
+                    Some(fluxo_net::ConnectionCode::parse(valor()?).map_err(|e| format!("--conexao: {e}"))?)
+            }
             "--monitor" => o.monitor = valor()?.parse().map_err(|_| "monitor inválido")?,
             "--encoder" => o.encoder = valor()?.parse()?,
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
@@ -152,8 +163,21 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
     }
+    if let Some(c) = &o.conexao {
+        if !o.destino.is_empty() || o.sinal.is_some() || o.codigo.is_some() || o.sem_cifra {
+            return Err(
+                "--conexao já traz o destino e o código: sem --destino, --sinal, --codigo ou --sem-cifra"
+                    .into(),
+            );
+        }
+        o.codigo = Some(c.pairing.to_string());
+        return Ok(o);
+    }
     match (o.destino.is_empty(), &o.sinal) {
-        (true, None) => return Err("falta --destino IP:PORTA (mesma rede) ou --sinal SERVIDOR".into()),
+        (true, None) => return Err(
+            "falta --destino IP:PORTA (mesma rede), --sinal SERVIDOR ou --conexao CÓDIGO (redes diferentes)"
+                .into(),
+        ),
         (false, Some(_)) => return Err("use --destino ou --sinal, não os dois".into()),
         (_, Some(_)) if o.sem_cifra => return Err("--sinal precisa do código (sem --sem-cifra)".into()),
         _ => {}
@@ -349,8 +373,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         simulated_jitter: Duration::from_secs_f64(o.simular_jitter.max(0.0) / 1000.0),
         // Já conferido em parse_opts; `None` só com --sem-cifra.
         pairing_code: o.codigo.as_deref().and_then(|c| PairingCode::parse(c).ok()),
-        // Tempo para abrir o cliente e digitar o código, se preciso.
-        pairing_timeout: Duration::from_secs(30),
+        // Tempo para abrir o cliente e digitar o código, se preciso; com
+        // código de conexão, também para o código de resposta ir e voltar
+        // pelo chat.
+        pairing_timeout: Duration::from_secs(if o.conexao.is_some() { 300 } else { 30 }),
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let servidor = o
@@ -358,10 +384,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .as_deref()
         .map(fluxo_net::resolve_signal_server)
         .transpose()?;
-    match (&net_cfg.pairing_code, servidor) {
-        (Some(c), Some(s)) => println!("Procurando o cliente pelo servidor de sinalização {s} (código {c})…"),
-        (Some(c), None) => println!("Pareando com {} (código {c})…", o.destino),
-        (None, _) => println!("TESTE: sem pareamento nem cifra (--sem-cifra)"),
+    match (&net_cfg.pairing_code, servidor, &o.conexao) {
+        (Some(c), Some(s), _) => {
+            println!("Procurando o cliente pelo servidor de sinalização {s} (código {c})…")
+        }
+        (Some(c), None, Some(conexao)) => println!("Conectando ao cliente em {} (código {c})…", conexao.addr),
+        (Some(c), None, None) => println!("Pareando com {} (código {c})…", o.destino),
+        (None, ..) => println!("TESTE: sem pareamento nem cifra (--sem-cifra)"),
     }
     // Bitrate adaptativo: o controlador decide, o encoder e o pacing seguem
     // (o pacing só se não foi fixado à mão).
@@ -375,9 +404,22 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .then(|| BitrateController::new(min_kbps, max_kbps, Instant::now()).with_queue_limit(o.fila_max));
     let pacing_segue_bitrate = o.pacing_mbps.is_none();
     let pacing_mbps = net_cfg.pacing_bps as f64 / 1e6;
-    let tx = match servidor {
-        Some(s) => VideoSender::connect_via_signal(("0.0.0.0", o.porta_local), s, net_cfg)?,
-        None => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,
+    let tx = match (servidor, &o.conexao) {
+        (Some(s), _) => VideoSender::connect_via_signal(("0.0.0.0", o.porta_local), s, net_cfg)?,
+        (None, Some(c)) => {
+            // O endereço público vale só para este socket: o mesmo leva o vídeo.
+            let socket = std::net::UdpSocket::bind(("0.0.0.0", o.porta_local))?;
+            let publico = fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?;
+            let resposta = fluxo_net::ReplyCode { addr: publico.v4()? };
+            println!("\nCódigo de resposta: {resposta}");
+            println!("  Mande para quem vai assistir: ele cola no terminal do fluxo-client.");
+            if let Some(aviso) = publico.warning() {
+                println!("  {aviso}");
+            }
+            println!("  Esperando até 5 min…\n");
+            VideoSender::connect_with_socket(socket, std::net::SocketAddr::V4(c.addr), net_cfg)?
+        }
+        (None, None) => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,
     };
 
     println!(

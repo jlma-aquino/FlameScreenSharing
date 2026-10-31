@@ -19,7 +19,7 @@ mod handshake;
 use std::fmt;
 
 pub use cifra::{Opener, Sealer, TAG_LEN};
-pub use codigo::{PairingCode, BITS_DA_SALA};
+pub use codigo::{PairingCode, ALFABETO, BITS_DA_SALA};
 pub use handshake::{respond, HostHandshake, Session, INIT_LEN, REPLY_LEN};
 
 /// Erros de criptografia. Nenhum leva detalhes que ajudem um atacante.
@@ -59,3 +59,9 @@ impl fmt::Display for CryptoError {
 }
 
 impl std::error::Error for CryptoError {}
+
+/// Bytes aleatórios do gerador do sistema (ex.: identificadores de pedidos
+/// STUN, que não podem ser adivinhados por quem forja respostas).
+pub fn random_bytes(buf: &mut [u8]) -> Result<(), CryptoError> {
+    getrandom::getrandom(buf).map_err(|e| CryptoError::Random(e.to_string()))
+}

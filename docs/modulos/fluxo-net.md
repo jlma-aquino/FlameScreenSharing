@@ -19,6 +19,8 @@ biblioteca padrão — roda e é testado em qualquer sistema.
 | `src/sim.rs` | Atraso e jitter simulados (só testes): `DelayModel`, `DelayLine` |
 | `src/recovery.rs` | `Recovery` — quando mostrar a imagem e o que pedir ao host depois de perdas (cliente) |
 | `src/signal.rs` | `SignalServer` — servidor de sinalização (salas, endereços; lógica testável sem rede) |
+| `src/stun.rs` | `discover_public_addr` — endereço público pelo STUN, com detecção de NAT simétrico |
+| `src/conexao.rs` | `ConnectionCode` / `ReplyCode` — os códigos que vão pelo chat, sem servidor |
 | `tests/loopback.rs` | Testes com sockets reais em 127.0.0.1 |
 
 ## Threads
@@ -246,6 +248,35 @@ entre os dois: prova o fluxo, não o furo de um NAT de verdade):
 | `fluxo-host` (tela real, 20 Mbps) acha o `receber` (notebook), 10 s | 0 perdas, 1 keyframe pedido na largada, p50 18,1 ms |
 
 O servidor só aparece no começo: depois do `Found`, nada mais passa por ele.
+
+## Sem servidor: código de conexão (STUN público)
+
+Formato e sequência: [PROTOCOLO.md](../PROTOCOLO.md), seção 2.3; decisão:
+ADR-010. O furo e o pareamento são os da sinalização; só os endereços
+chegam de outro jeito.
+
+- `discover_public_addr(&socket, STUN_SERVERS)`: pergunta aos servidores
+  STUN públicos o endereço do socket (até ~1,5 s, com reenvio). Dois
+  servidores vendo portas diferentes = NAT simétrico (`PublicAddr::warning`).
+  O socket depois vai para `VideoReceiver::with_socket` ou
+  `VideoSender::connect_with_socket`: o endereço só vale para ele.
+- **Cliente:** `ReceiverConfig::keepalive_to` (o servidor STUN que
+  respondeu) repete o pedido a cada 15 s enquanto nenhum host chega, para o
+  NAT não esquecer o mapeamento. `punch(&[endereço do host])` — ou
+  `puncher()`, de outra thread — manda Punch a cada 250 ms por até 1 min;
+  para sozinho quando o host aparece.
+- **Host:** `connect_with_socket(socket, endereço do cliente, cfg)` manda
+  PairInit até o prazo (os apps usam 5 min nesse modo). Furo vindo de outra
+  porta vira candidato: funciona com NAT simétrico **de um lado só**
+  (testado em `tests/loopback.rs` com o endereço do código errado de
+  propósito).
+- `ConnectionCode` / `ReplyCode`: ver o arquivo; erros de digitação são
+  pegos pela conferência (`CodeError::Check`).
+
+Medido nesta rede: os dois servidores STUN responderam a mesma porta (NAT
+de casa não é simétrico). Com host e cliente atrás do mesmo roteador o furo
+não fecha (o roteador não faz *hairpin*); o teste de verdade é com o
+notebook na rede do celular.
 
 ## Host único e reinício (sem cifra)
 

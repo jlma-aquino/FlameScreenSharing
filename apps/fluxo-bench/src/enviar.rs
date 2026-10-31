@@ -8,9 +8,10 @@
 //! esperando um, e cada frame perdido conta uma vez só.
 
 use std::error::Error;
+use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use fluxo_net::{clock_us, PairingCode, SenderConfig, VideoSender};
+use fluxo_net::{clock_us, ConnectionCode, PairingCode, ReplyCode, SenderConfig, VideoSender};
 
 use crate::Opts;
 
@@ -20,34 +21,50 @@ pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
         .as_deref()
         .map(fluxo_net::resolve_signal_server)
         .transpose()?;
-    let destino = match (o.destino.as_deref(), servidor) {
-        (Some(d), None) => Some(d),
-        (None, Some(_)) => None,
-        _ => return Err("enviar precisa de --destino IP:PORTA ou --sinal SERVIDOR (um dos dois)".into()),
-    };
+    let conexao = o.conexao.as_deref().map(ConnectionCode::parse).transpose()?;
+    let modos = o.destino.is_some() as u8 + servidor.is_some() as u8 + conexao.is_some() as u8;
+    if modos != 1 {
+        return Err(
+            "enviar precisa de um destino: --destino IP:PORTA, --sinal SERVIDOR ou --conexao CÓDIGO".into(),
+        );
+    }
     let bitrate_bps = (o.mbps * 1e6).round() as u64;
     let fps = o.fps.max(1);
     let tamanho = (bitrate_bps / 8 / fps as u64).max(1) as usize;
-    let pairing_code = match (&o.codigo, o.sem_cifra) {
-        (_, true) => None,
-        (Some(c), false) => Some(PairingCode::parse(c)?),
-        (None, false) => {
+    let pairing_code = match (&o.codigo, o.sem_cifra, &conexao) {
+        (None, false, Some(cc)) => Some(cc.pairing.clone()),
+        (_, _, Some(_)) => return Err("--conexao já traz o código: sem --codigo nem --sem-cifra".into()),
+        (_, true, None) => None,
+        (Some(c), false, None) => Some(PairingCode::parse(c)?),
+        (None, false, None) => {
             return Err("enviar precisa de --codigo (mostrado pelo receber) ou --sem-cifra".into())
         }
     };
     let cfg = SenderConfig {
         fec_group: o.fec,
         pairing_code,
+        // Com código de conexão, o de resposta ainda vai e volta pelo chat.
+        pairing_timeout: Duration::from_secs(if conexao.is_some() { 300 } else { 10 }),
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let pacing = cfg.pacing_bps;
-    let tx = match (destino, servidor) {
-        (Some(d), _) => VideoSender::connect("0.0.0.0:0", d, cfg)?,
-        (None, Some(s)) => {
+    let tx = match (o.destino.as_deref(), servidor, conexao) {
+        (Some(d), ..) => VideoSender::connect("0.0.0.0:0", d, cfg)?,
+        (None, Some(s), _) => {
             println!("Procurando o receber pelo servidor de sinalização {s}…");
             VideoSender::connect_via_signal("0.0.0.0:0", s, cfg)?
         }
-        (None, None) => unreachable!("conferido acima"),
+        (None, None, Some(cc)) => {
+            let socket = UdpSocket::bind("0.0.0.0:0")?;
+            let publico = fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?;
+            println!("Código de resposta: {}", ReplyCode { addr: publico.v4()? });
+            println!("  Mande para quem roda o receber (ele cola no terminal). Esperando até 5 min…");
+            if let Some(aviso) = publico.warning() {
+                println!("  {aviso}");
+            }
+            VideoSender::connect_with_socket(socket, SocketAddr::V4(cc.addr), cfg)?
+        }
+        (None, None, None) => unreachable!("conferido acima"),
     };
     println!(
         "Enviando para {} : {} Mbps ({} fps × {:.1} KB), pacing {:.0} Mbps, FEC {}, {} s",

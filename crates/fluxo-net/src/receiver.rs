@@ -49,7 +49,19 @@ pub struct ReceiverConfig {
     ///
     /// [`VideoSender::connect_via_signal`]: crate::VideoSender::connect_via_signal
     pub signal_server: Option<SocketAddr>,
+    /// Servidor STUN que viu o nosso endereço público
+    /// ([`PublicAddr::server`](crate::PublicAddr::server)). Enquanto nenhum
+    /// host chegar, um pedido STUN a cada 15 s mantém vivo o mapeamento do
+    /// NAT que está no código de conexão (alguns NATs o esquecem em 30 s).
+    pub keepalive_to: Option<SocketAddr>,
 }
+
+/// Intervalo dos pedidos de [`ReceiverConfig::keepalive_to`].
+const MANTER_NAT: Duration = Duration::from_secs(15);
+/// Furo na direção do host ([`VideoReceiver::punch`]): a cada...
+const FURO_A_CADA: Duration = Duration::from_millis(250);
+/// ...por no máximo este tempo (ou até o host aparecer).
+const FURO_DURA: Duration = Duration::from_secs(60);
 
 /// Registro na sala renovado a cada... (mantém a sala e o mapeamento do NAT
 /// vivos; os NATs costumam esquecer um mapeamento UDP parado em 30 s ou mais).
@@ -67,6 +79,7 @@ impl Default for ReceiverConfig {
             feedback_interval: Duration::from_millis(250),
             pairing_code: None,
             signal_server: None,
+            keepalive_to: None,
         }
     }
 }
@@ -130,7 +143,8 @@ pub struct ReceiverStats {
     /// Com sinalização: o servidor recusou a sala (outro cliente com um
     /// código da mesma sala). Sorteie outro código.
     pub room_taken: bool,
-    /// Pacotes de furo mandados aos endereços de hosts que o servidor avisou.
+    /// Pacotes de furo mandados ao host (avisado pelo servidor de sinalização
+    /// ou pedido por [`VideoReceiver::punch`]).
     pub punches_sent: u64,
 }
 
@@ -142,6 +156,8 @@ struct Shared {
     cifrado: bool,
     /// Chave do sentido cliente → host, depois do pareamento.
     sealer: Mutex<Option<Sealer>>,
+    /// Endereços do host para furar o nosso NAT, e até quando ([`VideoReceiver::punch`]).
+    furos: Mutex<Option<(Vec<SocketAddr>, Instant)>>,
 }
 
 impl Shared {
@@ -189,6 +205,18 @@ pub struct VideoReceiver {
     last_request: Mutex<(Option<Instant>, u32)>,
 }
 
+/// Pede furos ao [`VideoReceiver`] de outra thread ([`VideoReceiver::puncher`]).
+#[derive(Clone)]
+pub struct Puncher(Arc<Shared>);
+
+impl Puncher {
+    /// O mesmo que [`VideoReceiver::punch`].
+    pub fn punch(&self, peers: &[SocketAddr]) {
+        *self.0.furos.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((peers.to_vec(), Instant::now() + FURO_DURA));
+    }
+}
+
 /// Intervalo mínimo entre pedidos de keyframe (ou 2 RTTs, o que for maior):
 /// tempo para o keyframe pedido chegar antes de pedir de novo.
 const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(50);
@@ -196,12 +224,19 @@ const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(50);
 impl VideoReceiver {
     /// Escuta em `bind` (ex.: `"0.0.0.0:9000"`).
     pub fn bind(bind: impl ToSocketAddrs, cfg: ReceiverConfig) -> Result<Self, NetError> {
+        let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
+        Self::with_socket(socket, cfg)
+    }
+
+    /// Como [`bind`](Self::bind), num socket já aberto — o mesmo em que
+    /// [`discover_public_addr`](crate::discover_public_addr) descobriu o
+    /// endereço público, que só vale para ele.
+    pub fn with_socket(socket: UdpSocket, cfg: ReceiverConfig) -> Result<Self, NetError> {
         if cfg.signal_server.is_some() && cfg.pairing_code.is_none() {
             return Err(NetError::Pairing(
                 "a sinalização precisa do código de pareamento".into(),
             ));
         }
-        let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
         socket
             .set_read_timeout(Some(Duration::from_millis(50)))
             .map_err(NetError::io("configurar socket"))?;
@@ -212,6 +247,7 @@ impl VideoReceiver {
             stop: AtomicBool::new(false),
             cifrado: cfg.pairing_code.is_some(),
             sealer: Mutex::new(None),
+            furos: Mutex::new(None),
         });
         let (tx, frames) = mpsc::sync_channel(cfg.queue_frames.max(1));
         let s = shared.clone();
@@ -228,6 +264,20 @@ impl VideoReceiver {
             socket: copia,
             last_request: Mutex::new((None, 0)),
         })
+    }
+
+    /// Fura o nosso NAT na direção do host (endereços do código de resposta):
+    /// manda um `Punch` a cada endereço a cada 250 ms, até o host aparecer
+    /// ou passar 1 minuto. Os `PairInit` que ele já está mandando passam a
+    /// chegar.
+    pub fn punch(&self, peers: &[SocketAddr]) {
+        self.puncher().punch(peers);
+    }
+
+    /// Alça para pedir [`punch`](Self::punch) de outra thread (ex.: a que lê
+    /// o código de resposta no terminal enquanto outra mostra o vídeo).
+    pub fn puncher(&self) -> Puncher {
+        Puncher(self.shared.clone())
     }
 
     /// Pede ao host um keyframe — chame enquanto estiver sem imagem
@@ -426,9 +476,23 @@ fn recv_loop(
         _ => None,
     };
 
+    let mut proximo_furo = Instant::now();
+    let mut proximo_stun = Instant::now() + MANTER_NAT;
+
     while !shared.stop.load(Ordering::Relaxed) {
         if let Some(s) = sinal.as_mut() {
             s.renovar(&socket);
+        }
+        // Sem host ainda: furos pedidos e o mapeamento do NAT vivo.
+        if peer.is_none() && Instant::now() >= proximo_furo {
+            furar(&socket, &shared);
+            proximo_furo = Instant::now() + FURO_A_CADA;
+        }
+        if let Some(stun) = cfg.keepalive_to.filter(|_| peer.is_none()) {
+            if Instant::now() >= proximo_stun {
+                let _ = socket.send_to(&fluxo_proto::stun::binding_request(&[0; 12]), stun);
+                proximo_stun = Instant::now() + MANTER_NAT;
+            }
         }
         if let Some(p) = peer {
             if Instant::now() >= next_ping {
@@ -472,6 +536,9 @@ fn recv_loop(
             }
         };
         let datagrama = &buf[..n];
+        if Some(from) == cfg.keepalive_to {
+            continue; // resposta do STUN ao keepalive
+        }
         let Ok((h, payload)) = PacketHeader::decode(datagrama) else {
             shared.with_stats(|s| s.invalid_packets += 1);
             continue;
@@ -647,6 +714,27 @@ fn recv_loop(
             }
         }
     }
+}
+
+/// Manda os furos pedidos por [`VideoReceiver::punch`], se ainda no prazo.
+fn furar(socket: &UdpSocket, shared: &Shared) {
+    let mut furos = shared.furos.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((destinos, ate)) = furos.as_ref() else {
+        return;
+    };
+    if Instant::now() > *ate {
+        *furos = None;
+        return;
+    }
+    let Ok(furo) = PacketKind::Punch.control(0, clock_us()).encode_with_payload(&[]) else {
+        return;
+    };
+    let mut n = 0;
+    for d in destinos {
+        n += socket.send_to(&furo, d).is_ok() as u64;
+    }
+    drop(furos);
+    shared.with_stats(|s| s.punches_sent += n);
 }
 
 /// Responde a um `PairInit`: o mesmo de antes (reenvio do host) recebe a

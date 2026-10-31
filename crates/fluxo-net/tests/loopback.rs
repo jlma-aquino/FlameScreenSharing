@@ -775,3 +775,48 @@ fn host_pelo_servidor_em(
         },
     )
 }
+
+#[test]
+fn codigo_de_conexao_host_aprende_o_endereco_pelo_furo() {
+    let rx = VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            pairing_code: Some(codigo("K7M4-QX9P")),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    // Como num NAT simétrico: o endereço que foi no código de conexão não é
+    // o que o cliente usa para falar com o host.
+    let errado = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let host = socket.local_addr().unwrap();
+    let tx = std::thread::spawn(move || {
+        VideoSender::connect_with_socket(
+            socket,
+            errado,
+            SenderConfig {
+                pairing_code: Some(codigo("K7M4-QX9P")),
+                pairing_timeout: Duration::from_secs(4),
+                ..SenderConfig::for_bitrate(20_000_000)
+            },
+        )
+    });
+    // O cliente recebe o código de resposta (o endereço do host) e fura.
+    std::thread::sleep(Duration::from_millis(300));
+    rx.punch(&[host]);
+    let tx = tx
+        .join()
+        .unwrap()
+        .expect("pareia pelo endereço de onde veio o furo");
+    assert_eq!(tx.peer_addr(), rx.local_addr());
+    tx.send_frame(frame(0, 5_000), true, clock_us()).unwrap();
+    let f = rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
+    assert_eq!(f.frame.data, frame(0, 5_000));
+    let c = rx.stats();
+    assert!(c.encrypted && c.punches_sent > 0, "{c:?}");
+    // Com o host achado, os furos param.
+    let antes = rx.stats().punches_sent;
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(rx.stats().punches_sent, antes);
+}

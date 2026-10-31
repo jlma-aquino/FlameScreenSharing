@@ -9,9 +9,13 @@
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
-use fluxo_net::{FrameAction, PairingCode, ReceiverConfig, Recovery, RecoveryRequest, VideoReceiver};
+use fluxo_net::{
+    ConnectionCode, FrameAction, PairingCode, Puncher, ReceiverConfig, Recovery, RecoveryRequest, ReplyCode,
+    VideoReceiver,
+};
 
 #[cfg(windows)]
 use crate::verificar::Decoder;
@@ -58,29 +62,53 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         .as_deref()
         .map(fluxo_net::resolve_signal_server)
         .transpose()?;
-    if servidor.is_some() && codigo.is_none() {
-        return Err("--sinal precisa do código (sem --sem-cifra)".into());
+    if (servidor.is_some() || o.internet) && codigo.is_none() {
+        return Err("--sinal e --internet precisam do código (sem --sem-cifra)".into());
     }
-    let rx = VideoReceiver::bind(
-        ("0.0.0.0", o.porta),
+    if servidor.is_some() && o.internet {
+        return Err("use --sinal ou --internet, não os dois".into());
+    }
+    // Sem servidor: o endereço público vem do STUN, e só vale para este socket.
+    let socket = UdpSocket::bind(("0.0.0.0", o.porta))?;
+    let publico = match o.internet {
+        true => Some(fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?),
+        false => None,
+    };
+    let rx = VideoReceiver::with_socket(
+        socket,
         ReceiverConfig {
             pairing_code: codigo.clone(),
             signal_server: servidor,
+            keepalive_to: publico.as_ref().map(|p| p.server),
             ..ReceiverConfig::default()
         },
     )?;
     let saida = o.saida.clone().unwrap_or_else(|| "recebido.h264".into());
-    match (&codigo, &o.sinal) {
-        (Some(c), Some(s)) => println!(
+    match (&codigo, &o.sinal, &publico) {
+        (Some(c), _, Some(p)) => {
+            let cc = ConnectionCode {
+                pairing: c.clone(),
+                addr: p.v4()?,
+            };
+            println!("Escutando em {} (público {}).", rx.local_addr(), p.addr);
+            println!("Código de conexão: {cc}");
+            println!("  No PC que envia: fluxo-bench enviar --conexao {cc}");
+            if let Some(aviso) = p.warning() {
+                println!("  {aviso}");
+            }
+            println!("Depois cole aqui o código de resposta que ele mostrar:");
+            ler_respostas(rx.puncher());
+        }
+        (Some(c), Some(s), None) => println!(
             "Escutando em {}, código de pareamento {c}. No host: --sinal {s} --codigo {c}",
             rx.local_addr(),
         ),
-        (Some(c), None) => println!(
+        (Some(c), None, None) => println!(
             "Escutando em {}, código de pareamento {c}. No host: --destino <IP deste PC>:{} --codigo {c}",
             rx.local_addr(),
             o.porta
         ),
-        (None, _) => println!(
+        (None, ..) => println!(
             "Escutando em {} SEM cifra. No host: --destino <IP deste PC>:{} --sem-cifra",
             rx.local_addr(),
             o.porta
@@ -288,4 +316,26 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     }
     println!("  gravado em {saida}");
     Ok(())
+}
+
+/// Lê do terminal os códigos de resposta (numa thread: a medição segue) e
+/// fura o NAT na direção de cada um.
+fn ler_respostas(furos: Puncher) {
+    std::thread::spawn(move || {
+        for linha in std::io::stdin().lines() {
+            let Ok(linha) = linha else {
+                return; // sem terminal
+            };
+            if linha.trim().is_empty() {
+                continue;
+            }
+            match ReplyCode::parse(&linha) {
+                Ok(r) => {
+                    furos.punch(&[std::net::SocketAddr::V4(r.addr)]);
+                    println!("Abrindo caminho até {}…", r.addr);
+                }
+                Err(e) => println!("{e}. Cole de novo:"),
+            }
+        }
+    });
 }

@@ -17,6 +17,7 @@ sockets — isso é da camada de rede. Formato byte a byte em
 | `src/fec.rs` | Paridade XOR: `parity`, `recover`, `group_count`, `group_range` |
 | `src/seq.rs` | `is_newer` / `is_newer_or_equal` com wrap-around |
 | `src/signal.rs` | `SignalMessage`: mensagens do servidor de sinalização (PROTOCOLO.md, seção 2.2) |
+| `src/stun.rs` | STUN mínimo: `binding_request` e `mapped_address` (PROTOCOLO.md, seção 2.3) |
 | `examples/loopback.rs` | Teste de carga via UDP local |
 
 ## Uso típico

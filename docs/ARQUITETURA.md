@@ -104,7 +104,8 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
 5. ✅ Pareamento por código (SPAKE2) e cifra de todo pacote (ChaCha20-Poly1305),
    protocolo v8 (ADR-008).
 6. ✅ Travessia de NAT: servidor de sinalização próprio (faz o papel do STUN)
-   e *hole punching*, protocolo v9 (ADR-009).
+   e *hole punching*, protocolo v9 (ADR-009); ou, sem servidor nenhum, STUN
+   público + código de conexão pelo chat (ADR-010).
 7. ⏳ Relay de fallback (NAT simétrico dos dois lados, CGNAT restritivo).
 
 ## 6. Tratamento de erros

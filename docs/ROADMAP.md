@@ -97,9 +97,12 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] STUN + UDP hole punching: o próprio servidor de sinalização faz o papel do STUN (mesmo socket do
       vídeo); o cliente manda Punch e o host PairInit a todos os endereços do outro. Testado com o servidor
       no notebook, nos dois sentidos (tela real a 20 Mbps: p50 18,1 ms, 0 perdas)
-- [ ] Teste atrás de NATs de verdade (servidor numa VPS, os dois PCs em redes diferentes, ex.: um no
-      roteador do celular)
-- [ ] Relay de fallback para CGNAT
+- [x] Conexão sem servidor próprio (ADR-010): STUN público + código de conexão e código de resposta pelo
+      chat (`fluxo-client --internet`, `fluxo-host --conexao`)
+- [ ] Teste atrás de NATs de verdade (notebook no roteador do celular, com os códigos de conexão; o
+      `fluxo-sinal` precisaria de uma VPS)
+- [ ] UPnP (um código só, quando o roteador do cliente deixar) e IPv6 nos códigos
+- [ ] Relay de fallback para CGNAT (exige alguém hospedando um servidor; opcional)
 
 ## Fase 6 — Interação e conforto
 

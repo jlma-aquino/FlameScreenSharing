@@ -361,7 +361,8 @@ impl VideoSender {
                 context: "resolver destino",
                 message: "nenhum endereço".into(),
             })?;
-        Self::start(bind, Rota::Direta(peer), cfg)
+        let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
+        Self::start(socket, Rota::Direta(peer), cfg)
     }
 
     /// Como [`connect`](Self::connect), mas acha o cliente pelo servidor de
@@ -377,11 +378,24 @@ impl VideoSender {
                 "a sinalização precisa do código de pareamento".into(),
             ));
         }
-        Self::start(bind, Rota::Sinal(server), cfg)
+        let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
+        Self::start(socket, Rota::Sinal(server), cfg)
     }
 
-    fn start(bind: impl ToSocketAddrs, rota: Rota, cfg: SenderConfig) -> Result<Self, NetError> {
-        let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
+    /// Como [`connect`](Self::connect), num socket já aberto — o mesmo em que
+    /// [`discover_public_addr`](crate::discover_public_addr) descobriu o
+    /// endereço público que foi no código de resposta. Os `PairInit` para
+    /// `peer` (do código de conexão) furam o nosso NAT; um furo do cliente
+    /// vindo de outra porta vira candidato também.
+    pub fn connect_with_socket(
+        socket: UdpSocket,
+        peer: SocketAddr,
+        cfg: SenderConfig,
+    ) -> Result<Self, NetError> {
+        Self::start(socket, Rota::Direta(peer), cfg)
+    }
+
+    fn start(socket: UdpSocket, rota: Rota, cfg: SenderConfig) -> Result<Self, NetError> {
         // Pareamento antes de qualquer outro pacote: com código, nada sai em
         // claro. O socket só se prende ao cliente depois, no endereço que
         // respondeu.

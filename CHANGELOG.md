@@ -6,6 +6,18 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Conexão sem servidor próprio** (fase 5, ADR-010): `fluxo-client
+  --internet` pergunta a servidores STUN públicos o endereço público e
+  mostra um código de conexão (pareamento + endereço, com conferência);
+  `fluxo-host --conexao <código>` mostra um código de resposta, que o
+  cliente cola no terminal. Os dois furam os NATs como na sinalização. Aviso
+  quando o STUN detecta NAT simétrico. Também no `fluxo-bench receber
+  --internet` / `enviar --conexao`. Sem mudança no protocolo (v9).
+- `fluxo-proto::stun` (Binding Request e leitura do endereço, testado com o
+  exemplo da RFC 5769); `fluxo-net`: `discover_public_addr`, `PublicAddr`,
+  `ConnectionCode`/`ReplyCode`, `VideoReceiver::with_socket`/`punch`/
+  `puncher`, `VideoSender::connect_with_socket`,
+  `ReceiverConfig::keepalive_to`; `fluxo-crypto`: `random_bytes`, `ALFABETO`.
 - **Protocolo v9 — conexão entre redes diferentes** (fase 5, ADR-009):
   servidor de sinalização `fluxo-sinal` (novo app, roda em qualquer
   sistema). O cliente (`--sinal SERVIDOR`) registra a sala do código; o host

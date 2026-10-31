@@ -9,6 +9,7 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 
 ```text
 fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
+fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S] [--refresh N] [--fec K]
            [--segundos S] [--porta-local P] [--sem-cifra]
 ```
@@ -41,6 +42,18 @@ O host acha o cliente pela sala do código, os dois furam os NATs e o vídeo
 vai direto; a saída mostra "Procurando o cliente pelo servidor…" e depois o
 endereço que respondeu. Se não der, o erro diz onde parou (servidor mudo,
 nenhum cliente com esse código, ou pacotes barrados pelos NATs).
+
+**Sem servidor nenhum** (ADR-010): o cliente roda `fluxo-client --internet`
+e manda o código de conexão pelo chat; aqui:
+
+```powershell
+.\target\release\fluxo-host.exe --conexao K7M4-QX9P-ABCD-EFGH-JK
+#   Código de resposta: ABCD-EFGH-JKM   ← mande de volta; ele cola no terminal do cliente
+```
+
+O código de conexão já traz o código de pareamento (sem `--codigo`). O host
+espera até 5 min pelo código de resposta ir e voltar, e avisa se esta rede
+tem NAT simétrico.
 
 ## Firewall
 

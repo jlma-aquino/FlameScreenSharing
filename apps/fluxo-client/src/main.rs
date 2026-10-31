@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
-//!              [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR]
+//!              [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet]
 //! ```
 //!
 //! Escuta numa porta UDP, decodifica com o `fluxo-decode` e mostra numa
@@ -42,6 +42,9 @@ Opções:
   --sem-cifra     TESTE: sem pareamento nem cifra (o host também)
   --sinal S       registra o código no servidor de sinalização S (fluxo-sinal), para
                   um host em outra rede achar este PC: fluxo-host --sinal S --codigo ...
+  --internet      redes diferentes, sem servidor: mostra um código de conexão para
+                  mandar a quem compartilha (fluxo-host --conexao ...) e pede no
+                  terminal o código de resposta que ele mandar de volta
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
 
 Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
@@ -59,6 +62,7 @@ struct Opts {
     codigo: Option<String>,
     sem_cifra: bool,
     sinal: Option<String>,
+    internet: bool,
     sem_painel: bool,
 }
 
@@ -73,6 +77,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         codigo: None,
         sem_cifra: false,
         sinal: None,
+        internet: false,
         sem_painel: false,
     };
     let mut it = args.iter();
@@ -88,10 +93,14 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--codigo" => o.codigo = Some(valor()?.clone()),
             "--sem-cifra" => o.sem_cifra = true,
             "--sinal" => o.sinal = Some(valor()?.clone()),
+            "--internet" => o.internet = true,
             "--sem-painel" => o.sem_painel = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
+    }
+    if o.internet && (o.sinal.is_some() || o.sem_cifra) {
+        return Err("--internet não combina com --sinal nem --sem-cifra".into());
     }
     if o.sinal.is_some() && o.sem_cifra {
         return Err("--sinal precisa do código (sem --sem-cifra)".into());
@@ -151,14 +160,29 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .as_deref()
         .map(fluxo_net::resolve_signal_server)
         .transpose()?;
-    let rx = VideoReceiver::bind(
-        ("0.0.0.0", o.porta),
+    // Sem servidor (--internet): o endereço público vem do STUN, e só vale
+    // para este socket, que é o que recebe o vídeo.
+    let socket = std::net::UdpSocket::bind(("0.0.0.0", o.porta))?;
+    let publico = match o.internet {
+        true => Some(fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?),
+        false => None,
+    };
+    let rx = VideoReceiver::with_socket(
+        socket,
         ReceiverConfig {
             pairing_code: codigo.clone(),
             signal_server: servidor,
+            keepalive_to: publico.as_ref().map(|p| p.server),
             ..ReceiverConfig::default()
         },
     )?;
+    let conexao = match (&publico, &codigo) {
+        (Some(p), Some(c)) => Some(fluxo_net::ConnectionCode {
+            pairing: c.clone(),
+            addr: p.v4()?,
+        }),
+        _ => None,
+    };
     // Como o host acha este PC: pelo servidor (o que foi digitado em
     // --sinal) ou pelo IP da rede local.
     let endereco = match (&o.sinal, fluxo_net::local_ip()) {
@@ -166,13 +190,23 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         (None, Some(ip)) => format!("--destino {ip}:{}", o.porta),
         (None, None) => format!("--destino <IP deste PC>:{}", o.porta),
     };
-    let espera = match &codigo {
-        Some(c) => {
+    let espera = match (&codigo, &conexao) {
+        (_, Some(cc)) => {
+            println!("Código de conexão: {cc}");
+            println!("  Mande para quem vai compartilhar:  fluxo-host --conexao {cc}");
+            if let Some(aviso) = publico.as_ref().and_then(|p| p.warning()) {
+                println!("  {aviso}");
+            }
+            println!("Depois cole aqui o código de resposta que ele mandar de volta:");
+            ler_respostas(rx.puncher());
+            format!("Fluxo — código de conexão {cc} · cole a resposta do host no terminal")
+        }
+        (Some(c), None) => {
             println!("Código de pareamento: {c}");
             println!("No PC que compartilha:  fluxo-host {endereco} --codigo {c}");
             format!("Fluxo — código {c} · aguardando o host ({endereco})")
         }
-        None => {
+        (None, None) => {
             println!("TESTE: sem pareamento nem cifra (--sem-cifra)");
             format!("Fluxo — aguardando o host ({endereco}, sem cifra)")
         }
@@ -185,9 +219,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         tamanho: janela.client_size(),
         vsync: o.vsync,
         segundos: o.segundos,
-        espera: match &codigo {
-            Some(c) => format!("código {c}\nhost: {endereco}\n--codigo {c}"),
-            None => format!("aguardando o host\n{endereco} (sem cifra)"),
+        espera: match (&codigo, &conexao) {
+            (_, Some(cc)) => format!("código de conexão\n{cc}\ncole a resposta do\nhost no terminal"),
+            (Some(c), None) => format!("código {c}\nhost: {endereco}\n--codigo {c}"),
+            (None, None) => format!("aguardando o host\n{endereco} (sem cifra)"),
         },
     };
     let c = comp.clone();
@@ -218,4 +253,27 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .join()
         .map_err(|_| "a thread de exibição terminou com pânico")??;
     Ok(())
+}
+
+/// Lê do terminal os códigos de resposta do host (numa thread: a janela e o
+/// vídeo seguem) e fura o NAT na direção de cada um.
+#[cfg(windows)]
+fn ler_respostas(furos: fluxo_net::Puncher) {
+    std::thread::spawn(move || {
+        for linha in std::io::stdin().lines() {
+            let Ok(linha) = linha else {
+                return; // sem terminal
+            };
+            if linha.trim().is_empty() {
+                continue;
+            }
+            match fluxo_net::ReplyCode::parse(&linha) {
+                Ok(r) => {
+                    furos.punch(&[std::net::SocketAddr::V4(r.addr)]);
+                    println!("Abrindo caminho até o host em {}…", r.addr);
+                }
+                Err(e) => println!("{e}. Cole de novo:"),
+            }
+        }
+    });
 }

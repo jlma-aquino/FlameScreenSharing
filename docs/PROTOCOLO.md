@@ -219,6 +219,43 @@ cliente                       servidor                        host
   não fura assim: fica para o relay (fase 5). O servidor deve ficar fora da
   rede do cliente; na mesma rede, o endereço "público" visto é o local.
 
+## 2.3. Sem servidor: código de conexão e STUN público
+
+Quando não há servidor de sinalização, as pessoas levam os endereços pelo
+chat que já usam. Nada muda nos pacotes do Fluxo: furo (Punch) e pareamento
+são os da seção 2.2; só muda quem entrega os endereços.
+
+```text
+cliente: STUN → endereço público ─► código de conexão ──(chat)──► host
+host:    STUN → endereço público ─► código de resposta ─(chat)──► cliente
+host:    PairInit a cada 250 ms para o cliente (abre o NAT do host)
+cliente: Punch a cada 250 ms para o host (abre o NAT do cliente) → PairInit passa
+```
+
+- **STUN** (RFC 5389, só o *Binding Request*): o cliente e o host perguntam
+  a servidores públicos (`stun.l.google.com:19302`,
+  `stun.cloudflare.com:3478`) o endereço público **do socket que vai levar o
+  vídeo**. Se os dois servidores veem portas diferentes, o NAT é simétrico,
+  e o programa avisa. Pacotes STUN não são do Fluxo: quem recebe os ignora.
+- **Código de conexão** (cliente → host): 8 símbolos do código de pareamento
+  + 10 do endereço IPv4:porta + 1 de conferência, ex.
+  `K7M4-QX9P-ABCD-EFGH-JK`. **Código de resposta** (host → cliente): 10 do
+  endereço + 1 de conferência, ex. `ABCD-EFGH-JKM`. Mesmo alfabeto de 31
+  símbolos do código de pareamento; o endereço (48 bits) vira um número em
+  base 31, com o símbolo mais significativo primeiro. Conferência:
+  `Σ (i+1)·símbolo_i mod 31` sobre todos os anteriores, que pega qualquer
+  símbolo trocado e qualquer par de vizinhos invertido.
+- **Host:** manda PairInit ao endereço do código de conexão por até 5 min
+  (tempo de o código de resposta ir e voltar). Um Punch de um endereço
+  desconhecido vira candidato, como na seção 2.2.
+- **Cliente:** enquanto nenhum host chega, repete o pedido STUN a cada 15 s
+  para o NAT não esquecer o mapeamento que está no código. Recebido o
+  código de resposta, manda Punch a cada 250 ms por até 1 min, ou até o host
+  aparecer.
+- **Limites:** só IPv4 nos códigos; NAT simétrico dos dois lados não fura.
+  Com os dois atrás do mesmo roteador, só funciona se ele fizer *hairpin* (na
+  mesma rede, use `--destino`).
+
 ## 3. Fragmentação (emissor)
 
 - Payload máximo por pacote: **1180 bytes** (`DEFAULT_MAX_PAYLOAD`). Com o

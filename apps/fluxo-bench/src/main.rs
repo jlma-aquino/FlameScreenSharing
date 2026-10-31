@@ -12,8 +12,8 @@
 //!                        [--mbps M] [--fps F] [--keyframe-a-cada S] [--saida arquivo.h264]
 //!                        [--verificar] [--refresh N] [--perder-a-cada S]
 //! fluxo-bench decode    [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
-//! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--sinal SERVIDOR]
-//! fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR) [--mbps M] [--fps F] [--segundos S] [--fec K]
+//! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--sinal SERVIDOR | --internet]
+//! fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR | --conexao C) [--mbps M] [--fps F] [--segundos S] [--fec K]
 //! ```
 //!
 //! Detalhes e como interpretar os números: `docs/modulos/fluxo-bench.md`.
@@ -50,6 +50,10 @@ struct Opts {
     destino: Option<String>,
     /// Servidor de sinalização do `receber` (registra) e do `enviar` (procura).
     sinal: Option<String>,
+    /// Código de conexão do `receber --internet` (o `enviar` conecta sem servidor).
+    conexao: Option<String>,
+    /// `receber` sem servidor: mostra um código de conexão (STUN público).
+    internet: bool,
     /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
     fec: u8,
     /// Código de pareamento do `receber` (padrão: sorteado) e do `enviar`.
@@ -77,6 +81,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         porta: 9000,
         destino: None,
         sinal: None,
+        conexao: None,
+        internet: false,
         fec: 10,
         codigo: None,
         sem_cifra: false,
@@ -95,6 +101,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--porta" => o.porta = valor()?.parse().map_err(|_| "porta inválida")?,
             "--destino" => o.destino = Some(valor()?.clone()),
             "--sinal" => o.sinal = Some(valor()?.clone()),
+            "--conexao" => o.conexao = Some(valor()?.clone()),
+            "--internet" => o.internet = true,
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--codigo" => o.codigo = Some(valor()?.clone()),
             "--sem-cifra" => o.sem_cifra = true,
@@ -145,6 +153,9 @@ Opções:
   --destino IP:PORTA    destino do enviar (o PC que roda o receber)
   --sinal SERVIDOR      servidor de sinalização (fluxo-sinal): o receber se registra
                         nele e o enviar acha o receber por ele (redes diferentes)
+  --internet            no receber: redes diferentes sem servidor; mostra um código de
+                        conexão e pede no terminal o código de resposta do enviar
+  --conexao C           no enviar: o código de conexão do receber --internet
   --fec K               no enviar: 1 paridade a cada K pacotes (padrão 10; 0 = sem)
   --codigo XXXX-XXXX    código de pareamento: o receber mostra um sorteado (ou usa
                         este); o enviar precisa do código do receber

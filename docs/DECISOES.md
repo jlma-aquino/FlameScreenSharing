@@ -251,6 +251,43 @@ respostas são menores, para o servidor não amplificar ataques.
 
 ---
 
+## ADR-010 — Conectar sem servidor próprio: código de conexão + STUN público
+
+**Status:** Aceito (2026-10-31)
+
+**Contexto.** O projeto não deve depender de alguém alugar e manter um
+servidor (ADR-009 exige um). Apps como o TeamSpeak 6 parecem não ter
+servidor, mas usam a infraestrutura da empresa para apresentar os dois
+lados; VPNs como Radmin, ZeroTier e Tailscale também (e exigem instalar e
+criar conta: no teste, o instalador do ZeroTier quebrou o `apt` do notebook).
+Opções sem servidor nosso:
+
+| Opção | Prós | Contras |
+|---|---|---|
+| **Código de conexão pelo chat + STUN público** | Nada para manter; STUN é gratuito, sem conta, não vê nada além do pedido | Dois copia-e-cola (ida e volta) |
+| UPnP no roteador | Um código só | Depende do roteador; rede de celular quase nunca tem |
+| DHT do BitTorrent | "Adicionar amigo" sem copia-e-cola, sem empresa | Muito mais complexo, bibliotecas novas |
+
+**Decisão.** O cliente pergunta a servidores STUN públicos o seu endereço
+público e mostra um **código de conexão** (pareamento + endereço, 19
+símbolos com conferência); o host digita e mostra um **código de resposta**
+(o endereço dele, 11 símbolos); o cliente digita esse. Os dois furam os
+NATs como no ADR-009. O `fluxo-sinal` continua opcional, para quem quiser
+hospedar um e pular os códigos.
+
+**Consequências.**
+- ➕ Zero infraestrutura nossa e zero dependências novas (STUN escrito em
+  ~100 linhas, testado com o exemplo da RFC 5769).
+- ➕ O chat de vocês é o canal de sinalização; o servidor STUN não vê o
+  código nem o vídeo.
+- ➖ Duas mensagens para conectar (UPnP e IPv6 podem tirar uma depois).
+- ➖ NAT simétrico dos dois lados não conecta: sem servidor não há relay.
+  Avisamos quando o STUN detecta NAT simétrico.
+- 🔁 Medir com o notebook no roteador do celular; se o copia-e-cola
+  incomodar, avaliar UPnP e a DHT.
+
+---
+
 ## Modelo
 
 ```markdown

@@ -8,7 +8,7 @@ Lado de quem assiste: rede (`fluxo-net`) → decode (`fluxo-decode`) → tela.
 
 ```text
 fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
-             [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR]
+             [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet]
 ```
 
 `--no-topo` mantém a janela sempre por cima das outras: útil para acompanhar
@@ -26,6 +26,13 @@ Em redes diferentes, `--sinal SERVIDOR` registra o código num servidor de
 sinalização ([fluxo-sinal](fluxo-sinal.md)) e o comando mostrado vira
 `fluxo-host --sinal SERVIDOR --codigo ...`: o host acha este PC pelo
 servidor, sem precisar do IP nem de abrir porta no roteador.
+
+Sem servidor nenhum, `--internet` mostra um **código de conexão**
+(`K7M4-QX9P-ABCD-EFGH-JK`: pareamento + o endereço público deste PC, visto
+por servidores STUN públicos). Mande para quem compartilha; ele roda
+`fluxo-host --conexao <código>` e manda de volta um **código de resposta**
+(`ABCD-EFGH-JKM`), que você cola no terminal do cliente. Os dois furam os
+NATs e o vídeo vai direto. Erro de digitação é avisado na hora.
 
 ```powershell
 # No PC que assiste

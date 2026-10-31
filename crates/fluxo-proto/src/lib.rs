@@ -13,6 +13,7 @@
 //! | [`reassembly`] | Juntar os pacotes recebidos de volta em frames completos. |
 //! | [`seq`] | Comparação de números de sequência que "dão a volta" (wrap-around). |
 //! | [`signal`] | Mensagens do servidor de sinalização (achar o outro lado pela internet). |
+//! | [`stun`] | STUN mínimo: perguntar a um servidor público o nosso endereço visto da internet. |
 //!
 //! ## Fluxo de dados
 //!
@@ -32,6 +33,7 @@ pub mod packet;
 pub mod reassembly;
 pub mod seq;
 pub mod signal;
+pub mod stun;
 
 pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
