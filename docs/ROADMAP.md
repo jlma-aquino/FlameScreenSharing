@@ -65,7 +65,8 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       perde nada até ~40 Mbps; acima da capacidade, ~90% dos grupos que falham perdem 3+ pacotes (fila do
       roteador transbordando). 2 paridades não salvariam os frames; quem resolve é o bitrate adaptativo
 - [ ] Picos de atraso no Wi-Fi sem perda (até ~870 ms a 10 Mbps, notebook): investigar economia de energia
-      do Wi-Fi do receptor
+      do Wi-Fi do receptor. No notebook de teste ela está ligada (`wifi.powersave = 3` no NetworkManager,
+      driver ath9k): medir de novo com `wifi.powersave = 2`
 - [x] Bitrate adaptativo (protocolo v4, `Feedback`): o cliente relata perda e atraso de fila a cada 250 ms;
       o host cai ×0,85–0,7 e sobe +8%/s. Link simulado de 8 Mbps: perdidos 255 → 44, p99 captura→tela
       223 → 95 ms, regime estável sem perda e com fila de 5–10 ms
