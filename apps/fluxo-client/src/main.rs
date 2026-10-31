@@ -173,6 +173,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             pairing_code: codigo.clone(),
             signal_server: servidor,
             keepalive_to: publico.as_ref().map(|p| p.server),
+            on_pairing: publico
+                .as_ref()
+                .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
             ..ReceiverConfig::default()
         },
     )?;
@@ -193,6 +196,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let espera = match (&codigo, &conexao) {
         (_, Some(cc)) => {
             println!("Código de conexão: {cc}");
+            if let Some(p) = &publico {
+                println!("  NAT: {}", p.summary());
+            }
             println!("  Mande para quem vai compartilhar:  fluxo-host --conexao {cc}");
             if let Some(aviso) = publico.as_ref().and_then(|p| p.warning()) {
                 println!("  {aviso}");

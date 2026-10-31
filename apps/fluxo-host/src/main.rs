@@ -417,6 +417,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 println!("  {aviso}");
             }
             println!("  Esperando até 5 min…\n");
+            println!("  NAT: {}", publico.summary());
+            let net_cfg = SenderConfig {
+                on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
+                ..net_cfg
+            };
             VideoSender::connect_with_socket(socket, std::net::SocketAddr::V4(c.addr), net_cfg)?
         }
         (None, None) => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,

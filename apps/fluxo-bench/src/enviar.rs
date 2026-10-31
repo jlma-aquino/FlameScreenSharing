@@ -62,6 +62,11 @@ pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
             if let Some(aviso) = publico.warning() {
                 println!("  {aviso}");
             }
+            println!("  NAT: {}", publico.summary());
+            let cfg = SenderConfig {
+                on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
+                ..cfg
+            };
             VideoSender::connect_with_socket(socket, SocketAddr::V4(cc.addr), cfg)?
         }
         (None, None, None) => unreachable!("conferido acima"),

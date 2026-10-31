@@ -80,6 +80,9 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             pairing_code: codigo.clone(),
             signal_server: servidor,
             keepalive_to: publico.as_ref().map(|p| p.server),
+            on_pairing: publico
+                .as_ref()
+                .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
             ..ReceiverConfig::default()
         },
     )?;
@@ -90,7 +93,12 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                 pairing: c.clone(),
                 addr: p.v4()?,
             };
-            println!("Escutando em {} (público {}).", rx.local_addr(), p.addr);
+            println!(
+                "Escutando em {} (público {}; {}).",
+                rx.local_addr(),
+                p.addr,
+                p.summary()
+            );
             println!("Código de conexão: {cc}");
             println!("  No PC que envia: fluxo-bench enviar --conexao {cc}");
             if let Some(aviso) = p.warning() {

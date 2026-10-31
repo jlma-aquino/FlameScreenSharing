@@ -16,6 +16,7 @@ use fluxo_proto::{
 
 use crate::bitrate::NetworkReport;
 use crate::history::{LossSample, LossWindow, SentHistory};
+use crate::observar::{kind_of, PairingEvent, PairingObserver, RESUMO_A_CADA};
 use crate::pacer::Pacer;
 use crate::rtt::{RttEstimator, RttStats};
 use crate::sim::{DelayLine, DelayModel, Rng};
@@ -58,6 +59,9 @@ pub struct SenderConfig {
     pub pairing_code: Option<PairingCode>,
     /// Quanto [`VideoSender::connect`] espera o cliente responder ao pareamento.
     pub pairing_timeout: Duration,
+    /// Recebe o que chega e um resumo do que sai enquanto o cliente não
+    /// responde ao pareamento (diagnóstico de furo de NAT).
+    pub on_pairing: Option<PairingObserver>,
 }
 
 /// Tamanho da "fila do roteador" da banda simulada, em frames (~66 ms a 60 fps).
@@ -80,6 +84,7 @@ impl SenderConfig {
             simulated_jitter: Duration::ZERO,
             pairing_code: None,
             pairing_timeout: Duration::from_secs(10),
+            on_pairing: None,
         }
     }
 }
@@ -135,6 +140,7 @@ fn parear(
     codigo: &PairingCode,
     prazo: Duration,
     rota: &Rota,
+    observar: Option<&PairingObserver>,
 ) -> Result<(Session, SocketAddr), NetError> {
     let mut t = Tentativa::nova(codigo)?;
     let (mut candidatos, servidor) = match *rota {
@@ -158,6 +164,10 @@ fn parear(
     };
     let mut servidor_respondeu = false;
     let mut recusados: Vec<SocketAddr> = Vec::new();
+    // Diagnóstico (com observador): quantos PairInit saíram e quando resumir.
+    let inicio = Instant::now();
+    let mut enviados = 0u64;
+    let mut proximo_resumo = inicio + RESUMO_A_CADA;
     socket
         .set_read_timeout(Some(Duration::from_millis(50)))
         .map_err(NetError::io("configurar socket"))?;
@@ -170,13 +180,28 @@ fn parear(
             let _ = socket.send_to(p, s);
         }
         for c in &candidatos {
-            let _ = socket.send_to(&t.init, c);
+            enviados += socket.send_to(&t.init, c).is_ok() as u64;
+        }
+        if let Some(o) = observar.filter(|_| Instant::now() >= proximo_resumo) {
+            o.notify(&PairingEvent::Waiting {
+                elapsed: inicio.elapsed(),
+                what: "pedidos de pareamento",
+                sent: enviados,
+                to: candidatos.clone(),
+            });
+            proximo_resumo = Instant::now() + RESUMO_A_CADA;
         }
         let reenvio = Instant::now() + REENVIO_PAREAMENTO;
         while Instant::now() < reenvio {
             let Ok((n, de)) = socket.recv_from(&mut buf) else {
                 continue;
             };
+            if let Some(o) = observar {
+                o.notify(&PairingEvent::Received {
+                    from: de,
+                    kind: kind_of(&buf[..n]),
+                });
+            }
             let Ok((h, payload)) = PacketHeader::decode(&buf[..n]) else {
                 continue; // lixo na porta
             };
@@ -401,7 +426,13 @@ impl VideoSender {
         // respondeu.
         let (cifra, opener, peer) = match (&cfg.pairing_code, &rota) {
             (Some(codigo), _) => {
-                let (s, peer) = parear(&socket, codigo, cfg.pairing_timeout, &rota)?;
+                let (s, peer) = parear(
+                    &socket,
+                    codigo,
+                    cfg.pairing_timeout,
+                    &rota,
+                    cfg.on_pairing.as_ref(),
+                )?;
                 (Some(Arc::new(Mutex::new(s.sealer))), Some(s.opener), peer)
             }
             (None, Rota::Direta(peer)) => (None, None, *peer),

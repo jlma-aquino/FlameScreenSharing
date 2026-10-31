@@ -278,6 +278,20 @@ de casa não é simétrico). Com host e cliente atrás do mesmo roteador o furo
 não fecha (o roteador não faz *hairpin*); o teste de verdade é com o
 notebook na rede do celular.
 
+**Diagnóstico.** `probe_nat` devolve o que cada servidor STUN viu (base do
+`fluxo-bench nat`); `PublicAddr::summary` resume numa linha. Com
+`SenderConfig::on_pairing` / `ReceiverConfig::on_pairing` (um
+`PairingObserver`), cada datagrama que chega antes da sessão vira
+`PairingEvent::Received` ("furo", "pedido de pareamento", "lixo"...), e a
+cada 5 s sai um `PairingEvent::Waiting` com quantos pedidos/furos saíram e
+para onde. `PairingObserver::print_to_terminal()` mostra isso como linhas
+`[conexão]`; os apps ligam no modo de código de conexão.
+
+Primeiro teste com o notebook na rede do celular (2026-10-31): o host
+mandou pedidos ao endereço do código de conexão por minutos e nada voltou;
+o NAT de casa deu a mesma porta para três servidores STUN. Sem o
+diagnóstico acima, não dava para saber em qual lado os pacotes paravam.
+
 ## Host único e reinício (sem cifra)
 
 Com `--sem-cifra` (teste), o receptor aprende o endereço do host pelo

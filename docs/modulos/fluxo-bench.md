@@ -28,6 +28,7 @@ fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [-
 fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra] [--sinal SERVIDOR | --internet]
 fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR) (--codigo C | --sem-cifra) [--mbps M] [--fps F] [--segundos S] [--fec K]
 fluxo-bench enviar     --conexao CÓDIGO [--mbps M] [--fps F] [--segundos S] [--fec K]
+fluxo-bench nat
 ```
 
 ## Lendo o resultado do `bench`
@@ -159,6 +160,28 @@ conexão e espera, no terminal, o código de resposta que o `enviar` mostrar.
 fluxo-bench receber --segundos 20 --internet          # mostra K7M4-QX9P-ABCD-EFGH-JK
 fluxo-bench enviar --conexao K7M4-QX9P-ABCD-EFGH-JK   # mostra ABCD-EFGH-JKM → cole no receber
 ```
+
+## `nat`
+
+Mostra como o NAT desta rede trata um socket UDP: pergunta a três
+servidores STUN públicos, pelo mesmo socket, de onde ele aparece na
+internet, e compara.
+
+```text
+Socket local: porta 51769 (IP na rede local 192.168.1.27)
+  stun.l.google.com:19302      → 203.0.113.7:54442
+  stun.cloudflare.com:3478     → 203.0.113.7:54442
+  stun1.l.google.com:19302     → 203.0.113.7:54442
+
+Mesma porta para todos os destinos: bom para o furo de NAT.
+```
+
+| Resultado | Significa |
+|---|---|
+| Mesma porta para todos | O furo de NAT costuma passar (é o caso da rede de casa de teste) |
+| NAT simétrico (portas diferentes) | Só conecta se o outro lado não for simétrico; portas sequenciais dão para prever |
+| IPs diferentes | NAT com vários IPs: o furo dificilmente passa |
+| Só 1 respondeu / nenhum | Não deu para comparar / a rede bloqueia UDP |
 
 ## `decode`
 

@@ -14,6 +14,7 @@
 //! fluxo-bench decode    [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
 //! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--sinal SERVIDOR | --internet]
 //! fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR | --conexao C) [--mbps M] [--fps F] [--segundos S] [--fec K]
+//! fluxo-bench nat
 //! ```
 //!
 //! Detalhes e como interpretar os números: `docs/modulos/fluxo-bench.md`.
@@ -22,6 +23,7 @@ mod bmp;
 #[cfg(windows)]
 mod encode;
 mod enviar;
+mod nat;
 mod receber;
 #[cfg(windows)]
 mod verificar;
@@ -132,6 +134,7 @@ Comandos:
   decode     [opções]         captura + encode + decode: mede o decoder do cliente
   receber    [opções]         recebe o vídeo do fluxo-host, mede e grava um .h264
   enviar     [opções]         manda frames sintéticos ao receber (carga fixa, sem captura)
+  nat                         mostra como o NAT desta rede trata UDP (furo de NAT passa?)
 
 Opções:
   --monitor N           índice do monitor (padrão 0; veja 'listar')
@@ -197,6 +200,7 @@ fn main() -> ExitCode {
         "decode" => encode::cmd_decode(&opts),
         "receber" => receber::cmd_receber(&opts),
         "enviar" => enviar::cmd_enviar(&opts),
+        "nat" => nat::cmd_nat(&opts),
         "ajuda" | "--help" | "-h" => {
             println!("{AJUDA}");
             Ok(())

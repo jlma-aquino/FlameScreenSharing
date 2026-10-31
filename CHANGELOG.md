@@ -13,6 +13,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   cliente cola no terminal. Os dois furam os NATs como na sinalização. Aviso
   quando o STUN detecta NAT simétrico. Também no `fluxo-bench receber
   --internet` / `enviar --conexao`. Sem mudança no protocolo (v9).
+- **Diagnóstico de conexão:** `fluxo-bench nat` mostra a porta que três
+  servidores STUN veem pelo mesmo socket (NAT simétrico ou não); no modo de
+  código de conexão, host e cliente mostram linhas `[conexão]` com o que
+  chega (furo, pedido de pareamento, lixo...) e, a cada 5 s, quanto saiu e
+  para onde (`PairingObserver`, `probe_nat`).
 - `fluxo-proto::stun` (Binding Request e leitura do endereço, testado com o
   exemplo da RFC 5769); `fluxo-net`: `discover_public_addr`, `PublicAddr`,
   `ConnectionCode`/`ReplyCode`, `VideoReceiver::with_socket`/`punch`/

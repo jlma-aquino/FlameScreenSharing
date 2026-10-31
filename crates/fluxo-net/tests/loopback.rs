@@ -4,11 +4,12 @@ use std::time::{Duration, Instant};
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use fluxo_net::{
-    clock_us, NetError, PairingCode, ReceiverConfig, SenderConfig, SignalServer, VideoReceiver, VideoSender,
+    clock_us, NetError, PairingCode, PairingEvent, PairingObserver, ReceiverConfig, SenderConfig,
+    SignalServer, VideoReceiver, VideoSender,
 };
 
 /// Conteúdo reconhecível: cada frame tem bytes derivados do seu número.
@@ -778,10 +779,12 @@ fn host_pelo_servidor_em(
 
 #[test]
 fn codigo_de_conexao_host_aprende_o_endereco_pelo_furo() {
+    let (no_cliente, no_host): (Eventos, Eventos) = Default::default();
     let rx = VideoReceiver::bind(
         "127.0.0.1:0",
         ReceiverConfig {
             pairing_code: Some(codigo("K7M4-QX9P")),
+            on_pairing: Some(anotar(&no_cliente)),
             ..ReceiverConfig::default()
         },
     )
@@ -791,12 +794,14 @@ fn codigo_de_conexao_host_aprende_o_endereco_pelo_furo() {
     let errado = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     let host = socket.local_addr().unwrap();
+    let observar_host = anotar(&no_host);
     let tx = std::thread::spawn(move || {
         VideoSender::connect_with_socket(
             socket,
             errado,
             SenderConfig {
                 pairing_code: Some(codigo("K7M4-QX9P")),
+                on_pairing: Some(observar_host),
                 pairing_timeout: Duration::from_secs(4),
                 ..SenderConfig::for_bitrate(20_000_000)
             },
@@ -819,4 +824,24 @@ fn codigo_de_conexao_host_aprende_o_endereco_pelo_furo() {
     let antes = rx.stats().punches_sent;
     std::thread::sleep(Duration::from_millis(600));
     assert_eq!(rx.stats().punches_sent, antes);
+
+    // O diagnóstico viu o furo chegar no host e o pedido chegar no cliente.
+    let viu = |eventos: &Mutex<Vec<PairingEvent>>, de: SocketAddr, tipo: &str| {
+        eventos
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, PairingEvent::Received { from, kind } if *from == de && *kind == tipo))
+    };
+    assert!(viu(&no_host, rx.local_addr(), "furo"));
+    assert!(viu(&no_cliente, host, "pedido de pareamento"));
+}
+
+/// Acontecimentos guardados por [`anotar`].
+type Eventos = Arc<Mutex<Vec<PairingEvent>>>;
+
+/// Observador que guarda os acontecimentos numa lista.
+fn anotar(lista: &Eventos) -> PairingObserver {
+    let lista = lista.clone();
+    PairingObserver::new(move |e| lista.lock().unwrap().push(e.clone()))
 }

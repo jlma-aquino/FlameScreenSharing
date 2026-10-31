@@ -14,6 +14,7 @@ use fluxo_proto::{
 };
 
 use crate::delay::QueueDelay;
+use crate::observar::{kind_of, PairingEvent, PairingObserver, RESUMO_A_CADA};
 use crate::rtt::{RttEstimator, RttStats};
 use crate::sync::ClockSync;
 use crate::{clock_diff_us, clock_us, is_transient, pong_clock, pong_for, NetError};
@@ -54,6 +55,9 @@ pub struct ReceiverConfig {
     /// host chegar, um pedido STUN a cada 15 s mantém vivo o mapeamento do
     /// NAT que está no código de conexão (alguns NATs o esquecem em 30 s).
     pub keepalive_to: Option<SocketAddr>,
+    /// Recebe o que chega enquanto nenhum host apareceu e, depois de
+    /// [`VideoReceiver::punch`], um resumo dos furos (diagnóstico).
+    pub on_pairing: Option<PairingObserver>,
 }
 
 /// Intervalo dos pedidos de [`ReceiverConfig::keepalive_to`].
@@ -80,6 +84,7 @@ impl Default for ReceiverConfig {
             pairing_code: None,
             signal_server: None,
             keepalive_to: None,
+            on_pairing: None,
         }
     }
 }
@@ -478,6 +483,9 @@ fn recv_loop(
 
     let mut proximo_furo = Instant::now();
     let mut proximo_stun = Instant::now() + MANTER_NAT;
+    // Diagnóstico: resumo dos furos a cada ~5 s, a partir do primeiro.
+    let mut primeiro_furo: Option<Instant> = None;
+    let mut proximo_resumo = Instant::now();
 
     while !shared.stop.load(Ordering::Relaxed) {
         if let Some(s) = sinal.as_mut() {
@@ -485,8 +493,23 @@ fn recv_loop(
         }
         // Sem host ainda: furos pedidos e o mapeamento do NAT vivo.
         if peer.is_none() && Instant::now() >= proximo_furo {
-            furar(&socket, &shared);
+            let destinos = furar(&socket, &shared);
             proximo_furo = Instant::now() + FURO_A_CADA;
+            if let (Some(o), Some(destinos)) = (&cfg.on_pairing, destinos) {
+                let desde = *primeiro_furo.get_or_insert_with(|| {
+                    proximo_resumo = Instant::now() + RESUMO_A_CADA;
+                    Instant::now()
+                });
+                if Instant::now() >= proximo_resumo {
+                    o.notify(&PairingEvent::Waiting {
+                        elapsed: desde.elapsed(),
+                        what: "furos",
+                        sent: shared.stats.lock().map(|s| s.punches_sent).unwrap_or(0),
+                        to: destinos,
+                    });
+                    proximo_resumo = Instant::now() + RESUMO_A_CADA;
+                }
+            }
         }
         if let Some(stun) = cfg.keepalive_to.filter(|_| peer.is_none()) {
             if Instant::now() >= proximo_stun {
@@ -536,6 +559,12 @@ fn recv_loop(
             }
         };
         let datagrama = &buf[..n];
+        if let Some(o) = cfg.on_pairing.as_ref().filter(|_| peer.is_none()) {
+            o.notify(&PairingEvent::Received {
+                from,
+                kind: kind_of(datagrama),
+            });
+        }
         if Some(from) == cfg.keepalive_to {
             continue; // resposta do STUN ao keepalive
         }
@@ -716,25 +745,26 @@ fn recv_loop(
     }
 }
 
-/// Manda os furos pedidos por [`VideoReceiver::punch`], se ainda no prazo.
-fn furar(socket: &UdpSocket, shared: &Shared) {
+/// Manda os furos pedidos por [`VideoReceiver::punch`], se ainda no prazo, e
+/// devolve para onde foram.
+fn furar(socket: &UdpSocket, shared: &Shared) -> Option<Vec<SocketAddr>> {
     let mut furos = shared.furos.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((destinos, ate)) = furos.as_ref() else {
-        return;
-    };
+    let (destinos, ate) = furos.as_ref()?;
     if Instant::now() > *ate {
         *furos = None;
-        return;
+        return None;
     }
     let Ok(furo) = PacketKind::Punch.control(0, clock_us()).encode_with_payload(&[]) else {
-        return;
+        return None;
     };
     let mut n = 0;
     for d in destinos {
         n += socket.send_to(&furo, d).is_ok() as u64;
     }
+    let destinos = destinos.clone();
     drop(furos);
     shared.with_stats(|s| s.punches_sent += n);
+    Some(destinos)
 }
 
 /// Responde a um `PairInit`: o mesmo de antes (reenvio do host) recebe a

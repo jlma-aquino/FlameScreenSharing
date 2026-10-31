@@ -52,6 +52,7 @@ mod clock;
 mod conexao;
 mod delay;
 mod history;
+mod observar;
 mod pacer;
 mod receiver;
 mod recovery;
@@ -67,12 +68,13 @@ use std::fmt;
 pub use bitrate::{BitrateChange, BitrateController, NetworkReport, DEFAULT_QUEUE_LIMIT_MS, START_KBPS};
 pub use clock::{clock_diff_us, clock_us};
 pub use conexao::{CodeError, ConnectionCode, ReplyCode};
+pub use observar::{PairingEvent, PairingObserver};
 pub use receiver::{Puncher, ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender};
 pub use signal::{SignalEvent, SignalServer, ROOM_TTL};
-pub use stun::{discover_public_addr, PublicAddr, STUN_SERVERS};
+pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
 pub use fluxo_proto::{FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
 // Código de pareamento (`SenderConfig`/`ReceiverConfig::pairing_code`).
