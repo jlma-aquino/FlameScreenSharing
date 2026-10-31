@@ -206,7 +206,7 @@ fn perda_simulada_descarta_pacotes_e_o_receptor_percebe() {
         },
     )
     .unwrap();
-    for n in 0..40 {
+    for n in 0..120 {
         tx.send_frame(frame(n, 12_000), n == 0, clock_us()).unwrap();
     }
     let mut completos = 0;
@@ -219,10 +219,12 @@ fn perda_simulada_descarta_pacotes_e_o_receptor_percebe() {
         completos += 1;
     }
     let (s, r) = (tx.stats(), rx.stats());
-    // 40 frames × 11 pacotes a 20% de perda: ~88 descartes; quase todo
-    // frame perde algum pacote (só ~9% saem inteiros).
-    assert!(s.simulated_drops > 30, "{s:?}");
-    assert!(completos < 20, "{completos} frames completos");
+    // 120 frames × 11 pacotes a 20% de perda: ~264 descartes; quase todo
+    // frame perde algum pacote (só ~9% saem inteiros, ~11). Com 120, sai
+    // quase sempre mais de um inteiro, e a perda entre eles aparece (com 40,
+    // às vezes nenhum saía e nenhuma perda era contada).
+    assert!(s.simulated_drops > 100, "{s:?}");
+    assert!(completos < 40, "{completos} frames completos");
     assert!(r.reassembly.frames_lost > 0);
 }
 
