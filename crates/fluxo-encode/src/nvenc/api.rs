@@ -86,10 +86,11 @@ type FnEnc = unsafe extern "system" fn(*mut c_void) -> i32;
 type FnGuidCount = unsafe extern "system" fn(*mut c_void, *mut u32) -> i32;
 type FnGuids = unsafe extern "system" fn(*mut c_void, *mut GUID, u32, *mut u32) -> i32;
 type FnPresetConfigEx = unsafe extern "system" fn(*mut c_void, GUID, GUID, u32, *mut c_void) -> i32;
+type FnEncodeCaps = unsafe extern "system" fn(*mut c_void, GUID, *mut c_void, *mut i32) -> i32;
 type FnLastError = unsafe extern "system" fn(*mut c_void) -> *const c_char;
 
 /// Funções da lista que usamos; todas conferidas na carga.
-const USED: [(usize, &str); 17] = [
+const USED: [(usize, &str); 18] = [
     (FL_OPEN_ENCODE_SESSION_EX, "nvEncOpenEncodeSessionEx"),
     (FL_GET_ENCODE_GUID_COUNT, "nvEncGetEncodeGUIDCount"),
     (FL_GET_ENCODE_GUIDS, "nvEncGetEncodeGUIDs"),
@@ -107,6 +108,7 @@ const USED: [(usize, &str); 17] = [
     (FL_DESTROY_ENCODER, "nvEncDestroyEncoder"),
     (FL_GET_LAST_ERROR_STRING, "nvEncGetLastErrorString"),
     (FL_RECONFIGURE_ENCODER, "nvEncReconfigureEncoder"),
+    (FL_GET_ENCODE_CAPS, "nvEncGetEncodeCaps"),
 ];
 
 /// A DLL do driver, carregada uma vez por processo e nunca descarregada.
@@ -249,6 +251,20 @@ impl Api {
         out: *mut c_void,
     ) -> i32 {
         self.func::<FnPresetConfigEx>(FL_GET_ENCODE_PRESET_CONFIG_EX)(enc, codec, preset, tuning, out)
+    }
+
+    /// Valor de uma capacidade (`NV_ENC_CAPS_*`) da GPU para o codec.
+    ///
+    /// # Safety
+    /// `enc` é uma sessão aberta.
+    pub unsafe fn encode_cap(&self, enc: *mut c_void, codec: GUID, cap: u32) -> Result<i32, EncodeError> {
+        let mut param = Blob::<CAPS_PARAM_SIZE>::new();
+        param.set_u32(CP_VERSION, CAPS_PARAM_VER);
+        param.set_u32(CP_CAPS_TO_QUERY, cap);
+        let mut valor = 0i32;
+        let st = self.func::<FnEncodeCaps>(FL_GET_ENCODE_CAPS)(enc, codec, param.as_mut_ptr(), &mut valor);
+        self.check(enc, "nvEncGetEncodeCaps", st)?;
+        Ok(valor)
     }
 
     /// Converte um status em erro, anexando a explicação do driver.

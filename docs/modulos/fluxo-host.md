@@ -9,7 +9,7 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 
 ```text
 fluxo-host --destino IP:PORTA [--monitor N] [--encoder auto|nvenc|mf]
-           [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S]
+           [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S] [--refresh N] [--fec K]
            [--segundos S] [--porta-local P]
 ```
 
@@ -71,6 +71,12 @@ Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
   parada, recodifica a última imagem enviada (guardada como cópia na GPU).
   O keyframe periódico (`--keyframe-a-cada`, padrão 10 s) fica só como rede
   de segurança para um pedido que se perca.
+- **`--refresh N`** (opcional, NVENC): responde a um pedido de limpeza
+  depois de perda com uma onda de intra-refresh de N frames em vez de
+  keyframe; com a tela parada, recodifica a última imagem a cada frame até
+  a onda acabar. Desligado por padrão: no NVENC os keyframes já são pequenos
+  e a onda recupera bem mais devagar (3% de perda sem FEC: 231 ms congelado
+  em média com ondas de 4, contra 31 ms com keyframe).
 - **Largada aquecida.** O primeiro ping sai antes do primeiro frame, e o
   envio espera até 50 ms pela resposta, para o sistema resolver o endereço
   do cliente (ARP) antes da primeira rajada.

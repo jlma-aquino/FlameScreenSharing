@@ -34,7 +34,8 @@ pub mod seq;
 pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
 pub use packet::{
-    stamp_send_time, PacketHeader, PacketKind, ProtoError, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION,
+    stamp_send_time, PacketHeader, PacketKind, ProtoError, FLAG_KEYFRAME, FLAG_REFRESH_END,
+    FLAG_REFRESH_START, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION,
 };
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};
 

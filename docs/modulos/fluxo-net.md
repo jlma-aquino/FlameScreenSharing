@@ -17,6 +17,7 @@ biblioteca padrão — roda e é testado em qualquer sistema.
 | `src/clock.rs` | `clock_us`, `clock_diff_us` — relógio de 32 bits dos pacotes |
 | `src/sync.rs` | `ClockSync` — diferença entre os relógios pelos Ping/Pong |
 | `src/sim.rs` | Atraso e jitter simulados (só testes): `DelayModel`, `DelayLine` |
+| `src/recovery.rs` | `Recovery` — quando mostrar a imagem e o que pedir ao host depois de perdas (cliente) |
 | `tests/loopback.rs` | Testes com sockets reais em 127.0.0.1 |
 
 ## Threads
@@ -134,13 +135,23 @@ Medido (link simulado de 8 Mbps, host querendo 20, 15 s):
 | Captura → tela p99 | 223 ms | 95 ms |
 | Regime estável | perda 45–65%, fila 60–125 ms | perda 0%, fila 5–10 ms |
 
-## Pedido de keyframe
+## Recuperação de perdas
 
-- Cliente: `VideoReceiver::request_keyframe()` manda um `KeyframeRequest` ao
-  host. Pode ser chamado a cada frame: só envia se o último pedido tiver mais
-  de 50 ms (ou 2 RTTs), tempo para o keyframe chegar antes de pedir de novo.
-- Host: `VideoSender::take_keyframe_request()` devolve `true` uma vez por
-  pedido (vários acumulados contam como um).
+- Cliente: `Recovery` (lógica pura, usada pelo `fluxo-client` e pelo
+  `fluxo-bench receber`) decide, frame a frame, se decodifica, se mostra e o
+  que pedir: `request_keyframe()` na largada e depois de erro do decoder;
+  `request_refresh()` depois de uma perda. Depois da perda continua
+  decodificando sem mostrar, até um keyframe ou o fim de uma onda de
+  intra-refresh que começou depois dela; esperando há mais de 1 s, pede
+  keyframe. Os pedidos podem ser feitos a cada frame: só saem se o último
+  tiver mais de 50 ms (ou 2 RTTs).
+- Host: `take_keyframe_request()` (só keyframe serve) e
+  `take_refresh_request()` (uma onda serve; sem ela, keyframe), uma vez por
+  pedido. `send_frame_with_flags` leva as marcas da onda
+  (`FLAG_REFRESH_START`/`FLAG_REFRESH_END`).
+- Medido na mesma máquina, 3% de perda de pacotes sem FEC: congelamento
+  médio de 31 ms com keyframe, 231 ms com ondas de 4 frames (a onda precisa
+  de 4 frames seguidos sem perda). Ver `PROTOCOLO.md`.
 
 ## Largada e perda simulada
 

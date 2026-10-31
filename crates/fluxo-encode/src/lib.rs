@@ -198,10 +198,16 @@ pub struct EncoderConfig {
     pub bitrate_kbps: u32,
     /// Backend a usar.
     pub backend: BackendChoice,
+    /// Intra-refresh: duração de cada onda, em frames (0 = desligado). Com
+    /// ele ligado, [`Encoder::start_intra_refresh`] recupera o decoder de uma
+    /// perda redesenhando a imagem em faixas ao longo desses frames, em vez
+    /// de um keyframe inteiro. Só no NVENC; nos outros backends é ignorado.
+    pub intra_refresh_frames: u32,
 }
 
 impl EncoderConfig {
-    /// Configuração padrão para este tamanho: 60 fps, 20 Mbps, backend automático.
+    /// Configuração padrão para este tamanho: 60 fps, 20 Mbps, backend
+    /// automático, sem intra-refresh.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -209,6 +215,7 @@ impl EncoderConfig {
             fps: 60,
             bitrate_kbps: 20_000,
             backend: BackendChoice::Auto,
+            intra_refresh_frames: 0,
         }
     }
 
@@ -235,6 +242,9 @@ impl EncoderConfig {
         if self.bitrate_kbps < 100 || self.bitrate_kbps > 500_000 {
             return erro("bitrate fora de 100..=500000 kbps");
         }
+        if self.intra_refresh_frames == 1 || self.intra_refresh_frames > 600 {
+            return erro("intra-refresh fora de 2..=600 frames (0 desliga)");
+        }
         Ok(())
     }
 
@@ -254,6 +264,13 @@ pub struct EncodedFrame {
     pub keyframe: bool,
     /// Número sequencial do frame de entrada que gerou este (0, 1, 2...).
     pub index: u64,
+    /// Primeiro frame de uma onda de intra-refresh pedida por
+    /// [`Encoder::start_intra_refresh`].
+    pub refresh_start: bool,
+    /// Último frame da onda: depois dele, a imagem não depende mais de nada
+    /// anterior ao início da onda (um decoder que perdeu algo antes do início
+    /// está limpo de novo).
+    pub refresh_end: bool,
 }
 
 /// Erros do encoder.

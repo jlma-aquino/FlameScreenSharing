@@ -431,3 +431,41 @@ fn jitter_simulado_aparece_como_atraso_de_fila() {
     assert!(max - min > 20_000, "o trânsito deveria variar: {min}..{max} µs");
     assert!(max - min < 60_000, "variação acima do jitter: {min}..{max} µs");
 }
+
+#[test]
+fn pedido_de_refresh_e_marcas_da_onda() {
+    let (rx, tx) = par(0, Duration::from_millis(500));
+    tx.send_frame(frame(0, 1_000), true, clock_us()).unwrap();
+    rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame 0");
+
+    // Perda: o cliente pede limpeza, e o host vê um pedido de refresh, não de keyframe.
+    assert!(rx.request_refresh());
+    let limite = Instant::now() + Duration::from_secs(2);
+    while !tx.take_refresh_request() {
+        assert!(Instant::now() < limite, "pedido de refresh não chegou");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!tx.take_keyframe_request());
+    assert_eq!(
+        (tx.stats().refresh_requests, tx.stats().keyframe_requests),
+        (1, 0)
+    );
+
+    // A onda chega marcada no início e no fim.
+    let marcas = [fluxo_proto::FLAG_REFRESH_START, 0, fluxo_proto::FLAG_REFRESH_END];
+    for (i, flags) in marcas.into_iter().enumerate() {
+        tx.send_frame_with_flags(frame(i + 1, 3_000), flags, clock_us())
+            .unwrap();
+    }
+    let recebidos: Vec<_> = (0..3)
+        .map(|_| {
+            rx.recv_frame(Duration::from_secs(1))
+                .unwrap()
+                .expect("frame da onda")
+                .frame
+        })
+        .collect();
+    assert!(recebidos[0].refresh_start && !recebidos[0].refresh_end);
+    assert!(!recebidos[1].refresh_start && !recebidos[1].refresh_end);
+    assert!(recebidos[2].refresh_end && !recebidos[2].keyframe);
+}

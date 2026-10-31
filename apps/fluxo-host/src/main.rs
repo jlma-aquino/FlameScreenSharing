@@ -43,6 +43,8 @@ Opções:
   --pacing-mbps P       taxa de envio dos pacotes (padrão 2,5 × mbps; 0 = sem pacing)
   --keyframe-a-cada S   keyframe periódico de segurança, em segundos (padrão 10;
                         0 = só o primeiro). O cliente pede um quando perde algo.
+  --refresh N           recupera perdas com uma onda de intra-refresh de N frames
+                        em vez de keyframe (NVENC; 0 = sempre keyframe)
   --segundos S          encerra depois de S segundos (padrão 0 = até Ctrl+C)
   --porta-local P       porta UDP de saída (padrão: automática)
   --simular-perda P     TESTE: descarta P% dos pacotes de vídeo antes de enviar
@@ -69,6 +71,7 @@ struct Opts {
     fps: u32,
     pacing_mbps: Option<f64>,
     keyframe_a_cada: f64,
+    refresh: u32,
     segundos: f64,
     porta_local: u16,
     simular_perda: f64,
@@ -90,6 +93,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         fps: 60,
         pacing_mbps: None,
         keyframe_a_cada: 10.0,
+        refresh: 0,
         segundos: 0.0,
         porta_local: 0,
         simular_perda: 0.0,
@@ -111,6 +115,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
             "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
             "--pacing-mbps" => o.pacing_mbps = Some(valor()?.parse().map_err(|_| "pacing-mbps inválido")?),
+            "--refresh" => o.refresh = valor()?.parse().map_err(|_| "refresh inválido")?,
+            "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--keyframe-a-cada" => {
                 o.keyframe_a_cada = valor()?.parse().map_err(|_| "keyframe-a-cada inválido")?
             }
@@ -175,8 +181,14 @@ struct Contadores {
     adiadas: u64,
     /// Saiu um keyframe desde a última vez que o laço olhou.
     keyframe: bool,
-    /// Pedidos de keyframe do cliente atendidos.
+    /// Pedidos de recuperação do cliente atendidos (keyframe ou onda).
     pedidos: u64,
+    /// Ondas de intra-refresh começadas.
+    ondas: u64,
+    /// Saiu o primeiro / o último frame de uma onda desde a última vez que o
+    /// laço olhou.
+    onda_inicio: bool,
+    onda_fim: bool,
     /// Mudanças de bitrate feitas pelo controle adaptativo.
     mudancas: u64,
 }
@@ -203,9 +215,20 @@ fn codificar(
     c.encode += t.elapsed();
     for p in pacotes {
         c.keyframe |= p.keyframe;
+        c.onda_inicio |= p.refresh_start;
+        c.onda_fim |= p.refresh_end;
+        c.ondas += p.refresh_start as u64;
         c.frames += 1;
         c.bytes += p.data.len() as u64;
-        tx.send_frame(p.data, p.keyframe, capturado_us)?;
+        let flags = [
+            (p.keyframe, fluxo_net::FLAG_KEYFRAME),
+            (p.refresh_start, fluxo_net::FLAG_REFRESH_START),
+            (p.refresh_end, fluxo_net::FLAG_REFRESH_END),
+        ]
+        .iter()
+        .filter(|(sim, _)| *sim)
+        .fold(0, |f, (_, bit)| f | bit);
+        tx.send_frame_with_flags(p.data, flags, capturado_us)?;
     }
     Ok(None)
 }
@@ -274,6 +297,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         fps: o.fps,
         bitrate_kbps: (bitrate_bps / 1000) as u32,
         backend: o.encoder,
+        intra_refresh_frames: o.refresh,
         ..EncoderConfig::new(w, h)
     };
     let m = cap.monitor().clone();
@@ -368,6 +392,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let mut total = Contadores::default();
     // Menor bitrate alvo a que o adaptativo chegou (para o resumo).
     let mut alvo_min = enc.bitrate_kbps();
+    // Onda de intra-refresh em andamento: com a tela parada, a última imagem
+    // é recodificada a cada intervalo de frame até a onda terminar.
+    let mut onda_ativa = false;
+    let mut ultimo_encode = Instant::now();
+    let intervalo_frame = Duration::from_secs_f64(1.0 / o.fps.max(1) as f64);
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
         // Com um pendente, espera no máximo até o horário dele; sem pendente,
@@ -420,11 +449,19 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Keyframe: pedido pelo cliente (perdeu algo) ou periódico (rede de
-        // segurança, caso um pedido se perca).
-        let pedido = tx.take_keyframe_request();
+        // Recuperação pedida pelo cliente: keyframe se ele precisa de um (sem
+        // imagem, decoder falhou) ou se o encoder não tem intra-refresh;
+        // senão, uma onda de intra-refresh. O keyframe periódico é a rede de
+        // segurança, caso um pedido se perca.
+        let pedido_keyframe = tx.take_keyframe_request();
+        let pedido_refresh = tx.take_refresh_request();
+        let onda = pedido_refresh && !pedido_keyframe && enc.start_intra_refresh();
+        let pedido = pedido_keyframe || pedido_refresh;
         seg.pedidos += pedido as u64;
-        let mut pedir_keyframe = pedido || keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p);
+        let mut pedir_keyframe = pedido_keyframe
+            || (pedido_refresh && !onda)
+            || keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p);
+        let frames_antes = seg.frames;
         let mut recriar = None;
         if let Some(frame) = frame.filter(|f| f.info().desktop_updated) {
             // Momento da captura, no relógio que o cliente usa para medir o trânsito.
@@ -454,15 +491,27 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 guardar_copia(&device, &context, t, &mut ultima)?;
             }
         }
-        // Pedido do cliente sem frame novo para levar o keyframe (tela
-        // parada): recodifica a última imagem enviada, na hora.
-        if pedido && pedir_keyframe && recriar.is_none() {
+        // Tela parada, sem frame novo para levar a recuperação: recodifica a
+        // última imagem enviada — na hora, se o cliente acabou de pedir; a
+        // cada intervalo de frame, enquanto uma onda não termina.
+        let continuar_onda = onda_ativa && ultimo_encode.elapsed() >= intervalo_frame;
+        if seg.frames == frames_antes && recriar.is_none() && (pedido || continuar_onda) {
             if let Some(t) = &ultima {
-                recriar = codificar(&mut *enc, &tx, t, clock_us(), true, &mut seg)?;
+                recriar = codificar(&mut *enc, &tx, t, clock_us(), pedir_keyframe, &mut seg)?;
             }
+        }
+        if seg.frames != frames_antes {
+            ultimo_encode = Instant::now();
         }
         if std::mem::take(&mut seg.keyframe) {
             ultimo_keyframe = Instant::now();
+            onda_ativa = false;
+        }
+        if std::mem::take(&mut seg.onda_inicio) {
+            onda_ativa = true;
+        }
+        if std::mem::take(&mut seg.onda_fim) {
+            onda_ativa = false;
         }
         if let Some((w, h)) = recriar {
             println!("(resolução mudou para {w}x{h}; recriando o encoder, que começa com keyframe)");
@@ -474,12 +523,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             pendente = None;
             ultima = None;
             limite = FpsLimiter::new(o.fps);
+            onda_ativa = false;
         }
 
         if inicio.elapsed() >= proximo_relatorio {
             let s = tx.stats();
             println!(
-                "  {:>4} s: {} fps, {:.1} Mbps (alvo {:.1}), perda {}, fila {:.0} ms, encode {:.1} ms, envio {:.1} ms (fila de envio {}), RTT {}, {} capturas adiadas, {} keyframes pedidos",
+                "  {:>4} s: {} fps, {:.1} Mbps (alvo {:.1}), perda {}, fila {:.0} ms, encode {:.1} ms, envio {:.1} ms (fila de envio {}), RTT {}, {} capturas adiadas, {} pedidos de recuperação",
                 proximo_relatorio.as_secs(),
                 seg.frames,
                 seg.bytes as f64 * 8.0 / 1e6,
@@ -502,6 +552,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             total.bytes += seg.bytes;
             total.adiadas += seg.adiadas;
             total.pedidos += seg.pedidos;
+            total.ondas += seg.ondas;
             seg = Contadores::default();
             proximo_relatorio += Duration::from_secs(1);
         }
@@ -511,6 +562,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     total.bytes += seg.bytes;
     total.adiadas += seg.adiadas;
     total.pedidos += seg.pedidos;
+    total.ondas += seg.ondas;
     total.mudancas += seg.mudancas;
     alvo_min = alvo_min.min(enc.bitrate_kbps());
     let alvo_final = enc.bitrate_kbps();
@@ -532,9 +584,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         s.packets_sent, s.send_errors, s.max_frame_send_ms
     );
     println!(
-        "  keyframes pedidos pelo cliente: {} recebidos, {} atendidos{}",
+        "  pedidos de recuperação do cliente: {} de keyframe e {} de limpeza após perda recebidos, {} atendidos ({} ondas de intra-refresh){}",
         s.keyframe_requests,
+        s.refresh_requests,
         total.pedidos,
+        total.ondas,
         match s.simulated_drops {
             0 => String::new(),
             n => format!("; {n} pacotes descartados pela perda simulada"),

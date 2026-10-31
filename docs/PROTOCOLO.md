@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 6
+# Protocolo de rede — versão 7
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -12,12 +12,12 @@ CHANGELOG.
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `6`. Versões diferentes são descartadas (histórico na seção 6). |
+| 2 | 1 | `version` | `7`. Versões diferentes são descartadas (histórico na seção 6). |
 | 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback. |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
-| 12 | 1 | `flags` | Bit 0: keyframe. Bits 1–7 reservados (enviar 0, ignorar ao ler). |
+| 12 | 1 | `flags` | Bit 0: keyframe. Bit 1: início de uma onda de intra-refresh. Bit 2: fim da onda. Bits 3–7 reservados (enviar 0, ignorar ao ler). No KeyframeRequest, o bit 0 diz que só keyframe serve. |
 | 13 | 1 | `fec_group` | Só em Parity: fragmentos por grupo de FEC (≥ 1). Nos outros tipos, 0. |
 | 14 | 2 | `payload_len` | Bytes de payload. Deve ser igual a `tamanho do datagrama − 24`. |
 | 16 | 4 | `timestamp_us` | Momento da captura em µs: relógio de parede (UTC) truncado para 32 bits, volta a cada ~71 min (`fluxo_net::clock_us`). |
@@ -44,17 +44,40 @@ cliente pingam a cada 500 ms). `frag_index`/`frag_count` = 0.
   em rede local). Toda a aritmética é de 32 bits com volta (`clock_diff_us`).
 
 ### KeyframeRequest (`kind = 4`)
-Cliente → host: "perdi a referência, mande um keyframe". Enviado quando um
-frame chega com `preceded_by_loss`, quando o decode falha, e enquanto o
-cliente não tem imagem (largada). `frame_id` = número do pedido,
-`timestamp_us` = relógio do cliente, payload vazio.
+Cliente → host: "perdi a referência, limpe a imagem". `frame_id` = número do
+pedido, `timestamp_us` = relógio do cliente, payload vazio. O bit 0 de
+`flags` diz o que serve:
 
-- **Cliente:** no máximo um pedido a cada 50 ms (ou 2 RTTs, o que for maior),
-  para dar tempo ao keyframe de chegar antes de pedir de novo.
-- **Host:** vários pedidos acumulados contam como um. Força keyframe no
-  próximo encode; com a tela parada, recodifica a última imagem enviada.
+- **Bit 0 ligado — só keyframe serve:** largada (o cliente não tem imagem
+  nem SPS/PPS) e depois de um erro do decoder.
+- **Bit 0 desligado — limpeza depois de perda** (frame com
+  `preceded_by_loss`): uma onda de intra-refresh serve, se o host tiver; senão
+  o host manda keyframe.
+
+Regras:
+
+- **Cliente:** no máximo um pedido a cada 50 ms (ou 2 RTTs, o que for maior).
+  Depois de uma perda, decodifica tudo mas congela a última imagem boa até
+  um keyframe, ou até o fim (bit 2) de uma onda cujo início (bit 1) veio
+  depois da perda. Esperando há mais de 1 s, pede keyframe.
+- **Host:** vários pedidos acumulados contam como um. Com a tela parada,
+  recodifica a última imagem enviada (e continua a cada frame até a onda
+  acabar).
 - O keyframe periódico do host (padrão 10 s) fica só como rede de segurança
   para um pedido que se perca.
+
+### Ondas de intra-refresh (opcional, `fluxo-host --refresh N`)
+Em vez de um keyframe, o host redesenha a imagem em faixas ao longo de N
+frames (NVENC, `forceIntraRefreshWithFrameCnt`, com 1 quadro de referência).
+O primeiro frame da onda leva o bit 1 de `flags`; o último, o bit 2. Um
+decoder que perdeu algo antes do início da onda fica, no fim dela, idêntico
+pixel a pixel a um que não perdeu nada (medido em 48 de 48 recuperações).
+
+Medido: a onda recupera **mais devagar** que um keyframe (N frames, e
+precisa de N frames seguidos sem perda), e os keyframes do NVENC já são
+pequenos (VBV de 1 frame). Com 3% de perda de pacotes sem FEC, a imagem ficou
+congelada em média 231 ms com ondas de 4, contra 31 ms com keyframe. Por
+isso o padrão é keyframe.
 
 ### Feedback (`kind = 6`) — relatório para o bitrate adaptativo
 Cliente → host a cada 250 ms. Payload de 16 bytes (big-endian):
@@ -155,3 +178,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 4 | + Feedback (`kind = 6`), relatório para o bitrate adaptativo. Versões anteriores recusadas. |
 | 5 | Pong leva 4 bytes com o relógio de quem responde (sincronização). Versões anteriores recusadas. |
 | 6 | Cabeçalho de 24 bytes: + `send_us` (hora de saída de cada pacote), base do atraso de fila. Versões anteriores recusadas. |
+| 7 | Flags de onda de intra-refresh no vídeo (bits 1 e 2); KeyframeRequest com bit 0 = "só keyframe serve". Versões anteriores recusadas. |

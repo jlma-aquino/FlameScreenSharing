@@ -26,6 +26,7 @@ pub const MAP_INPUT_RESOURCE_VER: u32 = 0x7104000C;
 pub const PIC_PARAMS_VER: u32 = 0xF106000C;
 pub const LOCK_BITSTREAM_VER: u32 = 0xF101000C;
 pub const RECONFIGURE_PARAMS_VER: u32 = 0xF101000C;
+pub const CAPS_PARAM_VER: u32 = 0x7101000C;
 
 // --- Constantes ---
 pub const INFINITE_GOPLENGTH: u32 = 0xFFFFFFFF;
@@ -40,6 +41,8 @@ pub const PIC_FLAG_OUTPUT_SPSPPS: u32 = 0x00000004;
 pub const PIC_STRUCT_FRAME: u32 = 0x00000001;
 pub const PIC_TYPE_I: u32 = 0x00000002;
 pub const PIC_TYPE_IDR: u32 = 0x00000003;
+pub const CAPS_SUPPORT_INTRA_REFRESH: u32 = 0x00000019;
+pub const NUM_REF_FRAMES_1: u32 = 0x00000001;
 pub const VUI_VIDEO_FORMAT_UNSPECIFIED: u32 = 0x00000005;
 pub const VUI_COLOR_PRIMARIES_BT709: u32 = 0x00000001;
 pub const VUI_TRANSFER_CHARACTERISTIC_BT709: u32 = 0x00000001;
@@ -78,6 +81,12 @@ pub const FL_UNREGISTER_RESOURCE: usize = 256;
 pub const FL_GET_LAST_ERROR_STRING: usize = 304;
 pub const FL_GET_ENCODE_PRESET_CONFIG_EX: usize = 320;
 pub const FL_RECONFIGURE_ENCODER: usize = 264;
+pub const FL_GET_ENCODE_CAPS: usize = 64;
+
+// --- NV_ENC_CAPS_PARAM ---
+pub const CAPS_PARAM_SIZE: usize = 256;
+pub const CP_VERSION: usize = 0;
+pub const CP_CAPS_TO_QUERY: usize = 4;
 
 // --- NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS ---
 pub const OPEN_SESSION_SIZE: usize = 1552;
@@ -102,6 +111,12 @@ pub const CFG_RC_VBV_BUFFER_SIZE: usize = 68;
 pub const CFG_RC_VBV_INITIAL_DELAY: usize = 72;
 pub const CFG_H264_IDR_PERIOD: usize = 176;
 pub const CFG_H264_REPEAT_SPSPPS: Bit = Bit { byte: 169, bit: 4 };
+pub const CFG_H264_ENABLE_INTRA_REFRESH: Bit = Bit { byte: 169, bit: 2 };
+pub const CFG_H264_RECOVERY_POINT_SEI: Bit = Bit { byte: 169, bit: 1 };
+pub const CFG_H264_INTRA_REFRESH_PERIOD: usize = 220;
+pub const CFG_H264_INTRA_REFRESH_CNT: usize = 224;
+pub const CFG_H264_MAX_NUM_REF_FRAMES: usize = 228;
+pub const CFG_H264_NUM_REF_L0: usize = 372;
 pub const CFG_H264_VUI_SIGNAL_TYPE_PRESENT: usize = 248;
 pub const CFG_H264_VUI_VIDEO_FORMAT: usize = 252;
 pub const CFG_H264_VUI_FULL_RANGE: usize = 256;
@@ -173,6 +188,7 @@ pub const PP_INPUT_BUFFER: usize = 40;
 pub const PP_OUTPUT_BITSTREAM: usize = 48;
 pub const PP_BUFFER_FMT: usize = 64;
 pub const PP_PICTURE_STRUCT: usize = 68;
+pub const PP_H264_FORCE_INTRA_REFRESH: usize = 96;
 
 // --- NV_ENC_LOCK_BITSTREAM ---
 pub const LOCK_BITSTREAM_SIZE: usize = 1552;

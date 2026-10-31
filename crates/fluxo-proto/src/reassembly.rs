@@ -59,6 +59,10 @@ pub struct CompletedFrame {
     pub data: Vec<u8>,
     /// `true` se algum frame entre o último entregue e este se perdeu.
     pub preceded_by_loss: bool,
+    /// Primeiro frame de uma onda de intra-refresh ([`crate::FLAG_REFRESH_START`]).
+    pub refresh_start: bool,
+    /// Último frame de uma onda de intra-refresh ([`crate::FLAG_REFRESH_END`]).
+    pub refresh_end: bool,
 }
 
 /// Contadores para diagnóstico (mostrar na tela de estatísticas, logs etc.).
@@ -92,7 +96,7 @@ struct PartialFrame {
     fec_group: u8,
     received: u16,
     total_bytes: usize,
-    keyframe: bool,
+    flags: u8,
     timestamp_us: u32,
 }
 
@@ -191,7 +195,7 @@ impl Reassembler {
             fec_group: 0,
             received: 0,
             total_bytes: 0,
-            keyframe: header.is_keyframe(),
+            flags: header.flags,
             timestamp_us: header.timestamp_us,
         });
 
@@ -297,10 +301,12 @@ impl Reassembler {
 
         CompletedFrame {
             frame_id: id,
-            keyframe: partial.keyframe,
+            keyframe: partial.flags & crate::FLAG_KEYFRAME != 0,
             timestamp_us: partial.timestamp_us,
             data,
             preceded_by_loss: gap > 0,
+            refresh_start: partial.flags & crate::FLAG_REFRESH_START != 0,
+            refresh_end: partial.flags & crate::FLAG_REFRESH_END != 0,
         }
     }
 
@@ -347,7 +353,24 @@ mod tests {
         assert!(out[0].keyframe);
         assert_eq!(out[0].timestamp_us, 42);
         assert!(!out[0].preceded_by_loss);
+        assert!(!out[0].refresh_start && !out[0].refresh_end);
         assert_eq!(r.pending_frames(), 0);
+    }
+
+    #[test]
+    fn flags_de_intra_refresh_chegam_ao_frame() {
+        let mut f = Fragmenter::new(10);
+        let mut r = Reassembler::default();
+        let (_, a) = f
+            .fragment_with_flags(&[1u8; 25], crate::FLAG_REFRESH_START, 0)
+            .unwrap();
+        let (_, b) = f
+            .fragment_with_flags(&[2u8; 25], crate::FLAG_REFRESH_END, 0)
+            .unwrap();
+        let out = feed(&mut r, &decode_all(&[a, b].concat()));
+        assert_eq!(out.len(), 2);
+        assert!(out[0].refresh_start && !out[0].refresh_end && !out[0].keyframe);
+        assert!(!out[1].refresh_start && out[1].refresh_end);
     }
 
     #[test]

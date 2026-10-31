@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::{Duration, Instant};
 
-use fluxo_net::{ReceiverConfig, VideoReceiver};
+use fluxo_net::{FrameAction, ReceiverConfig, Recovery, RecoveryRequest, VideoReceiver};
 
 #[cfg(windows)]
 use crate::verificar::Decoder;
@@ -70,9 +70,12 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let duracao = (o.segundos > 0.0).then(|| Duration::from_secs_f64(o.segundos));
 
     let mut inicio: Option<Instant> = None;
-    let mut esperando_keyframe = true;
-    let (mut frames, mut bytes, mut keyframes, mut pulados, mut decodificados) =
-        (0u64, 0u64, 0u64, 0u64, 0u64);
+    // Largada e perdas: o que gravar e o que pedir ao host (ver fluxo_net::Recovery).
+    let mut recuperacao = Recovery::new(Instant::now());
+    let mut congelados: Vec<f64> = Vec::new();
+    let mut ja_limpo = false;
+    let (mut frames, mut bytes, mut keyframes, mut pulados, mut decodificados, mut sujos) =
+        (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     // Latência captura → chegada, com os relógios sincronizados pelos
     // Ping/Pong. Os frames de antes da 1ª sincronização (~500 ms) ficam fora.
     let mut latencias: Vec<i32> = Vec::new();
@@ -86,10 +89,16 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                 break;
             }
         }
-        // Sem referência (largada ou depois de uma perda): pede um keyframe
-        // ao host. O fluxo-net segura pedidos repetidos.
-        if esperando_keyframe {
-            rx.request_keyframe();
+        // Sem imagem limpa (largada ou depois de uma perda): pede ao host.
+        // O fluxo-net segura pedidos repetidos.
+        match recuperacao.request(Instant::now()) {
+            RecoveryRequest::Keyframe => {
+                rx.request_keyframe();
+            }
+            RecoveryRequest::Refresh => {
+                rx.request_refresh();
+            }
+            RecoveryRequest::None => {}
         }
         let recebido = rx.recv_frame(Duration::from_millis(20))?;
 
@@ -99,19 +108,22 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                 println!("Recebendo de {de}");
                 inicio = Some(Instant::now());
             }
-            // Perdeu um frame: o que vem depois depende dele. Para de gravar
-            // até o keyframe pedido chegar (o arquivo fica sem imagem estragada).
-            if f.frame.preceded_by_loss && !f.frame.keyframe {
-                esperando_keyframe = true;
-                rx.request_keyframe();
-            }
-            // O decoder (e quem abrir o arquivo) só consegue começar num keyframe.
-            if esperando_keyframe {
-                if !f.frame.keyframe {
+            // O arquivo só pode começar num keyframe. Depois de uma perda,
+            // grava tudo: quem abrir o arquivo vê o estrago até a onda de
+            // intra-refresh (ou o keyframe) pedida limpar a imagem.
+            let sujo_desde = recuperacao.dirty_since();
+            match recuperacao.on_frame(&f.frame, Instant::now()) {
+                FrameAction::Skip => {
                     pulados += 1;
                     continue;
                 }
-                esperando_keyframe = false;
+                FrameAction::Decode { show } => sujos += !show as u64,
+            }
+            if let (Some(t), true) = (sujo_desde, recuperacao.is_clean()) {
+                if ja_limpo {
+                    congelados.push(t.elapsed().as_secs_f64() * 1000.0);
+                }
+                ja_limpo = true;
             }
             arquivo.write_all(&f.frame.data)?;
             if let Some(d) = &mut decoder {
@@ -183,9 +195,18 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         r.packets_received, r.duplicate_packets, r.late_packets, s.invalid_packets
     );
     println!(
-        "  frames perdidos na rede:  {} ({} fragmentos reconstruídos pelo FEC, {} keyframes pedidos)",
-        r.frames_lost, r.fec_recovered, s.keyframe_requests
+        "  frames perdidos na rede:  {} ({} fragmentos reconstruídos pelo FEC; pedidos: {} de limpeza, {} de keyframe)",
+        r.frames_lost, r.fec_recovered, s.refresh_requests, s.keyframe_requests
     );
+    if !congelados.is_empty() {
+        println!(
+            "  recuperações:             {} ({} frames com estrago até limpar), média {:.1} ms, máx {:.1} ms",
+            congelados.len(),
+            sujos,
+            congelados.iter().sum::<f64>() / congelados.len() as f64,
+            congelados.iter().copied().fold(0.0, f64::max)
+        );
+    }
     if s.frames_dropped > 0 {
         println!(
             "  descartados na fila:      {} (este programa não leu a tempo)",

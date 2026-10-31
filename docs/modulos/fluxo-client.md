@@ -43,15 +43,19 @@ recv_frame(2 ms) ──► decodifica TODOS os frames que chegaram
 1×/s: estatísticas no título da janela
 ```
 
+Quem decide o que fazer com cada frame é o `fluxo_net::Recovery`:
+
 - Sem imagem decodificável (largada), o cliente pede um keyframe ao host
   (`request_keyframe`) e pula frames até ele chegar.
 - **Perda:** um frame que chega com `preceded_by_loss` depende de um que não
-  chegou. O cliente **congela a última imagem boa**, pede um keyframe e
-  descarta os P-frames até ele chegar — nada de imagem corrompida na tela.
-  O resumo mostra quantas perdas houve e quanto tempo a imagem ficou
-  congelada (medido com 1% de perda: 38 ms em média).
+  chegou. O cliente **congela a última imagem boa** e pede limpeza
+  (`request_refresh`). Continua decodificando, sem mostrar, até chegar um
+  keyframe ou o fim de uma onda de intra-refresh (`fluxo-host --refresh N`)
+  que começou depois da perda — nada de imagem corrompida na tela. O resumo
+  mostra quantas perdas houve e quanto tempo a imagem ficou congelada
+  (medido com 1% de perda: 38 ms em média com keyframe).
 - Se o decode falhar (bitstream estragado), o decoder é recriado e pede
-  keyframe da mesma forma.
+  keyframe.
 
 ## Apresentação de baixa latência
 

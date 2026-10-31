@@ -91,12 +91,24 @@ impl Fragmenter {
         keyframe: bool,
         timestamp_us: u32,
     ) -> Result<(u32, Vec<Vec<u8>>), ProtoError> {
+        let flags = if keyframe { FLAG_KEYFRAME } else { 0 };
+        self.fragment_with_flags(frame, flags, timestamp_us)
+    }
+
+    /// Como [`fragment`](Self::fragment), com o campo `flags` completo
+    /// ([`FLAG_KEYFRAME`], [`crate::FLAG_REFRESH_START`],
+    /// [`crate::FLAG_REFRESH_END`]) em todos os pacotes do frame.
+    pub fn fragment_with_flags(
+        &mut self,
+        frame: &[u8],
+        flags: u8,
+        timestamp_us: u32,
+    ) -> Result<(u32, Vec<Vec<u8>>), ProtoError> {
         let frame_id = self.next_frame_id;
 
         let count = frame.len().div_ceil(self.max_payload).max(1);
         let frag_count = u16::try_from(count).map_err(|_| ProtoError::PayloadTooLarge(frame.len()))?;
 
-        let flags = if keyframe { FLAG_KEYFRAME } else { 0 };
         let group = self.fec_group;
         let mut packets = Vec::with_capacity(count + crate::fec::group_count(frag_count, group) as usize);
         let mut chunks = frame.chunks(self.max_payload);

@@ -54,7 +54,10 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       decode ou falta de imagem; o cliente congela a última imagem boa em vez de mostrar imagem
       corrompida; com a tela parada o host recodifica a última imagem. Medido com 1% de perda:
       congelamento médio de 38 ms por perda (antes: imagem borrada até o keyframe periódico)
-- [ ] Intra-refresh no encoder (recuperação sem keyframes gigantes)
+- [x] Intra-refresh no encoder (protocolo v7, `--refresh N`, NVENC): ondas marcadas no pacote, cliente
+      congela até o fim de uma onda que começou depois da perda; imagem idêntica a um decoder sem perda
+      (48/48). **Desligado por padrão:** os keyframes do NVENC já são pequenos (VBV de 1 frame) e a onda
+      recupera mais devagar (3% de perda sem FEC: 231 ms congelado em média com ondas de 4 vs 31 ms)
 - [x] FEC por paridade XOR (protocolo v3, `--fec K`, padrão 10 = +10% de pacotes). Com 1% de perda no
       pipeline real: frames perdidos de 236 para 8, tempo congelado de ~28% para ~0,6%
 - [ ] FEC Reed-Solomon (recupera 2+ perdas por grupo), se perdas em rajada aparecerem no Wi-Fi

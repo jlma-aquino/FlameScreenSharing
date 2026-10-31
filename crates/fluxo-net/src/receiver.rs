@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use fluxo_proto::{
     CompletedFrame, Feedback, PacketHeader, PacketKind, Reassembler, ReassemblerConfig, ReassemblerStats,
+    FLAG_KEYFRAME,
 };
 
 use crate::delay::QueueDelay;
@@ -87,6 +88,9 @@ pub struct ReceiverStats {
     pub pings_answered: u64,
     /// Pedidos de keyframe enviados ao host.
     pub keyframe_requests: u64,
+    /// Pedidos de limpeza depois de perda enviados ao host (onda de
+    /// intra-refresh ou keyframe, o host decide).
+    pub refresh_requests: u64,
     /// Relatórios de rede enviados ao host.
     pub feedbacks_sent: u64,
     /// Atraso de fila do último relatório, em ms: quanto os frames chegam
@@ -165,14 +169,28 @@ impl VideoReceiver {
         })
     }
 
-    /// Pede ao host um keyframe — chame quando um frame se perdeu
-    /// ([`CompletedFrame::preceded_by_loss`](fluxo_proto::CompletedFrame)) ou
-    /// enquanto estiver sem imagem decodificável.
+    /// Pede ao host um keyframe — chame enquanto estiver sem imagem
+    /// decodificável (largada) ou quando o decoder falhar.
     ///
     /// Seguro de chamar a cada frame: só envia se o último pedido tiver mais
     /// de ~50 ms (ou 2 RTTs). Devolve `true` se um pedido saiu agora; `false`
     /// se foi segurado ou se o host ainda é desconhecido.
     pub fn request_keyframe(&self) -> bool {
+        self.request(true)
+    }
+
+    /// Pede ao host para limpar a imagem depois de uma perda
+    /// ([`CompletedFrame::preceded_by_loss`](fluxo_proto::CompletedFrame)):
+    /// uma onda de intra-refresh se o encoder dele tiver, senão um keyframe.
+    /// A imagem está limpa de novo depois de um frame com `refresh_end` cuja
+    /// onda (`refresh_start`) começou depois da perda, ou de um keyframe.
+    ///
+    /// Mesmo controle de ritmo de [`request_keyframe`](Self::request_keyframe).
+    pub fn request_refresh(&self) -> bool {
+        self.request(false)
+    }
+
+    fn request(&self, precisa_keyframe: bool) -> bool {
         let s = self.stats();
         let Some(peer) = s.peer else {
             return false;
@@ -182,13 +200,19 @@ impl VideoReceiver {
         if ultimo.0.is_some_and(|t| t.elapsed() < espera) {
             return false;
         }
-        let pedido = PacketKind::KeyframeRequest.control(ultimo.1, clock_us());
+        let mut pedido = PacketKind::KeyframeRequest.control(ultimo.1, clock_us());
+        if precisa_keyframe {
+            pedido.flags = FLAG_KEYFRAME;
+        }
         let ok = pedido
             .encode_with_payload(&[])
             .is_ok_and(|p| self.socket.send_to(&p, peer).is_ok());
         if ok {
             *ultimo = (Some(Instant::now()), ultimo.1.wrapping_add(1));
-            self.shared.with_stats(|s| s.keyframe_requests += 1);
+            self.shared.with_stats(|s| match precisa_keyframe {
+                true => s.keyframe_requests += 1,
+                false => s.refresh_requests += 1,
+            });
         }
         ok
     }

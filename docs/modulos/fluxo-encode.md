@@ -40,7 +40,8 @@ que falharam e por quê — mostre ao usuário.
 | `probe_backend(device, &cfg, b)` | Abre exatamente o backend `b` (diagnóstico/comparação) |
 | `enc.encode(textura, forcar_keyframe)` | Devolve `Vec<EncodedFrame>` — normalmente 1 |
 | `enc.set_bitrate(kbps)` | Muda o bitrate a partir do próximo frame, sem keyframe (NVENC: `nvEncReconfigureEncoder`; MF: `ICodecAPI`) |
-| `EncodedFrame` | `data` (H.264 Annex B), `keyframe`, `index` |
+| `EncodedFrame` | `data` (H.264 Annex B), `keyframe`, `index`, `refresh_start`/`refresh_end` (onda de intra-refresh) |
+| `enc.start_intra_refresh()` | Pede uma onda de intra-refresh de `EncoderConfig::intra_refresh_frames` frames no próximo encode; `false` se o backend não tem (só NVENC tem; a GPU precisa de `NV_ENC_CAPS_SUPPORT_INTRA_REFRESH`) |
 
 ## Configuração de baixa latência
 
@@ -89,6 +90,16 @@ rode `crates\fluxo-encode\nvenc\gerar_layout.ps1` e faça commit do
 O PSNR RGB fica em ~32 dB: a perda vem da cor em meia resolução (4:2:0) em
 texto e ícones coloridos, não do encoder. Melhorar isso exige H.264 4:4:4
 (no roadmap).
+
+## Intra-refresh (opcional)
+
+Com `intra_refresh_frames` > 0, o NVENC liga `enableIntraRefresh` (período
+automático tão longo que não acontece) e cada `start_intra_refresh` vira
+`forceIntraRefreshWithFrameCnt` no frame seguinte. Também limita o encoder a
+**1 quadro de referência**: com mais, um P-frame depois da onda podia apontar
+para um quadro de antes dela, ainda com o estrago da perda (medido com
+`fluxo-bench encode --verificar --perder-a-cada`). Com 1 referência, 48 de
+48 recuperações ficaram idênticas a um decoder que não perdeu nada.
 
 ## Limitações conhecidas
 

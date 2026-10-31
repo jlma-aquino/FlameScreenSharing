@@ -41,6 +41,17 @@ pub trait Encoder {
 
     /// Bitrate alvo atual, em kbit/s.
     fn bitrate_kbps(&self) -> u32;
+
+    /// Começa uma onda de intra-refresh no próximo [`encode`](Self::encode):
+    /// ao longo de [`EncoderConfig::intra_refresh_frames`] frames, cada faixa
+    /// da imagem é redesenhada sem depender de frames anteriores. Os frames
+    /// da onda saem com `refresh_start` / `refresh_end` marcados.
+    ///
+    /// Devolve `false` se o backend não tem intra-refresh (ou está
+    /// desligado): aí, para recuperar o decoder, use `force_keyframe`.
+    fn start_intra_refresh(&mut self) -> bool {
+        false
+    }
 }
 
 /// Resultado de [`open_encoder`].

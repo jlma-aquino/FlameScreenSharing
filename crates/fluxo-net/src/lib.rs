@@ -52,6 +52,7 @@ mod delay;
 mod history;
 mod pacer;
 mod receiver;
+mod recovery;
 mod rtt;
 mod sender;
 mod sim;
@@ -62,8 +63,11 @@ use std::fmt;
 pub use bitrate::{BitrateChange, BitrateController, NetworkReport, DEFAULT_QUEUE_LIMIT_MS, START_KBPS};
 pub use clock::{clock_diff_us, clock_us};
 pub use receiver::{ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
+pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender};
+// Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
+pub use fluxo_proto::{FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
 
 /// Erros da camada de rede.
 #[derive(Debug, Clone, PartialEq, Eq)]

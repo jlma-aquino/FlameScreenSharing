@@ -36,10 +36,21 @@ pub const MAGIC: u16 = 0x464C;
 /// - 4: + Feedback (relatório do cliente para o bitrate adaptativo).
 /// - 5: Pong leva 4 bytes com o relógio de quem responde (sincronização).
 /// - 6: cabeçalho de 24 bytes: + `send_us`, a hora em que o pacote saiu.
-pub const PROTOCOL_VERSION: u8 = 6;
+/// - 7: flags de intra-refresh no vídeo; o KeyframeRequest diz se aceita uma
+///   onda de intra-refresh em vez de keyframe.
+pub const PROTOCOL_VERSION: u8 = 7;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
+/// Num [`PacketKind::KeyframeRequest`]: o cliente **precisa** de um keyframe
+/// (não tem imagem nenhuma, ou o decoder falhou); sem o bit, uma onda de
+/// intra-refresh também serve.
 pub const FLAG_KEYFRAME: u8 = 0b0000_0001;
+/// Bit 1 de `flags`: primeiro frame de uma onda de intra-refresh.
+pub const FLAG_REFRESH_START: u8 = 0b0000_0010;
+/// Bit 2 de `flags`: último frame de uma onda de intra-refresh. Um decoder
+/// que perdeu algo **antes** do início da onda está limpo de novo depois
+/// deste frame.
+pub const FLAG_REFRESH_END: u8 = 0b0000_0100;
 
 /// Tamanho do payload de um [`PacketKind::Pong`]: o relógio (u32, big-endian)
 /// de quem respondeu.

@@ -17,6 +17,9 @@
 //!
 //! - Preset P4 com *tuning* "ultra low latency" (equilíbrio qualidade/tempo).
 //! - Perfil High, sem B-frames (`frameIntervalP = 1`).
+//! - Intra-refresh opcional (`EncoderConfig::intra_refresh_frames`): ondas
+//!   pedidas por `start_intra_refresh` redesenham a imagem em faixas ao
+//!   longo de N frames, em vez de um keyframe inteiro.
 //! - GOP infinito: keyframes só quando pedidos (`force_keyframe`); cada
 //!   keyframe repete SPS/PPS.
 //! - CBR com VBV de **um frame** (`bitrate / fps`): nenhum frame fica muito
@@ -44,6 +47,10 @@ use crate::{Backend, EncodeError, EncodedFrame, EncoderConfig};
 const PRESET: GUID = PRESET_P4_GUID;
 const PRESET_NAME: &str = "P4";
 
+/// Período do intra-refresh automático: ~4,6 h a 60 fps, ou seja, nunca.
+/// Só usamos as ondas pedidas por `start_intra_refresh`.
+const INTRA_REFRESH_PERIOD_NUNCA: u32 = 1_000_000;
+
 pub(crate) struct NvencEncoder {
     api: Api,
     /// Sessão do encoder. Nulo só durante a construção.
@@ -58,6 +65,13 @@ pub(crate) struct NvencEncoder {
     fps: u32,
     bitrate_kbps: u32,
     next_index: u64,
+    /// Duração das ondas de intra-refresh, em frames (0 = desligado ou a GPU
+    /// não suporta).
+    refresh_frames: u32,
+    /// Onda pedida por `start_intra_refresh`, começa no próximo encode.
+    refresh_pending: bool,
+    /// Índice do primeiro frame da onda em andamento.
+    onda: Option<u64>,
     name: String,
     /// Configuração e parâmetros de inicialização, guardados para mudar o
     /// bitrate depois (`nvEncReconfigureEncoder` recebe os dois de novo).
@@ -88,6 +102,9 @@ impl NvencEncoder {
             fps: cfg.fps,
             bitrate_kbps: cfg.bitrate_kbps,
             next_index: 0,
+            refresh_frames: 0,
+            refresh_pending: false,
+            onda: None,
             name: format!(
                 "NVENC ({}), preset {PRESET_NAME}, ultra baixa latência",
                 adapter.name
@@ -129,6 +146,15 @@ impl NvencEncoder {
                 reason: "esta GPU não codifica H.264".into(),
             });
         }
+        // Intra-refresh só se a GPU suportar; senão fica desligado e quem
+        // pedir uma onda recebe `false` (e usa keyframe).
+        if cfg.intra_refresh_frames > 0 {
+            // SAFETY: sessão aberta.
+            let suporta = unsafe { api.encode_cap(enc, CODEC_H264_GUID, CAPS_SUPPORT_INTRA_REFRESH)? };
+            if suporta != 0 {
+                self.refresh_frames = cfg.intra_refresh_frames;
+            }
+        }
 
         // 3. Parte da configuração recomendada pelo driver para o preset.
         let mut preset = Blob::<PRESET_CONFIG_SIZE>::new();
@@ -158,6 +184,20 @@ impl NvencEncoder {
         set_rate(config, cfg.bitrate_bps(), cfg.fps);
         config.set_u32(CFG_H264_IDR_PERIOD, INFINITE_GOPLENGTH);
         config.set_bit(CFG_H264_REPEAT_SPSPPS, true);
+        if self.refresh_frames > 0 {
+            // As ondas são pedidas uma a uma (`forceIntraRefreshWithFrameCnt`);
+            // o período automático fica tão longo que na prática não acontece.
+            config.set_bit(CFG_H264_ENABLE_INTRA_REFRESH, true);
+            config.set_bit(CFG_H264_RECOVERY_POINT_SEI, true);
+            config.set_u32(CFG_H264_INTRA_REFRESH_PERIOD, INTRA_REFRESH_PERIOD_NUNCA);
+            config.set_u32(CFG_H264_INTRA_REFRESH_CNT, self.refresh_frames);
+            // Um quadro de referência só: com mais, um P-frame depois da onda
+            // podia apontar para um quadro de antes dela, ainda com o estrago
+            // da perda (medido: diferença de ~38 dB alguns frames depois de
+            // uma onda de 4, contra um decoder que não perdeu nada).
+            config.set_u32(CFG_H264_MAX_NUM_REF_FRAMES, 1);
+            config.set_u32(CFG_H264_NUM_REF_L0, NUM_REF_FRAMES_1);
+        }
         config.set_u32(CFG_H264_VUI_SIGNAL_TYPE_PRESENT, 1);
         config.set_u32(CFG_H264_VUI_VIDEO_FORMAT, VUI_VIDEO_FORMAT_UNSPECIFIED);
         config.set_u32(CFG_H264_VUI_FULL_RANGE, 0);
@@ -235,6 +275,14 @@ impl NvencEncoder {
             0
         };
         pic.set_u32(PP_ENCODE_PIC_FLAGS, flags);
+        // Onda de intra-refresh: um keyframe já limpa tudo e a cancela.
+        if force_keyframe {
+            self.onda = None;
+        } else if self.refresh_pending {
+            pic.set_u32(PP_H264_FORCE_INTRA_REFRESH, self.refresh_frames);
+            self.onda = Some(index);
+        }
+        self.refresh_pending = false;
         pic.set_u32(PP_FRAME_IDX, index as u32);
         pic.set_u64(PP_INPUT_TIMESTAMP, index);
         pic.set_ptr(PP_INPUT_BUFFER, input);
@@ -270,10 +318,19 @@ impl NvencEncoder {
         let st = unsafe { api.call(FL_UNLOCK_BITSTREAM, enc, self.bitstream) };
         api.check(enc, "nvEncUnlockBitstream", st)?;
 
+        let (refresh_start, refresh_end) = match self.onda {
+            Some(inicio) => (index == inicio, index + 1 >= inicio + self.refresh_frames as u64),
+            None => (false, false),
+        };
+        if refresh_end {
+            self.onda = None;
+        }
         Ok(vec![EncodedFrame {
             data,
             keyframe: pic_type == PIC_TYPE_IDR || pic_type == PIC_TYPE_I,
             index,
+            refresh_start,
+            refresh_end,
         }])
     }
 }
@@ -314,6 +371,11 @@ impl Encoder for NvencEncoder {
 
     fn bitrate_kbps(&self) -> u32 {
         self.bitrate_kbps
+    }
+
+    fn start_intra_refresh(&mut self) -> bool {
+        self.refresh_pending = self.refresh_frames > 0;
+        self.refresh_pending
     }
 
     fn encode(

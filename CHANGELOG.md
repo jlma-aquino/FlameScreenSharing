@@ -6,6 +6,18 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v7 — intra-refresh opcional** (`fluxo-host --refresh N`,
+  NVENC): depois de uma perda, o host pode redesenhar a imagem em faixas ao
+  longo de N frames em vez de mandar keyframe. Flags de início/fim da onda no
+  vídeo; o KeyframeRequest diz se só keyframe serve (largada, erro de
+  decode). `Encoder::start_intra_refresh`, `EncoderConfig::intra_refresh_frames`,
+  `VideoReceiver::request_refresh`, `VideoSender::take_refresh_request` e
+  `send_frame_with_flags`. Desligado por padrão (ver Medido).
+- **`fluxo_net::Recovery`:** a lógica de largada/perda/recuperação do
+  cliente, pura e testada, usada pelo `fluxo-client` e pelo `fluxo-bench
+  receber`.
+- **`fluxo-bench encode --perder-a-cada S`** (com `--verificar`): descarta
+  frames, pede a recuperação e compara com um decoder que recebeu tudo.
 - **Protocolo v6 — hora de saída dos pacotes:** cabeçalho de 24 bytes com
   `send_us`, gravado na hora do envio (`fluxo_proto::stamp_send_time`). O
   atraso de fila do bitrate adaptativo passa a medir só a rede.
@@ -102,6 +114,7 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- `fluxo-host --fec K` aparecia na ajuda, mas a linha de comando o recusava.
 - Bitrate adaptativo no Wi-Fi: a "fila" incluía encode, espera do limite de
   fps e pacing, e o bitrate caía sem congestionamento (com limite de 10 ms,
   7,5 Mbps num link de 30+). Agora mede desde a saída de cada pacote.
@@ -121,6 +134,12 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- Intra-refresh vs. keyframe (mesma máquina, NVENC): as ondas deixam a
+  imagem idêntica a um decoder sem perda (48 de 48), mas com 3% de perda de
+  pacotes sem FEC a imagem ficou congelada em média 231 ms (ondas de 4)
+  contra 31 ms (keyframe), e 10 contra 32 fps mostrados. Os keyframes do
+  NVENC têm ~38 KB contra ~31 KB de um P-frame (VBV de 1 frame).
+  Keyframe continua o padrão.
 - Latência de ida real entre dois PCs (host Windows → notebook Linux no
   Wi-Fi, vídeo, 30 s, relógios sincronizados pelos pings a +837,4 ms ±
   0,5 ms): p50 5,1 ms, p99 29,9 ms, máx 85 ms; 1803 frames, 0 perdidos.

@@ -125,7 +125,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, Instant};
 
     use fluxo_decode::{create_device, VideoDecoder};
-    use fluxo_net::{clock_diff_us, clock_us, ReceiverConfig, VideoReceiver};
+    use fluxo_net::{
+        clock_diff_us, clock_us, FrameAction, ReceiverConfig, Recovery, RecoveryRequest, VideoReceiver,
+    };
 
     use crate::present::Presenter;
     use crate::window::Window;
@@ -155,11 +157,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
 
     let duracao = (o.segundos > 0.0).then(|| Duration::from_secs_f64(o.segundos));
     let mut inicio: Option<Instant> = None;
-    let mut esperando_keyframe = true;
-    // Quando a perda atual foi notada, para medir quanto a imagem ficou congelada.
-    let mut perda_desde: Option<Instant> = None;
+    // Quando mostrar e o que pedir ao host: keyframe na largada e depois de
+    // erro do decoder; depois de uma perda, uma onda de intra-refresh (ou
+    // keyframe, se o host não tiver).
+    let mut recuperacao = Recovery::new(Instant::now());
+    // Quanto a imagem ficou congelada em cada recuperação (fora a largada).
     let mut recuperacoes = Serie::default();
-    let mut perdas = 0u64;
+    let mut ja_mostrou = false;
+    let mut escondidos = 0u64;
     let mut proximo_titulo = Instant::now() + Duration::from_secs(1);
 
     // Estatísticas: por segundo (título) e totais (resumo).
@@ -183,10 +188,16 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             tela.resize(janela.client_size())?;
         }
 
-        // Sem imagem decodificável (largada ou perda): pede um keyframe. Pode
-        // chamar a cada volta: o fluxo-net segura pedidos repetidos.
-        if esperando_keyframe {
-            rx.request_keyframe();
+        // Imagem não está boa: pede ao host. Pode chamar a cada volta: o
+        // fluxo-net segura pedidos repetidos.
+        match recuperacao.request(Instant::now()) {
+            RecoveryRequest::Keyframe => {
+                rx.request_keyframe();
+            }
+            RecoveryRequest::Refresh => {
+                rx.request_refresh();
+            }
+            RecoveryRequest::None => {}
         }
 
         // Espera curta para a janela continuar responsiva sem frames.
@@ -205,38 +216,35 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         while let Some(f) = chegou.take() {
             recebidos += 1;
             bytes_seg += f.frame.data.len() as u64;
-            // Um frame se perdeu antes deste: os P-frames seguintes apontam
-            // para uma imagem que o decoder não tem. Em vez de mostrar imagem
-            // corrompida, congela a última boa e pede um keyframe.
-            if f.frame.preceded_by_loss && !f.frame.keyframe && !esperando_keyframe {
-                perdas += 1;
-                esperando_keyframe = true;
-                perda_desde = Some(Instant::now());
-                rx.request_keyframe();
+            // Depois de uma perda os P-frames apontam para uma imagem que o
+            // decoder não tem: continua decodificando (para o decoder
+            // acompanhar a onda de limpeza), mas congela a última imagem boa
+            // na tela até a recuperação terminar.
+            let sujo_desde = recuperacao.dirty_since();
+            match recuperacao.on_frame(&f.frame, Instant::now()) {
+                FrameAction::Skip => pulados += 1,
+                FrameAction::Decode { show } => {
+                    let t = Instant::now();
+                    match decoder.decode(&f.frame.data) {
+                        Ok(Some(d)) if show => para_mostrar = Some((d, f.frame.timestamp_us)),
+                        Ok(_) => escondidos += !show as u64,
+                        Err(e) => {
+                            // Bitstream estragado: recomeça no próximo
+                            // keyframe com um decoder limpo.
+                            erros_decode += 1;
+                            eprintln!("(decode falhou: {e}; pedindo keyframe)");
+                            decoder = VideoDecoder::new(&device)?;
+                            recuperacao.on_decode_error(Instant::now());
+                        }
+                    }
+                    decodes.push(t.elapsed().as_secs_f64() * 1000.0);
+                }
             }
-            if esperando_keyframe && !f.frame.keyframe {
-                pulados += 1;
-            } else {
-                esperando_keyframe = false;
-                if let Some(t) = perda_desde.take() {
+            if let (Some(t), true) = (sujo_desde, recuperacao.is_clean()) {
+                if ja_mostrou {
                     recuperacoes.push(t.elapsed().as_secs_f64() * 1000.0);
                 }
-                let t = Instant::now();
-                match decoder.decode(&f.frame.data) {
-                    Ok(Some(d)) => para_mostrar = Some((d, f.frame.timestamp_us)),
-                    Ok(None) => {}
-                    Err(e) => {
-                        // Bitstream estragado: recomeça no próximo keyframe
-                        // com um decoder limpo.
-                        erros_decode += 1;
-                        eprintln!("(decode falhou: {e}; pedindo keyframe)");
-                        decoder = VideoDecoder::new(&device)?;
-                        esperando_keyframe = true;
-                        perda_desde = Some(Instant::now());
-                        rx.request_keyframe();
-                    }
-                }
-                decodes.push(t.elapsed().as_secs_f64() * 1000.0);
+                ja_mostrou = true;
             }
             chegou = rx.recv_frame(Duration::ZERO)?;
         }
@@ -282,7 +290,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let total = inicio.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
     println!("\nResultado ({:.1} s)", total);
     println!(
-        "  frames: {recebidos} recebidos, {mostrados} mostrados ({:.1} fps), {pulados} pulados esperando keyframe",
+        "  frames: {recebidos} recebidos, {mostrados} mostrados ({:.1} fps), {pulados} pulados esperando keyframe, \
+         {escondidos} decodificados sem mostrar (esperando limpeza)",
         mostrados as f64 / total.max(0.001)
     );
     println!(
@@ -290,8 +299,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         s.reassembly.frames_lost, s.reassembly.fec_recovered, s.frames_dropped
     );
     println!(
-        "  recuperação:      {perdas} perdas, {} keyframes pedidos; imagem congelada média {:.1} ms, máx {:.1} ms",
+        "  recuperação:      {} perdas, {} pedidos de limpeza e {} de keyframe; {} recuperações, imagem congelada média {:.1} ms, máx {:.1} ms",
+        recuperacao.losses(),
+        s.refresh_requests,
         s.keyframe_requests,
+        recuperacoes.0.len(),
         recuperacoes.media(),
         recuperacoes.percentil(1.0)
     );

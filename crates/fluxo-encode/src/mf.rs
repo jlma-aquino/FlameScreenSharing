@@ -290,6 +290,8 @@ impl MfEncoder {
             data,
             keyframe,
             index: self.next_output,
+            refresh_start: false,
+            refresh_end: false,
         });
         self.next_output += 1;
         Ok(())

@@ -39,9 +39,40 @@ fn config(o: &Opts, cap: &DesktopCapturer) -> EncoderConfig {
         fps: o.fps,
         bitrate_kbps: (o.mbps * 1000.0).round() as u32,
         backend: o.encoder,
+        intra_refresh_frames: o.refresh,
         ..EncoderConfig::new(m.width, m.height)
     }
 }
+
+/// Uma recuperação em andamento depois de um frame descartado de propósito
+/// (`--perder-a-cada`).
+struct Recuperacao {
+    /// Frames decodificados desde a perda (o último é o que limpou a imagem).
+    frames: u32,
+    psnr_min: f64,
+    bytes: u64,
+    maior: usize,
+}
+
+/// Resultado de uma recuperação concluída.
+struct Recuperada {
+    frames: u32,
+    psnr_min: f64,
+    /// PSNR do frame que fechou a recuperação (keyframe ou fim da onda).
+    psnr_fim: f64,
+    bytes: u64,
+    maior: usize,
+    /// PSNR entre o frame que fechou a recuperação e o mesmo frame num
+    /// decoder que não perdeu nada (99 = idênticos): mede se a recuperação
+    /// apagou de fato todo o estrago, sem misturar a qualidade do encode.
+    igual_fim: f64,
+    /// O mesmo, pior valor nos frames seguintes (resto de erro que se
+    /// propaga mostraria aqui).
+    igual_depois: f64,
+}
+
+/// Frames observados depois de cada recuperação.
+const OBSERVAR_DEPOIS: u32 = 30;
 
 /// Lista os backends e diz se cada um funciona nesta máquina.
 pub fn cmd_encoders(o: &Opts) -> Result<(), Box<dyn Error>> {
@@ -113,6 +144,26 @@ pub fn cmd_encode(o: &Opts) -> Result<(), Box<dyn Error>> {
     };
     let mut copia = Vec::new();
 
+    // Perda simulada: descarta um frame, pede a recuperação e mede.
+    let perder_a_cada =
+        (o.perder_a_cada > 0.0 && verif.is_some()).then(|| Duration::from_secs_f64(o.perder_a_cada));
+    let mut proxima_perda = perder_a_cada.map(|p| Instant::now() + p);
+    // Decoder de referência: recebe todos os frames, inclusive os
+    // "perdidos". O decodificado com perda é comparado com ele.
+    let mut referencia = match perder_a_cada {
+        Some(_) => Some(Decoder::new(cfg.width, cfg.height)?),
+        None => None,
+    };
+    // Recuperação recente ainda observada: (índice em `recuperadas`, frames restantes).
+    let mut observando: Option<(usize, u32)> = None;
+    let mut perder_proximo = false;
+    let mut keyframe_pela_perda = false;
+    let mut por_onda = false;
+    let mut recuperando: Option<Recuperacao> = None;
+    let mut recuperadas: Vec<Recuperada> = Vec::new();
+    let mut erros_decode = 0u32;
+    let mut psnr_normal = Vec::new();
+
     let mut arquivo = BufWriter::new(File::create(&saida)?);
     let duracao = Duration::from_secs_f64(o.segundos);
     let keyframe_a_cada = (o.keyframe_a_cada > 0.0).then(|| Duration::from_secs_f64(o.keyframe_a_cada));
@@ -145,9 +196,14 @@ pub fn cmd_encode(o: &Opts) -> Result<(), Box<dyn Error>> {
             v.originais.push_back(copia.clone());
         }
 
-        let pedir_keyframe = keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p);
+        let pedir_keyframe = keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p)
+            || std::mem::take(&mut keyframe_pela_perda);
         if pedir_keyframe {
             ultimo_keyframe = Instant::now();
+        }
+        if recuperando.is_none() && proxima_perda.is_some_and(|t| Instant::now() >= t) {
+            perder_proximo = true;
+            proxima_perda = perder_a_cada.map(|p| Instant::now() + p);
         }
         let t = Instant::now();
         let pacotes = enc.encode(frame.texture(), pedir_keyframe)?;
@@ -157,8 +213,71 @@ pub fn cmd_encode(o: &Opts) -> Result<(), Box<dyn Error>> {
 
         for p in pacotes {
             if let Some(v) = &mut verif {
-                let dec = v.decoder.decode(&p.data)?;
-                v.comparar(dec);
+                if std::mem::take(&mut perder_proximo) {
+                    // O decoder nunca vê este frame, como se a rede o perdesse.
+                    v.originais.pop_back();
+                    if let Some(r) = &mut referencia {
+                        let _ = r.decode(&p.data);
+                    }
+                    observando = None;
+                    por_onda = enc.start_intra_refresh();
+                    keyframe_pela_perda = !por_onda;
+                    recuperando = Some(Recuperacao {
+                        frames: 0,
+                        psnr_min: f64::INFINITY,
+                        bytes: 0,
+                        maior: 0,
+                    });
+                } else {
+                    let antes = v.psnrs.len();
+                    let dec = v.decoder.decode(&p.data);
+                    let sem_perda = referencia.as_mut().map(|r| r.decode(&p.data));
+                    let igual = match (&dec, &sem_perda) {
+                        (Ok(a), Some(Ok(b))) => a.first().zip(b.first()).map(|(a, b)| psnr(a, b)),
+                        _ => None,
+                    };
+                    match dec {
+                        Ok(dec) => v.comparar(dec),
+                        Err(_) => {
+                            erros_decode += 1;
+                            v.originais.pop_back();
+                        }
+                    }
+                    let psnr = (v.psnrs.len() > antes).then(|| v.psnrs[v.psnrs.len() - 1]);
+                    match &mut recuperando {
+                        Some(r) => {
+                            r.frames += 1;
+                            r.psnr_min = r.psnr_min.min(psnr.unwrap_or(0.0));
+                            r.bytes += p.data.len() as u64;
+                            r.maior = r.maior.max(p.data.len());
+                            let limpo = if por_onda { p.refresh_end } else { p.keyframe };
+                            if limpo {
+                                recuperadas.push(Recuperada {
+                                    frames: r.frames,
+                                    psnr_min: r.psnr_min,
+                                    psnr_fim: psnr.unwrap_or(0.0),
+                                    bytes: r.bytes,
+                                    maior: r.maior,
+                                    igual_fim: igual.unwrap_or(0.0),
+                                    igual_depois: 99.0,
+                                });
+                                recuperando = None;
+                                observando = Some((recuperadas.len() - 1, OBSERVAR_DEPOIS));
+                            }
+                        }
+                        None => {
+                            psnr_normal.extend(psnr);
+                            if let Some((i, resto)) = &mut observando {
+                                let r = &mut recuperadas[*i];
+                                r.igual_depois = r.igual_depois.min(igual.unwrap_or(0.0));
+                                *resto -= 1;
+                                if *resto == 0 {
+                                    observando = None;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             arquivo.write_all(&p.data)?;
             saidas += 1;
@@ -243,6 +362,68 @@ pub fn cmd_encode(o: &Opts) -> Result<(), Box<dyn Error>> {
                 bmp::write_bmp32(BufWriter::new(File::create(&nome)?), cfg.width, cfg.height, img)?;
                 println!("  último frame salvo em     {nome}");
             }
+        }
+    }
+    if perder_a_cada.is_some() {
+        let n = recuperadas.len().max(1) as f64;
+        let media = |f: &dyn Fn(&Recuperada) -> f64| recuperadas.iter().map(f).sum::<f64>() / n;
+        let normal = psnr_normal.iter().sum::<f64>() / psnr_normal.len().max(1) as f64;
+        println!(
+            "\nPerdas simuladas ({}): {} recuperadas{}",
+            match (o.refresh, por_onda || recuperadas.is_empty() && o.refresh > 0) {
+                (k, true) if k > 0 => format!("recuperação por onda de intra-refresh de {k} frames"),
+                _ => "recuperação por keyframe".to_string(),
+            },
+            recuperadas.len(),
+            match recuperando {
+                Some(_) => " (1 ainda em andamento no fim)",
+                None => "",
+            }
+        );
+        if !recuperadas.is_empty() {
+            println!(
+                "  frames até a imagem limpa: média {:.1}, máx {}",
+                media(&|r| r.frames as f64),
+                recuperadas.iter().map(|r| r.frames).max().unwrap_or(0)
+            );
+            println!("  PSNR normal:               média {normal:.1} dB");
+            println!(
+                "  PSNR durante a recuperação: mínimo médio {:.1} dB",
+                media(&|r| r.psnr_min)
+            );
+            println!(
+                "  PSNR do frame que limpou:  média {:.1} dB, pior {:.1} dB",
+                media(&|r| r.psnr_fim),
+                recuperadas
+                    .iter()
+                    .map(|r| r.psnr_fim)
+                    .fold(f64::INFINITY, f64::min)
+            );
+            println!(
+                "  frames da recuperação:     média {:.1} KB, maior {:.1} KB",
+                media(&|r| r.bytes as f64 / r.frames.max(1) as f64) / 1024.0,
+                recuperadas.iter().map(|r| r.maior).max().unwrap_or(0) as f64 / 1024.0
+            );
+        }
+        if !recuperadas.is_empty() {
+            let identicas = recuperadas.iter().filter(|r| r.igual_fim >= 99.0).count();
+            println!(
+                "  vs. decoder sem perda:     {identicas} de {} recuperações idênticas no fim (99 dB = idêntico); \
+                 média {:.1} dB, pior {:.1} dB",
+                recuperadas.len(),
+                media(&|r| r.igual_fim),
+                recuperadas.iter().map(|r| r.igual_fim).fold(f64::INFINITY, f64::min)
+            );
+            println!(
+                "  {OBSERVAR_DEPOIS} frames seguintes:       pior {:.1} dB",
+                recuperadas
+                    .iter()
+                    .map(|r| r.igual_depois)
+                    .fold(f64::INFINITY, f64::min)
+            );
+        }
+        if erros_decode > 0 {
+            println!("  erros do decoder:          {erros_decode}");
         }
     }
     println!("\nAbra o vídeo no VLC (arraste o arquivo) ou: ffplay -f h264 {saida}");

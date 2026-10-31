@@ -10,8 +10,8 @@
 //! fluxo-bench encoders   [--monitor N]
 //! fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
 //!                        [--mbps M] [--fps F] [--keyframe-a-cada S] [--saida arquivo.h264]
-//!                        [--verificar]
-//! fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
+//!                        [--verificar] [--refresh N] [--perder-a-cada S]
+//! fluxo-bench decode    [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
 //! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
 //! ```
 //!
@@ -44,6 +44,11 @@ struct Opts {
     keyframe_a_cada: f64,
     verificar: bool,
     porta: u16,
+    /// Intra-refresh em ondas de N frames (0 = desligado).
+    refresh: u32,
+    /// No encode com `--verificar`, descarta um frame a cada S segundos
+    /// (0 = nunca) e mede a recuperação do decoder.
+    perder_a_cada: f64,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -58,6 +63,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         keyframe_a_cada: 5.0,
         verificar: false,
         porta: 9000,
+        refresh: 0,
+        perder_a_cada: 0.0,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -75,6 +82,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--keyframe-a-cada" => {
                 o.keyframe_a_cada = valor()?.parse().map_err(|_| "keyframe-a-cada inválido")?
             }
+            "--refresh" => o.refresh = valor()?.parse().map_err(|_| "refresh inválido")?,
+            "--perder-a-cada" => o.perder_a_cada = valor()?.parse().map_err(|_| "perder-a-cada inválido")?,
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
     }
@@ -110,6 +119,11 @@ Opções:
                         Windows, mede o PSNR e salva o último frame em BMP;
                         no receber, confere que todo frame decodifica
   --porta P             porta UDP do receber (padrão 9000)
+  --refresh N           no encode, liga o intra-refresh em ondas de N frames (NVENC)
+  --perder-a-cada S     no encode com --verificar, descarta um frame a cada S
+                        segundos (o decoder não o recebe) e pede a recuperação:
+                        uma onda de intra-refresh com --refresh, senão um
+                        keyframe. Mede quanto o decoder leva para se recuperar
 
 Dica: com a tela parada o Windows não gera frames. Durante bench/encode,
 deixe um vídeo ou jogo rodando a 60 fps no monitor capturado.";

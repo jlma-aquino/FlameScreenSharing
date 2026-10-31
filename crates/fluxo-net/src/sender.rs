@@ -104,6 +104,9 @@ pub struct SenderStats {
     pub pings_answered: u64,
     /// Pedidos de keyframe recebidos do cliente.
     pub keyframe_requests: u64,
+    /// Pedidos de limpeza depois de perda recebidos (uma onda de intra-refresh
+    /// serve; ver [`VideoSender::take_refresh_request`]).
+    pub refresh_requests: u64,
     /// Pacotes descartados de propósito por [`SenderConfig::simulated_loss`]
     /// e pela fila cheia de [`SenderConfig::simulated_bandwidth_bps`].
     pub simulated_drops: u64,
@@ -120,7 +123,7 @@ pub struct SenderStats {
 
 struct Job {
     data: Vec<u8>,
-    keyframe: bool,
+    flags: u8,
     timestamp_us: u32,
     queued_at: Instant,
 }
@@ -131,6 +134,7 @@ pub(crate) struct Shared {
     pacing_bps: AtomicU64,
     pub(crate) stop: AtomicBool,
     keyframe_requested: AtomicBool,
+    refresh_requested: AtomicBool,
     /// Pacotes de vídeo/paridade que tentamos mandar (inclui os descartados
     /// pelas simulações), contados um a um na hora em que saem: base da
     /// conta de perda.
@@ -201,6 +205,7 @@ impl VideoSender {
             pacing_bps: AtomicU64::new(cfg.pacing_bps),
             stop: AtomicBool::new(false),
             keyframe_requested: AtomicBool::new(false),
+            refresh_requested: AtomicBool::new(false),
             sent_history: Mutex::new(SentHistory::default()),
             loss_window: Mutex::new(LossWindow::default()),
             report: Mutex::new(None),
@@ -256,9 +261,18 @@ impl VideoSender {
     /// Enfileira um frame codificado para envio. `timestamp_us` deve ser o
     /// [`clock_us`] do momento da captura.
     pub fn send_frame(&self, data: Vec<u8>, keyframe: bool, timestamp_us: u32) -> Result<(), NetError> {
+        let flags = if keyframe { fluxo_proto::FLAG_KEYFRAME } else { 0 };
+        self.send_frame_with_flags(data, flags, timestamp_us)
+    }
+
+    /// Como [`send_frame`](Self::send_frame), com o campo `flags` completo:
+    /// [`FLAG_KEYFRAME`](fluxo_proto::FLAG_KEYFRAME) e as marcas de onda de
+    /// intra-refresh ([`FLAG_REFRESH_START`](fluxo_proto::FLAG_REFRESH_START),
+    /// [`FLAG_REFRESH_END`](fluxo_proto::FLAG_REFRESH_END)).
+    pub fn send_frame_with_flags(&self, data: Vec<u8>, flags: u8, timestamp_us: u32) -> Result<(), NetError> {
         let job = Job {
             data,
-            keyframe,
+            flags,
             timestamp_us,
             queued_at: Instant::now(),
         };
@@ -272,9 +286,16 @@ impl VideoSender {
     }
 
     /// `true` (uma vez) se o cliente pediu um keyframe desde a última
-    /// chamada. Vários pedidos seguidos contam como um só.
+    /// chamada — e **só** um keyframe serve (ele não tem imagem nenhuma, ou o
+    /// decoder falhou). Vários pedidos seguidos contam como um só.
     pub fn take_keyframe_request(&self) -> bool {
         self.shared.keyframe_requested.swap(false, Ordering::Relaxed)
+    }
+
+    /// `true` (uma vez) se o cliente perdeu algo e pediu para limpar a
+    /// imagem: uma onda de intra-refresh serve; sem ela, mande um keyframe.
+    pub fn take_refresh_request(&self) -> bool {
+        self.shared.refresh_requested.swap(false, Ordering::Relaxed)
     }
 
     /// O relatório de rede mais recente do cliente, uma vez (`None` se não
@@ -407,7 +428,7 @@ fn send_job(
 ) {
     let start = Instant::now();
     let queue_wait = start - job.queued_at;
-    let mut packets = match frag.fragment(&job.data, job.keyframe, job.timestamp_us) {
+    let mut packets = match frag.fragment_with_flags(&job.data, job.flags, job.timestamp_us) {
         Ok((_, p)) => p,
         Err(_) => {
             // Frame acima de ~78 MB: impossível com vídeo real; descartamos.
@@ -552,8 +573,13 @@ fn on_packet(pacote: &[u8], socket: &Saida, relogio: &mut ClockSync, shared: &Sh
             }
         }
         PacketKind::KeyframeRequest => {
-            shared.keyframe_requested.store(true, Ordering::Relaxed);
-            shared.with_stats(|s| s.keyframe_requests += 1);
+            if h.flags & fluxo_proto::FLAG_KEYFRAME != 0 {
+                shared.keyframe_requested.store(true, Ordering::Relaxed);
+                shared.with_stats(|s| s.keyframe_requests += 1);
+            } else {
+                shared.refresh_requested.store(true, Ordering::Relaxed);
+                shared.with_stats(|s| s.refresh_requests += 1);
+            }
         }
         PacketKind::Feedback => {
             if let Ok(f) = Feedback::from_bytes(payload) {

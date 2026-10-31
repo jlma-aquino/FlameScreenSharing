@@ -23,7 +23,7 @@ fluxo-bench screenshot [--monitor N] [--saida arquivo.bmp]
 fluxo-bench encoders   [--monitor N]
 fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
-                       [--saida arquivo.h264] [--verificar]
+                       [--saida arquivo.h264] [--verificar] [--refresh N] [--perder-a-cada S]
 fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
 fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
 ```
@@ -80,6 +80,24 @@ Também salva o último frame como `<saida>.original.bmp` e
 `<saida>.decodificado.bmp` para comparar no olho. A cópia para a RAM deixa
 o loop mais lento: use `--verificar` para conferir qualidade, não para medir
 tempo.
+
+### `--perder-a-cada S` (com `--verificar`)
+
+Descarta um frame codificado a cada S segundos (o decoder não o recebe, como
+se a rede o perdesse) e pede a recuperação: uma onda de intra-refresh com
+`--refresh N`, senão um keyframe. Um segundo decoder recebe **todos** os
+frames, e o resultado compara os dois:
+
+| Linha | O que é | Esperado |
+|---|---|---|
+| frames até a imagem limpa | 1 com keyframe, N com onda | — |
+| PSNR do frame que limpou | Qualidade da imagem logo depois da recuperação | perto do normal |
+| vs. decoder sem perda | Frame que limpou igual ao de um decoder que não perdeu nada (99 dB = idêntico) | todas idênticas |
+| N frames seguintes | O mesmo, nos frames depois (estrago que sobrou e se propaga apareceria aqui) | 99 dB |
+
+Use `--keyframe-a-cada 0` para os keyframes periódicos não esconderem o
+resultado. Foi assim que apareceu (e foi corrigido) o estrago residual de
+ondas com mais de um quadro de referência.
 
 ## `receber`
 
