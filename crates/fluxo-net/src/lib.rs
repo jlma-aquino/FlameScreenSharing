@@ -73,7 +73,7 @@ pub use clock::{clock_diff_us, clock_us};
 pub use conexao::{CodeError, ConnectionCode, ReplyCode};
 pub use internet::Internet;
 pub use observar::{PairingEvent, PairingObserver};
-pub use receiver::{Puncher, ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
+pub use receiver::{CursorView, Puncher, ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL};
@@ -84,6 +84,8 @@ pub use upnp::{find_gateway, is_private_v4, open_port, Gateway, PortMapping, Upn
 pub use fluxo_proto::{FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
 // Código de pareamento (`SenderConfig`/`ReceiverConfig::pairing_code`).
 pub use fluxo_crypto::PairingCode;
+// Imagem do cursor (`VideoSender::set_cursor_shape`, `CursorView::shape`).
+pub use fluxo_proto::CursorShape;
 
 /// Erros da camada de rede.
 #[derive(Debug, Clone, PartialEq, Eq)]

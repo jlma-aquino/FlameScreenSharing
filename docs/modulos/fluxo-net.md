@@ -344,6 +344,17 @@ ele. O TTL baixo vale só no IPv4.
 O celular deixa o IPv6 entrar no notebook sem furo; o IPv4 ainda precisa
 do código de resposta e do TTL baixo (testes acima).
 
+## Cursor
+
+O host manda posição e forma do ponteiro à parte do vídeo (PROTOCOLO.md,
+seção 2.4). `VideoSender::send_cursor_position` sai na hora (e a última
+posição vai de novo com cada Ping); `set_cursor_shape` numera a forma e a
+manda em partes. No cliente, `VideoReceiver::cursor()` devolve um
+`CursorView` com um número de versão que muda a cada posição ou forma
+nova; uma posição que aponta uma forma que o cliente não tem faz ele pedir
+de novo (`ReceiverStats::cursor_requests`). Testado em
+`tests/loopback.rs` com a forma perdida de propósito.
+
 ## Host único e reinício (sem cifra)
 
 Com `--sem-cifra` (teste), o receptor aprende o endereço do host pelo

@@ -40,13 +40,25 @@ D3D11 na GPU. Por que essa API: ADR-002 em [DECISOES.md](../DECISOES.md).
 4. **Liberar rápido.** Segurar o frame atrasa o próximo. Copie a textura se
    precisar dela depois.
 
+## Ponteiro do mouse
+
+A duplicação **não desenha o ponteiro** na imagem: ele vem à parte em cada
+frame. `FrameInfo::pointer` traz a posição (canto superior esquerdo da
+imagem do ponteiro, e se está visível neste monitor) quando ela mudou;
+`Frame::take_pointer_shape` traz a forma, quando ela mudou, já convertida
+para BGRA com alfa por `convert_pointer_shape` (função pura, testada):
+colorido como está; monocromático e colorido com máscara pelas regras de
+AND/XOR; pixels de "inverter o que está embaixo" (cursor de texto) viram
+preto com contorno branco. O host manda isso ao cliente, que desenha o
+ponteiro por cima do vídeo ([fluxo-net](fluxo-net.md), "Cursor").
+
 ## Limitações conhecidas
 
 - Captura monitor inteiro (não janela).
 - Formato sempre BGRA 8 bits: telas HDR são convertidas pelo Windows para
   SDR. Suporte HDR viria com `IDXGIOutput5::DuplicateOutput1` (futuro).
-- O cursor **não** vem desenhado na textura (Windows o trata à parte). Vamos
-  desenhá-lo no cliente ou compor no host (fase 6).
+- O cursor **não** vem desenhado na textura (Windows o trata à parte): vai
+  à parte para o cliente, que o desenha (ver "Ponteiro do mouse").
 
 ## Como testar
 

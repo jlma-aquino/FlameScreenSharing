@@ -13,19 +13,20 @@ use std::mem::ManuallyDrop;
 use windows::core::{Interface, BOOL};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Device, ID3D11Texture2D, ID3D11VideoContext1, ID3D11VideoDevice, ID3D11VideoProcessor,
-    ID3D11VideoProcessorEnumerator, ID3D11VideoProcessorInputView, ID3D11VideoProcessorOutputView,
-    D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV, D3D11_VIDEO_COLOR, D3D11_VIDEO_COLOR_0, D3D11_VIDEO_COLOR_RGBA,
-    D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
-    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0,
-    D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0,
-    D3D11_VIDEO_PROCESSOR_STREAM, D3D11_VIDEO_USAGE_OPTIMAL_SPEED, D3D11_VPIV_DIMENSION_TEXTURE2D,
-    D3D11_VPOV_DIMENSION_TEXTURE2D,
+    ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, ID3D11VideoContext1, ID3D11VideoDevice,
+    ID3D11VideoProcessor, ID3D11VideoProcessorEnumerator, ID3D11VideoProcessorInputView,
+    ID3D11VideoProcessorOutputView, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX,
+    D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIDEO_COLOR,
+    D3D11_VIDEO_COLOR_0, D3D11_VIDEO_COLOR_RGBA, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+    D3D11_VIDEO_PROCESSOR_CONTENT_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
+    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC,
+    D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_STREAM, D3D11_VIDEO_USAGE_OPTIMAL_SPEED,
+    D3D11_VPIV_DIMENSION_TEXTURE2D, D3D11_VPOV_DIMENSION_TEXTURE2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
-    DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
-    DXGI_RATIONAL, DXGI_SAMPLE_DESC,
+    DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12,
+    DXGI_FORMAT_UNKNOWN, DXGI_RATIONAL, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
     IDXGIDevice, IDXGIDevice1, IDXGIFactory2, IDXGIFactory5, IDXGISwapChain1,
@@ -35,6 +36,8 @@ use windows::Win32::Graphics::Dxgi::{
 };
 
 use fluxo_decode::DecodedFrame;
+use fluxo_net::CursorView;
+use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 
 use crate::overlay::Overlay;
 
@@ -52,6 +55,8 @@ struct Processor {
 }
 
 pub struct Presenter {
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
     video_device: ID3D11VideoDevice,
     video_context: ID3D11VideoContext1,
     swapchain: IDXGISwapChain1,
@@ -63,6 +68,10 @@ pub struct Presenter {
     /// Painel de estatísticas (`None` se o Direct2D não abriu).
     overlay: Option<Overlay>,
     mostrar_overlay: bool,
+    /// Cópia da última imagem (NV12) e o tamanho dela, para redesenhar.
+    copia: Option<(ID3D11Texture2D, (u32, u32))>,
+    /// Cursor visível do host, com a forma.
+    cursor: Option<CursorView>,
 }
 
 impl Presenter {
@@ -101,6 +110,8 @@ impl Presenter {
             let _ = device.cast::<IDXGIDevice1>()?.SetMaximumFrameLatency(1);
 
             let mut me = Self {
+                device: device.clone(),
+                context: device.GetImmediateContext()?,
                 video_device: device.cast()?,
                 video_context: device.GetImmediateContext()?.cast()?,
                 swapchain,
@@ -117,6 +128,8 @@ impl Presenter {
                     }
                 },
                 mostrar_overlay: false,
+                copia: None,
+                cursor: None,
             };
             me.create_output_view()?;
             Ok(me)
@@ -254,9 +267,81 @@ impl Presenter {
         Ok(self.processor.as_mut().expect("criado acima"))
     }
 
+    /// Cursor do host para desenhar por cima (vale do próximo `present` em
+    /// diante). `None` ou invisível: sem cursor.
+    pub fn set_cursor(&mut self, c: Option<CursorView>) -> Resultado<()> {
+        if let (Some(o), Some(forma)) = (&mut self.overlay, c.as_ref().and_then(|c| c.shape.as_ref())) {
+            o.set_cursor_shape(forma)?;
+        }
+        self.cursor = c.filter(|c| c.visible && c.shape.is_some());
+        Ok(())
+    }
+
+    /// `true` depois do primeiro frame (dá para reapresentar).
+    pub fn has_image(&self) -> bool {
+        self.copia.is_some()
+    }
+
+    /// Desenha de novo a última imagem (o cursor mexeu sem frame novo).
+    pub fn present_again(&mut self) -> Resultado<()> {
+        let Some((textura, video)) = self.copia.clone() else {
+            return Ok(());
+        };
+        self.desenhar(&textura, 0, video)
+    }
+
     /// Desenha o frame e apresenta.
     pub fn present(&mut self, frame: &DecodedFrame) -> Resultado<()> {
         let video = (frame.width(), frame.height());
+        self.desenhar(frame.texture(), frame.subresource(), video)?;
+        // Cópia da imagem (na GPU, ~0,1 ms em 1080p) para redesenhar quando
+        // só o cursor mexer: a superfície do decoder volta para ele.
+        self.guardar_copia(frame.texture(), frame.subresource(), video)
+    }
+
+    fn guardar_copia(&mut self, textura: &ID3D11Texture2D, fatia: u32, video: (u32, u32)) -> Resultado<()> {
+        if self.copia.as_ref().map(|(_, v)| *v) != Some(video) {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: video.0,
+                Height: video.1,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_NV12,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                // Alvo de desenho: sem isso, o Video Processor recusa a
+                // textura como entrada ("parâmetro incorreto").
+                BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
+            };
+            let mut nova = None;
+            // SAFETY: descritor válido; NV12 com tamanho par (vídeo H.264).
+            unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut nova))? };
+            self.copia = nova.map(|t| (t, video));
+        }
+        // Só a parte visível: a superfície do decoder pode ter linhas a mais
+        // (1088 em vez de 1080, múltiplo de 16).
+        let visivel = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: video.0,
+            bottom: video.1,
+            back: 1,
+        };
+        if let Some((copia, _)) = &self.copia {
+            // SAFETY: mesmo formato e tamanho; fatia válida da textura do decoder.
+            unsafe {
+                self.context
+                    .CopySubresourceRegion(copia, 0, 0, 0, 0, textura, fatia, Some(&visivel))
+            };
+        }
+        Ok(())
+    }
+
+    /// Video Processor (NV12 → tela), painel e cursor, e `Present`.
+    fn desenhar(&mut self, textura: &ID3D11Texture2D, fatia: u32, video: (u32, u32)) -> Resultado<()> {
         let video_device = self.video_device.clone();
         let video_context = self.video_context.clone();
         let output = self
@@ -265,7 +350,7 @@ impl Presenter {
             .ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_POINTER))?;
         let p = self.processor_for(video)?;
 
-        let chave = (frame.texture().as_raw() as usize, frame.subresource());
+        let chave = (textura.as_raw() as usize, fatia);
         if !p.inputs.contains_key(&chave) {
             let desc = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
                 FourCC: 0,
@@ -273,19 +358,14 @@ impl Presenter {
                 Anonymous: D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0 {
                     Texture2D: D3D11_TEX2D_VPIV {
                         MipSlice: 0,
-                        ArraySlice: frame.subresource(),
+                        ArraySlice: fatia,
                     },
                 },
             };
             let mut view = None;
             // SAFETY: textura NV12 do decoder (ou nossa) e enumerador válidos.
             unsafe {
-                video_device.CreateVideoProcessorInputView(
-                    frame.texture(),
-                    &p.enumerator,
-                    &desc,
-                    Some(&mut view),
-                )?;
+                video_device.CreateVideoProcessorInputView(textura, &p.enumerator, &desc, Some(&mut view))?;
             }
             if let Some(v) = view {
                 p.inputs.insert(chave, v);
@@ -305,9 +385,35 @@ impl Presenter {
             r
         };
         blt?;
-        if self.mostrar_overlay {
+        // Cursor na escala do vídeo, no lugar dele dentro das barras pretas.
+        let area = letterbox(video, self.size);
+        let escala = (area.right - area.left) as f32 / video.0.max(1) as f32;
+        let cursor = self.cursor.as_ref().and_then(|c| {
+            let f = c.shape.as_ref()?;
+            let (x, y) = (
+                area.left as f32 + c.x as f32 * escala,
+                area.top as f32 + c.y as f32 * escala,
+            );
+            Some(D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + f.width as f32 * escala,
+                bottom: y + f.height as f32 * escala,
+            })
+        });
+        if self.mostrar_overlay || cursor.is_some() {
             if let Some(o) = &mut self.overlay {
-                o.draw(&self.swapchain)?;
+                let recorte = D2D_RECT_F {
+                    left: area.left as f32,
+                    top: area.top as f32,
+                    right: area.right as f32,
+                    bottom: area.bottom as f32,
+                };
+                o.draw(
+                    &self.swapchain,
+                    self.mostrar_overlay,
+                    cursor.map(|c| (c, recorte)),
+                )?;
             }
         }
 

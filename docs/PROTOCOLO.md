@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 9
+# Protocolo de rede — versão 10
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -12,8 +12,8 @@ CHANGELOG.
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `9`. Versões diferentes são descartadas (histórico na seção 6). |
-| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply, `9` = Signal, `10` = Punch. |
+| 2 | 1 | `version` | `10`. Versões diferentes são descartadas (histórico na seção 6). |
+| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply, `9` = Signal, `10` = Punch, `11` = Cursor (`12` reservado: Input). |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
@@ -281,6 +281,37 @@ cliente: Punch a cada 250 ms para o host (abre o NAT do cliente) → PairInit pa
   se ele fizer *hairpin* (o IPv6, se houver, passa; na mesma rede, use
   `--destino`).
 
+## 2.4. Cursor (`kind = 11`)
+
+O Desktop Duplication entrega a imagem **sem** o ponteiro do mouse. Em vez
+de desenhá-lo na imagem (o que custaria um frame inteiro a cada movimento e
+o atrasaria até o próximo encode), o host manda o ponteiro à parte e o
+cliente o desenha por cima do vídeo. Cifrado como os outros pacotes.
+
+| Byte 0 | Mensagem | Sentido | Resto do payload |
+|---:|---|---|---|
+| 1 | Posição | host → cliente | `x` i16, `y` i16 (canto superior esquerdo da imagem do ponteiro, pixels do monitor), visível u8, número da forma u16 (0 = nenhuma) — 8 bytes |
+| 2 | Parte da forma | host → cliente | número u16, parte u8, total de partes u8, largura u16, altura u16, ponto ativo x/y u16; depois até 1167 bytes da imagem BGRA (alfa não pré-multiplicado, linha a linha) |
+| 3 | Pedido de forma | cliente → host | número u16 |
+
+- **Posição:** sai a cada movimento (o Desktop Duplication avisa até a
+  frequência do monitor) e, de segurança, junto com cada Ping (500 ms).
+- **Forma:** ganha um número novo a cada troca e sai inteira, em partes
+  (lado máximo 256 px). O cliente só monta a mais recente; se a posição
+  aponta uma forma que ele não tem, pede de novo (no máximo a cada 200 ms),
+  e o host reenvia (no máximo a cada 100 ms).
+- **Formas "inverter":** o cursor de texto (I) e outros invertem o que está
+  embaixo, o que não dá para fazer desenhando por cima; o host os converte
+  em preto com contorno branco.
+
+### Reservado: Input (`kind = 12`)
+
+Para o controle remoto (mouse e teclado do cliente no host, fase 6,
+opcional): cliente → host, cifrado, com mouse em coordenadas do vídeo (as
+mesmas do cursor) e teclas por *scan code*. Ainda não implementado: o host
+de hoje recusa o tipo (desconhecido), e o formato só será fixado quando
+houver permissão explícita de quem compartilha.
+
 ## 3. Fragmentação (emissor)
 
 - Payload máximo por pacote: **1180 bytes** (`DEFAULT_MAX_PAYLOAD`). Com o
@@ -346,3 +377,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 7 | Flags de onda de intra-refresh no vídeo (bits 1 e 2); KeyframeRequest com bit 0 = "só keyframe serve". Versões anteriores recusadas. |
 | 8 | Cabeçalho de 28 bytes (+ `seq`), PairInit e PairReply (pareamento SPAKE2), payload cifrado com ChaCha20-Poly1305 (bit 3 de `flags`) e anti-replay; payload máximo 1180. Versões anteriores recusadas. |
 | 9 | + Signal (`kind = 9`, servidor de sinalização) e Punch (`kind = 10`, furo de NAT); um PairInit repetido é reconhecido pelo conteúdo, venha de onde vier. Versões anteriores recusadas. |
+| 10 | + Cursor (`kind = 11`): posição e forma do ponteiro à parte do vídeo, pedido de forma perdida. `kind = 12` reservado para o controle remoto. Versões anteriores recusadas. |

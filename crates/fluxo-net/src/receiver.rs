@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 
 use fluxo_crypto::{Opener, PairingCode, Sealer, Session, TAG_LEN};
 use fluxo_proto::{
-    prepare_seal, CompletedFrame, Feedback, PacketHeader, PacketKind, Reassembler, ReassemblerConfig,
-    ReassemblerStats, SignalMessage, FLAG_KEYFRAME, HEADER_LEN,
+    prepare_seal, CompletedFrame, CursorMessage, CursorShape, Feedback, PacketHeader, PacketKind,
+    Reassembler, ReassemblerConfig, ReassemblerStats, ShapeAssembler, SignalMessage, FLAG_KEYFRAME,
+    HEADER_LEN,
 };
 
 use crate::delay::QueueDelay;
@@ -152,6 +153,10 @@ pub struct ReceiverStats {
     /// Pacotes de furo mandados ao host (avisado pelo servidor de sinalização
     /// ou pedido por [`VideoReceiver::punch`]).
     pub punches_sent: u64,
+    /// Pacotes de cursor recebidos do host.
+    pub cursor_packets: u64,
+    /// Formas de cursor pedidas de novo ao host (alguma parte se perdeu).
+    pub cursor_requests: u64,
 }
 
 struct Shared {
@@ -164,6 +169,8 @@ struct Shared {
     sealer: Mutex<Option<Sealer>>,
     /// Endereços do host para furar o nosso NAT, e até quando ([`VideoReceiver::punch`]).
     furos: Mutex<Option<(Vec<SocketAddr>, Instant)>>,
+    /// Cursor do host: posição, forma e a montagem da forma em partes.
+    cursor: Mutex<CursorClient>,
 }
 
 impl Shared {
@@ -265,6 +272,7 @@ impl VideoReceiver {
             cifrado: cfg.pairing_code.is_some(),
             sealer: Mutex::new(None),
             furos: Mutex::new(None),
+            cursor: Mutex::new(CursorClient::default()),
         });
         let (tx, frames) = mpsc::sync_channel(cfg.queue_frames.max(1));
         let s = shared.clone();
@@ -365,6 +373,24 @@ impl VideoReceiver {
             .clone();
         s.rtt = self.shared.rtt.lock().unwrap_or_else(|e| e.into_inner()).stats();
         s
+    }
+
+    /// O cursor do host, para desenhar por cima do vídeo (`None` até chegar
+    /// a primeira posição). Compare [`CursorView::version`] para saber se
+    /// mudou desde a última vez.
+    pub fn cursor(&self) -> Option<CursorView> {
+        let c = self.shared.cursor.lock().unwrap_or_else(|e| e.into_inner());
+        c.visto.then(|| CursorView {
+            version: c.versao,
+            x: c.x as i32,
+            y: c.y as i32,
+            visible: c.visivel,
+            shape: c
+                .forma
+                .as_ref()
+                .filter(|(id, _)| *id == c.forma_id)
+                .map(|(_, f)| f.clone()),
+        })
     }
 
     /// Endereço em que estamos escutando.
@@ -702,6 +728,7 @@ fn recv_loop(
             | PacketKind::PairReply
             | PacketKind::Signal
             | PacketKind::Punch => {}
+            PacketKind::Cursor => on_cursor(payload, &socket, from, &shared),
             PacketKind::Ping => {
                 if pong_for(&h).is_some_and(|p| shared.enviar(&socket, p, from)) {
                     shared.with_stats(|s| s.pings_answered += 1);
@@ -760,6 +787,82 @@ fn recv_loop(
             }
         }
     }
+}
+
+/// O cursor do host, como [`VideoReceiver::cursor`] o entrega.
+#[derive(Debug, Clone)]
+pub struct CursorView {
+    /// Muda a cada posição ou forma nova.
+    pub version: u64,
+    /// Canto superior esquerdo da imagem do cursor, em pixels do vídeo.
+    pub x: i32,
+    pub y: i32,
+    /// `false`: escondido ou em outro monitor do host.
+    pub visible: bool,
+    /// Imagem atual (`None` enquanto ela não chegou inteira).
+    pub shape: Option<Arc<CursorShape>>,
+}
+
+/// Cursor do lado do cliente.
+#[derive(Default)]
+struct CursorClient {
+    visto: bool,
+    versao: u64,
+    x: i16,
+    y: i16,
+    visivel: bool,
+    /// Forma que a última posição usa.
+    forma_id: u16,
+    /// Última forma montada.
+    forma: Option<(u16, Arc<CursorShape>)>,
+    montagem: ShapeAssembler,
+    ultimo_pedido: Option<Instant>,
+}
+
+/// Intervalo mínimo entre pedidos da mesma forma (tempo de ela chegar).
+const PEDIDO_DE_FORMA: Duration = Duration::from_millis(200);
+
+/// Trata um pacote de cursor do host (já decifrado).
+fn on_cursor(payload: &[u8], socket: &Portas, de: SocketAddr, shared: &Shared) {
+    let Ok(m) = CursorMessage::from_bytes(payload) else {
+        return;
+    };
+    let mut c = shared.cursor.lock().unwrap_or_else(|e| e.into_inner());
+    match m {
+        CursorMessage::Position { x, y, visible, shape } => {
+            let mudou = !c.visto || (c.x, c.y, c.visivel, c.forma_id) != (x, y, visible, shape);
+            (c.visto, c.x, c.y, c.visivel, c.forma_id) = (true, x, y, visible, shape);
+            if mudou {
+                c.versao += 1;
+            }
+            // Forma que não temos (alguma parte se perdeu): pede de novo.
+            let falta = shape != 0 && c.forma.as_ref().map_or(true, |(id, _)| *id != shape);
+            let pode = c.ultimo_pedido.map_or(true, |t| t.elapsed() >= PEDIDO_DE_FORMA);
+            if falta && pode {
+                c.ultimo_pedido = Some(Instant::now());
+                drop(c);
+                let pedido = CursorMessage::ShapeRequest { shape }.to_bytes();
+                let ok = PacketKind::Cursor
+                    .control(0, clock_us())
+                    .encode_with_payload(&pedido)
+                    .is_ok_and(|p| shared.enviar(socket, p, de));
+                shared.with_stats(|s| {
+                    s.cursor_packets += 1;
+                    s.cursor_requests += ok as u64;
+                });
+                return;
+            }
+        }
+        m @ CursorMessage::ShapePart { .. } => {
+            if let Some((id, forma)) = c.montagem.push(&m) {
+                c.forma = Some((id, Arc::new(forma)));
+                c.versao += 1;
+            }
+        }
+        CursorMessage::ShapeRequest { .. } => {} // só o host recebe pedidos
+    }
+    drop(c);
+    shared.with_stats(|s| s.cursor_packets += 1);
 }
 
 /// Manda os furos pedidos por [`VideoReceiver::punch`], se ainda no prazo, e

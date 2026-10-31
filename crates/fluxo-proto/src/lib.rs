@@ -14,6 +14,7 @@
 //! | [`seq`] | Comparação de números de sequência que "dão a volta" (wrap-around). |
 //! | [`signal`] | Mensagens do servidor de sinalização (achar o outro lado pela internet). |
 //! | [`stun`] | STUN mínimo: perguntar a um servidor público o nosso endereço visto da internet. |
+//! | [`cursor`] | Cursor do mouse à parte do vídeo: posição, forma, pedido de forma. |
 //!
 //! ## Fluxo de dados
 //!
@@ -26,6 +27,7 @@
 //!
 //! A especificação byte a byte está em `docs/PROTOCOLO.md`.
 
+pub mod cursor;
 pub mod fec;
 pub mod feedback;
 pub mod fragment;
@@ -35,6 +37,7 @@ pub mod seq;
 pub mod signal;
 pub mod stun;
 
+pub use cursor::{CursorMessage, CursorShape, ShapeAssembler};
 pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
 pub use packet::{

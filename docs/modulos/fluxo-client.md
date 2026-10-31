@@ -126,6 +126,16 @@ apresentação, perdas, erros). **Espera no cliente** é quanto cada frame
 esperou entre chegar pela rede e ser processado: perto de zero no normal;
 um valor alto aponta travamento do cliente, não da rede.
 
+## Cursor
+
+O ponteiro do host é desenhado por cima do vídeo (Direct2D, antes do
+painel), na escala da imagem e recortado à área dela. Quando só o cursor
+mexe, a thread de exibição redesenha a **última imagem** com ele no lugar
+novo, sem esperar frame novo: cada frame mostrado é copiado na GPU (~0,1
+ms em 1080p) para isso. O resumo ao fechar conta os pacotes de cursor, as
+formas pedidas de novo e os redesenhos sem frame novo (medido na mesma
+máquina: 180 redesenhos em 6 s com o mouse em uso).
+
 ## Medições (mesma máquina, RTX 5050, 1080p, 20 Mbps)
 
 | | Resultado |

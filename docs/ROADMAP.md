@@ -109,9 +109,12 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 
 ## Fase 6 — Interação e conforto
 
-- [ ] Mouse e teclado remotos (opcional, com permissão do host)
+- [ ] Mouse e teclado remotos (opcional, com permissão do host) — fora do foco por enquanto; preparado: tipo
+      de pacote 12 reservado, e o cursor já usa as coordenadas do vídeo que o mouse remoto vai usar
 - [ ] Áudio (WASAPI loopback + Opus)
-- [ ] Cursor desenhado no cliente (latência menor de ponteiro)
+- [x] Cursor desenhado no cliente (protocolo v10): posição e forma à parte do vídeo, redesenho sem esperar
+      frame novo; forma perdida é pedida de novo. Antes o ponteiro nem aparecia (o Desktop Duplication não o
+      desenha na imagem)
 - [ ] HEVC/AV1, 1440p/4K, 120 fps
 - [ ] H.264 4:4:4 (NVENC) para texto colorido nítido — o 4:2:0 limita o PSNR RGB a ~32 dB em área de trabalho
 - [ ] Encoder por software (fallback para VMs/PCs sem encoder de hardware)

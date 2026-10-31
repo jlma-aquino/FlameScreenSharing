@@ -36,11 +36,13 @@ use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1, IDXGIOutput, IDXGIOutput1, IDXGIOutputDuplication,
     IDXGIResource, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_NOT_CURRENTLY_AVAILABLE, DXGI_ERROR_NOT_FOUND,
     DXGI_ERROR_SESSION_DISCONNECTED, DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_WAIT_TIMEOUT,
-    DXGI_OUTDUPL_FRAME_INFO,
+    DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTDUPL_POINTER_SHAPE_INFO,
 };
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 
-use crate::{CaptureError, CpuImageInfo, FrameInfo, MonitorInfo};
+use crate::{
+    convert_pointer_shape, CaptureError, CpuImageInfo, FrameInfo, MonitorInfo, PointerPosition, PointerShape,
+};
 
 impl From<windows::core::Error> for CaptureError {
     fn from(e: windows::core::Error) -> Self {
@@ -301,6 +303,35 @@ impl DesktopCapturer {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { texture.GetDesc(&mut desc) };
 
+        // Ponteiro: a posição vem em todo frame em que o mouse mexeu; a forma,
+        // só quando ela muda (a duplicação não desenha o ponteiro na imagem).
+        let pointer = (info.LastMouseUpdateTime != 0).then(|| PointerPosition {
+            x: info.PointerPosition.Position.x,
+            y: info.PointerPosition.Position.y,
+            visible: info.PointerPosition.Visible.as_bool(),
+        });
+        let shape = match info.PointerShapeBufferSize {
+            0 => None,
+            n => {
+                let mut buf = vec![0u8; n as usize];
+                let mut usado = 0u32;
+                let mut forma = DXGI_OUTDUPL_POINTER_SHAPE_INFO::default();
+                // SAFETY: buffer do tamanho que o Windows pediu; o frame está adquirido.
+                let r =
+                    unsafe { dup.GetFramePointerShape(n, buf.as_mut_ptr().cast(), &mut usado, &mut forma) };
+                r.ok().and_then(|_| {
+                    convert_pointer_shape(
+                        forma.Type,
+                        forma.Width,
+                        forma.Height,
+                        forma.Pitch,
+                        (forma.HotSpot.x, forma.HotSpot.y),
+                        &buf[..usado as usize],
+                    )
+                })
+            }
+        };
+
         // Mantém o tamanho do monitor atualizado (mudança de resolução).
         self.monitor.width = desc.Width;
         self.monitor.height = desc.Height;
@@ -309,10 +340,12 @@ impl DesktopCapturer {
             cap: self,
             texture,
             desc,
+            shape,
             info: FrameInfo {
                 present_time_qpc: info.LastPresentTime,
                 accumulated_frames: info.AccumulatedFrames,
                 desktop_updated: info.LastPresentTime != 0,
+                pointer,
             },
         }))
     }
@@ -325,12 +358,20 @@ pub struct Frame<'a> {
     texture: ID3D11Texture2D,
     desc: D3D11_TEXTURE2D_DESC,
     info: FrameInfo,
+    /// Forma nova do ponteiro, se mudou neste frame.
+    shape: Option<PointerShape>,
 }
 
 impl Frame<'_> {
     /// Metadados do frame.
     pub fn info(&self) -> FrameInfo {
         self.info
+    }
+
+    /// A forma nova do ponteiro, se ela mudou neste frame (uma vez: as
+    /// próximas chamadas devolvem `None`).
+    pub fn take_pointer_shape(&mut self) -> Option<PointerShape> {
+        self.shape.take()
     }
 
     /// Largura em pixels.

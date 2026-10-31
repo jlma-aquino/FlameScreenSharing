@@ -45,7 +45,8 @@ pub const MAGIC: u16 = 0x464C;
 /// - 8: cabeçalho de 28 bytes (+ `seq`), pacotes de pareamento (PairInit,
 ///   PairReply) e payload cifrado ([`FLAG_ENCRYPTED`]).
 /// - 9: sinalização pela internet (Signal) e furo de NAT (Punch).
-pub const PROTOCOL_VERSION: u8 = 9;
+/// - 10: cursor do mouse à parte (Cursor).
+pub const PROTOCOL_VERSION: u8 = 10;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 /// Num [`PacketKind::KeyframeRequest`]: o cliente **precisa** de um keyframe
@@ -102,6 +103,9 @@ pub enum PacketKind {
     /// Cliente → host, sem payload: abre o caminho no NAT/firewall do
     /// cliente para os pacotes do host. Quem recebe ignora. Em claro.
     Punch = 10,
+    /// Cursor do mouse: posição e forma (host → cliente) e pedido de forma
+    /// (cliente → host). Payload: [`crate::cursor::CursorMessage`]. Cifrado.
+    Cursor = 11,
 }
 
 impl PacketKind {
@@ -117,6 +121,7 @@ impl PacketKind {
             8 => Some(Self::PairReply),
             9 => Some(Self::Signal),
             10 => Some(Self::Punch),
+            11 => Some(Self::Cursor),
             _ => None,
         }
     }
@@ -198,6 +203,8 @@ pub enum ProtoError {
     PayloadTooLarge(usize),
     /// Mensagem de sinalização malformada ou curta demais.
     BadSignal,
+    /// Mensagem de cursor malformada.
+    BadCursor,
 }
 
 impl fmt::Display for ProtoError {
@@ -215,6 +222,7 @@ impl fmt::Display for ProtoError {
             }
             Self::PayloadTooLarge(n) => write!(f, "payload de {n} bytes excede 65535"),
             Self::BadSignal => write!(f, "mensagem de sinalização inválida"),
+            Self::BadCursor => write!(f, "mensagem de cursor inválida"),
         }
     }
 }

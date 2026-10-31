@@ -909,3 +909,45 @@ fn pareia_por_ipv6_ou_ipv4_o_que_responder() {
         .expect("frame por IPv4");
     assert_eq!(f.frame.data, frame(1, 5_000));
 }
+
+#[test]
+fn cursor_chega_e_forma_perdida_e_pedida_de_novo() {
+    use fluxo_net::CursorShape;
+
+    let forma = CursorShape {
+        width: 32,
+        height: 40, // 5 KB: várias partes
+        hot_x: 1,
+        hot_y: 2,
+        bgra: (0..32 * 40 * 4).map(|i| (i % 251) as u8).collect(),
+    };
+    // A forma sai antes de existir cliente na porta: se perde.
+    let porta = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let tx = VideoSender::connect("127.0.0.1:0", porta, SenderConfig::for_bitrate(20_000_000)).unwrap();
+    tx.set_cursor_shape(forma.clone());
+    let rx = VideoReceiver::bind(porta, ReceiverConfig::default()).unwrap();
+    // A posição diz qual forma usar; o cliente não tem e pede.
+    tx.send_cursor_position(100, -5, true);
+    let limite = Instant::now() + Duration::from_secs(2);
+    let mut visto = None;
+    while Instant::now() < limite {
+        if let Some(c) = rx.cursor().filter(|c| c.shape.is_some()) {
+            visto = Some(c);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let c = visto.expect("forma pedida de novo e recebida");
+    assert_eq!((c.x, c.y, c.visible), (100, -5, true));
+    assert_eq!(*c.shape.unwrap(), forma);
+    assert!(rx.stats().cursor_requests >= 1);
+
+    // Posição nova: a versão muda.
+    let antes = c.version;
+    tx.send_cursor_position(101, -5, true);
+    let limite = Instant::now() + Duration::from_secs(1);
+    while rx.cursor().is_some_and(|c| c.version == antes) && Instant::now() < limite {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(rx.cursor().unwrap().x, 101);
+}

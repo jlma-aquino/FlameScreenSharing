@@ -343,7 +343,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
 
     use fluxo_capture::{enable_dpi_awareness, CaptureError, DesktopCapturer};
     use fluxo_encode::{open_encoder, EncoderConfig};
-    use fluxo_net::{clock_us, BitrateChange, BitrateController, PairingCode, SenderConfig, VideoSender};
+    use fluxo_net::{
+        clock_us, BitrateChange, BitrateController, CursorShape, PairingCode, SenderConfig, VideoSender,
+    };
 
     use crate::limite::FpsLimiter;
 
@@ -523,7 +525,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 .div_ceil(1000) as u32,
             None => 10,
         };
-        let frame = match cap.next_frame(espera_ms) {
+        let mut frame = match cap.next_frame(espera_ms) {
             Ok(f) => f,
             Err(CaptureError::AccessLost) => {
                 std::thread::sleep(Duration::from_millis(50));
@@ -531,6 +533,22 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => return Err(e.into()),
         };
+        // Cursor: vai à parte, na hora (a imagem capturada não o tem), e o
+        // cliente desenha por cima do vídeo. A forma antes da posição.
+        if let Some(f) = frame.as_mut() {
+            if let Some(s) = f.take_pointer_shape() {
+                tx.set_cursor_shape(CursorShape {
+                    width: s.width as u16,
+                    height: s.height as u16,
+                    hot_x: s.hot_x as u16,
+                    hot_y: s.hot_y as u16,
+                    bgra: s.bgra,
+                });
+            }
+            if let Some(p) = f.info().pointer {
+                tx.send_cursor_position(p.x, p.y, p.visible);
+            }
+        }
 
         // Relatório do cliente → bitrate adaptativo.
         if let Some(r) = tx.take_report() {

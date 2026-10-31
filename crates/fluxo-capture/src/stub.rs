@@ -7,7 +7,7 @@
 //! Se um dia houver captura em Linux (PipeWire) ou macOS
 //! (ScreenCaptureKit), ela entra como um módulo novo ao lado deste.
 
-use crate::{CaptureError, CpuImageInfo, FrameInfo, MonitorInfo};
+use crate::{CaptureError, CpuImageInfo, FrameInfo, MonitorInfo, PointerShape};
 
 /// Sem efeito fora do Windows.
 pub fn enable_dpi_awareness() {}
@@ -55,6 +55,10 @@ impl Frame<'_> {
     }
     /// Altura em pixels.
     pub fn height(&self) -> u32 {
+        unreachable!()
+    }
+    /// Forma nova do ponteiro.
+    pub fn take_pointer_shape(&mut self) -> Option<PointerShape> {
         unreachable!()
     }
     /// Copia os pixels BGRA para a RAM.

@@ -6,6 +6,18 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Cursor do mouse no cliente** (protocolo v10, fase 6): o Desktop
+  Duplication não desenha o ponteiro na imagem, e até aqui quem assistia não
+  o via. Agora o host manda posição e forma à parte (pacote Cursor, cifrado):
+  a posição a cada movimento e com cada Ping; a forma em partes, pedida de
+  novo se uma se perder. O cliente desenha o ponteiro por cima do vídeo
+  (Direct2D), na escala da imagem, e redesenha a última imagem quando só o
+  cursor mexe, sem esperar frame novo. Cursores de "inverter" (o I de texto)
+  viram preto com contorno branco. Tipo 12 reservado para o controle remoto.
+- `fluxo-capture`: `FrameInfo::pointer`, `Frame::take_pointer_shape`,
+  `convert_pointer_shape`; `fluxo-net`: `VideoSender::send_cursor_position`/
+  `set_cursor_shape`, `VideoReceiver::cursor`, `CursorView`; `fluxo-proto`:
+  `CursorMessage`, `CursorShape`, `ShapeAssembler`.
 - **IPv6 e UPnP na conexão sem servidor:** host e cliente abrem um socket
   IPv6 ao lado do IPv4, e os códigos levam o endereço IPv6 (48 símbolos);
   o pareamento tenta as duas famílias e segue pela que responder primeiro.

@@ -80,6 +80,8 @@ pub struct FrameInfo {
     pub accumulated_frames: u32,
     /// `true` se a imagem da tela mudou; `false` se foi só o cursor.
     pub desktop_updated: bool,
+    /// Posição do ponteiro, quando ela (ou a visibilidade) mudou neste frame.
+    pub pointer: Option<PointerPosition>,
 }
 
 /// Pixels de um frame copiados para a RAM.
@@ -126,3 +128,182 @@ impl fmt::Display for CaptureError {
 }
 
 impl std::error::Error for CaptureError {}
+
+/// Posição do ponteiro do mouse, em pixels do monitor capturado.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PointerPosition {
+    /// Canto superior esquerdo da imagem do ponteiro (pode ser negativo
+    /// perto das bordas).
+    pub x: i32,
+    pub y: i32,
+    /// `false` quando o ponteiro está em outro monitor ou escondido.
+    pub visible: bool,
+}
+
+/// Imagem do ponteiro, pronta para desenhar por cima do vídeo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointerShape {
+    pub width: u32,
+    pub height: u32,
+    /// Ponto que "clica", a partir do canto superior esquerdo.
+    pub hot_x: u32,
+    pub hot_y: u32,
+    /// `width × height × 4` bytes BGRA, alfa não pré-multiplicado.
+    pub bgra: Vec<u8>,
+}
+
+/// Tipos de ponteiro do Desktop Duplication (`DXGI_OUTDUPL_POINTER_SHAPE_TYPE`).
+pub const POINTER_MONOCHROME: u32 = 1;
+pub const POINTER_COLOR: u32 = 2;
+pub const POINTER_MASKED_COLOR: u32 = 4;
+
+/// Converte a forma do ponteiro como o Windows entrega para BGRA com alfa.
+///
+/// - **Colorido:** BGRA com alfa, usado como está.
+/// - **Monocromático:** máscaras AND e XOR de 1 bit (a altura informada é a
+///   soma das duas). AND 1/XOR 0 = transparente; 0/0 = preto; 0/1 = branco.
+/// - **Colorido com máscara:** alfa 0 = cor opaca; alfa 255 = "XOR com a
+///   tela" (preto aí = transparente).
+///
+/// "Inverter o que está embaixo" (AND 1/XOR 1, ou XOR com cor) não dá para
+/// fazer desenhando por cima: vira preto com contorno branco, que aparece em
+/// fundo claro e escuro (é o caso do cursor de texto, o "I").
+pub fn convert_pointer_shape(
+    kind: u32,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    hot: (i32, i32),
+    buf: &[u8],
+) -> Option<PointerShape> {
+    let altura = if kind == POINTER_MONOCHROME {
+        height / 2
+    } else {
+        height
+    };
+    let (w, h, pitch) = (width as usize, altura as usize, pitch as usize);
+    if w == 0 || h == 0 || w > 256 || h > 256 {
+        return None;
+    }
+    let mut bgra = vec![0u8; w * h * 4];
+    // Pixels de "inverter", para ganhar o contorno depois.
+    let mut inverter = vec![false; w * h];
+    match kind {
+        POINTER_COLOR | POINTER_MASKED_COLOR => {
+            if buf.len() < pitch * (h - 1) + w * 4 {
+                return None;
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    let o = y * pitch + x * 4;
+                    let (b, g, r, a) = (buf[o], buf[o + 1], buf[o + 2], buf[o + 3]);
+                    let px = match kind {
+                        POINTER_COLOR => [b, g, r, a],
+                        _ if a == 0 => [b, g, r, 255],
+                        _ if (b, g, r) == (0, 0, 0) => [0, 0, 0, 0],
+                        _ => {
+                            inverter[y * w + x] = true;
+                            [0, 0, 0, 255]
+                        }
+                    };
+                    bgra[(y * w + x) * 4..][..4].copy_from_slice(&px);
+                }
+            }
+        }
+        POINTER_MONOCHROME => {
+            if buf.len() < pitch * h * 2 {
+                return None;
+            }
+            let bit = |linha: usize, x: usize| buf[linha * pitch + x / 8] & (0x80 >> (x % 8)) != 0;
+            for y in 0..h {
+                for x in 0..w {
+                    let px = match (bit(y, x), bit(y + h, x)) {
+                        (true, false) => [0, 0, 0, 0],
+                        (false, false) => [0, 0, 0, 255],
+                        (false, true) => [255, 255, 255, 255],
+                        (true, true) => {
+                            inverter[y * w + x] = true;
+                            [0, 0, 0, 255]
+                        }
+                    };
+                    bgra[(y * w + x) * 4..][..4].copy_from_slice(&px);
+                }
+            }
+        }
+        _ => return None,
+    }
+    // Contorno branco nos pixels transparentes vizinhos de um "inverter".
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if bgra[i * 4 + 3] != 0 {
+                continue;
+            }
+            let vizinho = [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)].iter().any(|(dx, dy)| {
+                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                nx >= 0
+                    && ny >= 0
+                    && (nx as usize) < w
+                    && (ny as usize) < h
+                    && inverter[ny as usize * w + nx as usize]
+            });
+            if vizinho {
+                bgra[i * 4..][..4].copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+    }
+    Some(PointerShape {
+        width: w as u32,
+        height: h as u32,
+        hot_x: hot.0.clamp(0, w as i32 - 1) as u32,
+        hot_y: hot.1.clamp(0, h as i32 - 1) as u32,
+        bgra,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn px(s: &PointerShape, x: usize, y: usize) -> [u8; 4] {
+        let o = (y * s.width as usize + x) * 4;
+        s.bgra[o..o + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn monocromatico_com_as_quatro_combinacoes() {
+        // 4×1: AND = 0011, XOR = 0101 → preto, branco, transparente, inverter.
+        let buf = [0b0011_0000, 0b0101_0000];
+        let s = convert_pointer_shape(POINTER_MONOCHROME, 4, 2, 1, (1, 0), &buf).unwrap();
+        assert_eq!((s.width, s.height, s.hot_x), (4, 1, 1));
+        assert_eq!(px(&s, 0, 0), [0, 0, 0, 255]);
+        assert_eq!(px(&s, 1, 0), [255, 255, 255, 255]);
+        // Transparente, mas vizinho do "inverter": vira contorno branco.
+        assert_eq!(px(&s, 2, 0), [255, 255, 255, 255]);
+        assert_eq!(px(&s, 3, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn colorido_e_colorido_com_mascara() {
+        // 2×1 com pitch 12 (sobra no fim da linha).
+        let mut buf = vec![0u8; 12];
+        buf[..8].copy_from_slice(&[10, 20, 30, 128, 1, 2, 3, 0]);
+        let s = convert_pointer_shape(POINTER_COLOR, 2, 1, 12, (0, 0), &buf).unwrap();
+        assert_eq!(s.bgra, vec![10, 20, 30, 128, 1, 2, 3, 0]);
+
+        // Máscara: alfa 0 = opaco; 255 com preto = transparente; 255 com cor = inverter.
+        let buf = [9, 8, 7, 0, 0, 0, 0, 255, 50, 50, 50, 255];
+        let s = convert_pointer_shape(POINTER_MASKED_COLOR, 3, 1, 12, (0, 0), &buf).unwrap();
+        assert_eq!(px(&s, 0, 0), [9, 8, 7, 255]);
+        assert_eq!(px(&s, 1, 0), [255, 255, 255, 255], "contorno do vizinho");
+        assert_eq!(px(&s, 2, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn tamanhos_impossiveis_ou_buffer_curto() {
+        assert!(convert_pointer_shape(POINTER_COLOR, 0, 4, 0, (0, 0), &[]).is_none());
+        assert!(convert_pointer_shape(POINTER_COLOR, 300, 4, 1200, (0, 0), &[0; 4800]).is_none());
+        assert!(convert_pointer_shape(POINTER_COLOR, 2, 2, 8, (0, 0), &[0; 10]).is_none());
+        assert!(convert_pointer_shape(99, 2, 2, 8, (0, 0), &[0; 16]).is_none());
+    }
+}

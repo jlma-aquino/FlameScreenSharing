@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use fluxo_crypto::{CryptoError, HostHandshake, Opener, PairingCode, Sealer, Session, TAG_LEN};
 use fluxo_proto::{
-    prepare_seal, stamp_send_time, Feedback, Fragmenter, PacketHeader, PacketKind, SignalMessage,
-    DEFAULT_MAX_PAYLOAD, HEADER_LEN,
+    prepare_seal, stamp_send_time, CursorMessage, CursorShape, Feedback, Fragmenter, PacketHeader,
+    PacketKind, SignalMessage, DEFAULT_MAX_PAYLOAD, HEADER_LEN,
 };
 
 use crate::bitrate::NetworkReport;
@@ -337,6 +337,8 @@ pub struct SenderStats {
     /// Pacotes recebidos que não decifraram (forjados, de outra sessão) ou
     /// em claro numa sessão cifrada.
     pub rejected_packets: u64,
+    /// Pacotes de cursor enviados (posição e partes de forma).
+    pub cursor_packets: u64,
 }
 
 struct Job {
@@ -364,6 +366,8 @@ pub(crate) struct Shared {
     /// Quando chegou o relatório anterior e quantos bytes tinham saído até
     /// ali, para medir a taxa de envio real ([`NetworkReport::sent_kbps`]).
     envio_anterior: Mutex<Option<(Instant, u64)>>,
+    /// Estado do cursor, para repetir a posição e reenviar a forma pedida.
+    cursor: Mutex<CursorHost>,
 }
 
 impl Shared {
@@ -394,6 +398,8 @@ pub struct VideoSender {
     shared: Arc<Shared>,
     send_thread: Option<JoinHandle<()>>,
     recv_thread: Option<JoinHandle<()>>,
+    /// Por onde sai o cursor (da thread de quem chama).
+    saida_cursor: Saida,
     /// Thread da linha de atraso simulada, se houver.
     delay_thread: Option<JoinHandle<()>>,
     local: SocketAddr,
@@ -532,6 +538,7 @@ impl VideoSender {
             loss_window: Mutex::new(LossWindow::default()),
             report: Mutex::new(None),
             envio_anterior: Mutex::new(None),
+            cursor: Mutex::new(CursorHost::default()),
         });
         let (queue, jobs) = mpsc::channel();
 
@@ -550,6 +557,13 @@ impl VideoSender {
         let atraso_chegada =
             simula_atraso.then(|| DelayModel::new(cfg.simulated_delay, cfg.simulated_jitter));
 
+        // O cursor sai na hora, da thread de quem chama (pacotes pequenos,
+        // sem pacing).
+        let saida_cursor = Saida {
+            socket: duplicar()?,
+            atraso: atraso.clone(),
+            cifra: cifra.clone(),
+        };
         let saida = Saida {
             socket: duplicar()?,
             atraso: atraso.clone(),
@@ -577,6 +591,7 @@ impl VideoSender {
             send_thread: Some(sender),
             recv_thread: Some(receiver),
             delay_thread,
+            saida_cursor,
             local,
             peer,
         })
@@ -655,6 +670,34 @@ impl VideoSender {
         self.local
     }
 
+    /// Posição do cursor (canto superior esquerdo da imagem dele, em pixels
+    /// do monitor capturado). Sai na hora; a última também é repetida junto
+    /// com os pings, para um pacote perdido não deixar o cursor parado.
+    pub fn send_cursor_position(&self, x: i32, y: i32, visible: bool) {
+        let mut c = self.shared.cursor.lock().unwrap_or_else(|e| e.into_inner());
+        c.pos = Some((clamp_i16(x), clamp_i16(y), visible));
+        let pacote = c.position_packet();
+        drop(c);
+        if let Some(p) = pacote {
+            enviar_cursor(&self.saida_cursor, &self.shared, &p);
+        }
+    }
+
+    /// Forma nova do cursor: ganha um número e sai na hora, em partes. O
+    /// cliente que perder alguma pede de novo (ver `on_packet`).
+    pub fn set_cursor_shape(&self, shape: CursorShape) {
+        let mut c = self.shared.cursor.lock().unwrap_or_else(|e| e.into_inner());
+        // 0 = "sem forma" para o cliente.
+        c.shape_id = c.shape_id.wrapping_add(1).max(1);
+        let partes = fluxo_proto::cursor::shape_parts(c.shape_id, &shape);
+        c.shape = Some(Arc::new(shape));
+        let posicao = c.position_packet();
+        drop(c);
+        for p in partes.iter().chain(&posicao) {
+            enviar_cursor(&self.saida_cursor, &self.shared, p);
+        }
+    }
+
     /// Destino dos frames.
     pub fn peer_addr(&self) -> SocketAddr {
         self.peer
@@ -675,6 +718,67 @@ impl Drop for VideoSender {
         // A linha de atraso entrega o que ainda segura e termina.
         if let Some(t) = self.delay_thread.take() {
             let _ = t.join();
+        }
+    }
+}
+
+/// Cursor do lado do host: o último estado, para repetir e reenviar.
+#[derive(Default)]
+struct CursorHost {
+    pos: Option<(i16, i16, bool)>,
+    shape_id: u16,
+    shape: Option<Arc<CursorShape>>,
+    /// Último reenvio da forma a pedido (no máximo um a cada 100 ms).
+    ultimo_reenvio: Option<Instant>,
+}
+
+impl CursorHost {
+    fn position_packet(&self) -> Option<Vec<u8>> {
+        let (x, y, visible) = self.pos?;
+        let m = CursorMessage::Position {
+            x,
+            y,
+            visible,
+            shape: self.shape_id,
+        };
+        cursor_packet(&m.to_bytes())
+    }
+}
+
+fn cursor_packet(payload: &[u8]) -> Option<Vec<u8>> {
+    PacketKind::Cursor
+        .control(0, clock_us())
+        .encode_with_payload(payload)
+        .ok()
+}
+
+fn clamp_i16(v: i32) -> i16 {
+    v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+fn enviar_cursor(saida: &Saida, shared: &Shared, pacote: &[u8]) {
+    let ok = saida.send(pacote).is_ok();
+    shared.with_stats(|s| match ok {
+        true => s.cursor_packets += 1,
+        false => s.send_errors += 1,
+    });
+}
+
+/// O cliente pediu a forma `id`: reenvia, se for a atual (e não acabou de
+/// reenviar).
+fn reenviar_forma(id: u16, saida: &Saida, shared: &Shared) {
+    let mut c = shared.cursor.lock().unwrap_or_else(|e| e.into_inner());
+    let recente = c
+        .ultimo_reenvio
+        .is_some_and(|t| t.elapsed() < Duration::from_millis(100));
+    let Some(forma) = c.shape.clone().filter(|_| c.shape_id == id && !recente) else {
+        return;
+    };
+    c.ultimo_reenvio = Some(Instant::now());
+    drop(c);
+    for p in fluxo_proto::cursor::shape_parts(id, &forma) {
+        if let Some(pacote) = cursor_packet(&p) {
+            enviar_cursor(saida, shared, &pacote);
         }
     }
 }
@@ -746,6 +850,11 @@ fn send_loop(socket: Saida, jobs: mpsc::Receiver<Job>, cfg: SenderConfig, shared
         }
         if Instant::now() >= next_ping {
             send_ping(&socket, &shared, &mut ping_id);
+            // A última posição do cursor também, caso uma tenha se perdido.
+            let posicao = shared.cursor.lock().map(|c| c.position_packet()).unwrap_or(None);
+            if let Some(p) = posicao {
+                enviar_cursor(&socket, &shared, &p);
+            }
             next_ping = Instant::now() + cfg.ping_interval;
         }
     }
@@ -959,6 +1068,11 @@ fn on_packet(
             } else {
                 shared.refresh_requested.store(true, Ordering::Relaxed);
                 shared.with_stats(|s| s.refresh_requests += 1);
+            }
+        }
+        PacketKind::Cursor => {
+            if let Ok(CursorMessage::ShapeRequest { shape }) = CursorMessage::from_bytes(payload) {
+                reenviar_forma(shape, socket, shared);
             }
         }
         PacketKind::Feedback => {

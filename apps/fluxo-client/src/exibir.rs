@@ -113,6 +113,10 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
     // Painel sobre a imagem: o texto muda 1×/s; F2 liga e desliga.
     let mut texto_painel = cfg.espera.clone();
     let mut painel_ligado = false;
+    // Última versão do cursor desenhada, e quantas vezes ele foi redesenhado
+    // sem frame novo.
+    let mut versao_cursor: Option<u64> = None;
+    let mut cursor_redesenhos = 0u64;
 
     while !c.fechar.load(Ordering::Relaxed) {
         let quer_painel = c.painel.load(Ordering::Relaxed);
@@ -141,8 +145,22 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
             RecoveryRequest::None => {}
         }
 
+        // Cursor do host: posição ou forma nova vale para o próximo desenho.
+        let cursor = rx.cursor();
+        let cursor_mudou = cursor.as_ref().map(|c| c.version) != versao_cursor;
+        if cursor_mudou {
+            versao_cursor = cursor.as_ref().map(|c| c.version);
+            tela.set_cursor(cursor)?;
+        }
+
         // Espera curta para ver `fechar` e o tamanho novo logo.
         let Some(primeiro) = rx.recv_frame(Duration::from_millis(5))? else {
+            // Sem frame novo, mas o cursor mexeu: redesenha a última imagem
+            // com ele no lugar novo (não espera o próximo frame).
+            if cursor_mudou && tela.has_image() && recuperacao.is_clean() {
+                tela.present_again()?;
+                cursor_redesenhos += 1;
+            }
             continue;
         };
         inicio.get_or_insert_with(Instant::now);
@@ -247,6 +265,10 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
     println!(
         "  perdidos na rede: {} | reconstruídos pelo FEC: {} fragmentos | erros de decode: {erros_decode} | descartados na fila: {}",
         s.reassembly.frames_lost, s.reassembly.fec_recovered, s.frames_dropped
+    );
+    println!(
+        "  cursor: {} pacotes ({} formas pedidas de novo), {cursor_redesenhos} redesenhos sem frame novo",
+        s.cursor_packets, s.cursor_requests
     );
     println!(
         "  recuperação:      {} perdas, {} pedidos de limpeza e {} de keyframe; {} recuperações, imagem congelada média {:.1} ms, máx {:.1} ms",
