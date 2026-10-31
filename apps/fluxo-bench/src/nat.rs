@@ -29,6 +29,21 @@ pub fn cmd_nat(_: &Opts) -> Result<(), Box<dyn Error>> {
         println!("  {:<28} → {visto}", r.server);
     }
     let vistos: Vec<_> = respostas.iter().filter_map(|r| r.mapped).collect();
+    // UPnP: só pergunta ao roteador (não abre porta nenhuma).
+    match fluxo_net::find_gateway() {
+        Ok(Some(g)) => match (g.external_ip(), vistos.first()) {
+            (Ok(ip), _) if fluxo_net::is_private_v4(ip) => {
+                println!("  roteador com UPnP, mas o IP externo dele é {ip}: há CGNAT na frente, abrir porta não adianta")
+            }
+            (Ok(ip), Some(publico)) if std::net::IpAddr::V4(ip) == publico.ip() => {
+                println!("  roteador com UPnP e IP público ({ip}): o cliente abre a porta e basta um código")
+            }
+            (Ok(ip), _) => println!("  roteador com UPnP, IP externo {ip} (diferente do que o STUN viu)"),
+            (Err(e), _) => println!("  roteador com UPnP, mas não informou o IP externo ({e})"),
+        },
+        Ok(None) => println!("  sem UPnP na rede local"),
+        Err(e) => println!("  UPnP: {e}"),
+    }
     println!();
     let Some(primeiro) = vistos.first() else {
         println!("Nenhum servidor respondeu: sem internet, ou a rede bloqueia UDP.");

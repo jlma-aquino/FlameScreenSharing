@@ -45,6 +45,7 @@ Opções:
   --internet      redes diferentes, sem servidor: mostra um código de conexão para
                   mandar a quem compartilha (fluxo-host --conexao ...) e pede no
                   terminal o código de resposta que ele mandar de volta
+  --sem-upnp      com --internet: não abre a porta no roteador por UPnP
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
 
 Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
@@ -63,6 +64,7 @@ struct Opts {
     sem_cifra: bool,
     sinal: Option<String>,
     internet: bool,
+    sem_upnp: bool,
     sem_painel: bool,
 }
 
@@ -78,6 +80,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         sem_cifra: false,
         sinal: None,
         internet: false,
+        sem_upnp: false,
         sem_painel: false,
     };
     let mut it = args.iter();
@@ -94,6 +97,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--sem-cifra" => o.sem_cifra = true,
             "--sinal" => o.sinal = Some(valor()?.clone()),
             "--internet" => o.internet = true,
+            "--sem-upnp" => o.sem_upnp = true,
             "--sem-painel" => o.sem_painel = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
@@ -160,30 +164,36 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .as_deref()
         .map(fluxo_net::resolve_signal_server)
         .transpose()?;
-    // Sem servidor (--internet): o endereço público vem do STUN, e só vale
-    // para este socket, que é o que recebe o vídeo.
-    let socket = std::net::UdpSocket::bind(("0.0.0.0", o.porta))?;
-    let publico = match o.internet {
-        true => Some(fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?),
+    // Sem servidor (--internet): endereços públicos pelo STUN (IPv4 e IPv6)
+    // e porta aberta por UPnP, se der; só valem para estes sockets, que são
+    // os que recebem o vídeo.
+    let internet = match o.internet {
+        true => Some(fluxo_net::Internet::open(o.porta, !o.sem_upnp)?),
         false => None,
     };
-    let rx = VideoReceiver::with_socket(
-        socket,
+    let (v4, v6, keepalive) = match &internet {
+        Some(i) => (
+            i.v4.try_clone()?,
+            i.v6.as_ref().map(std::net::UdpSocket::try_clone).transpose()?,
+            Some(i.public.server),
+        ),
+        None => (std::net::UdpSocket::bind(("0.0.0.0", o.porta))?, None, None),
+    };
+    let rx = VideoReceiver::with_sockets(
+        v4,
+        v6,
         ReceiverConfig {
             pairing_code: codigo.clone(),
             signal_server: servidor,
-            keepalive_to: publico.as_ref().map(|p| p.server),
-            on_pairing: publico
+            keepalive_to: keepalive,
+            on_pairing: internet
                 .as_ref()
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
             ..ReceiverConfig::default()
         },
     )?;
-    let conexao = match (&publico, &codigo) {
-        (Some(p), Some(c)) => Some(fluxo_net::ConnectionCode {
-            pairing: c.clone(),
-            addr: p.v4()?,
-        }),
+    let conexao = match (&internet, &codigo) {
+        (Some(i), Some(c)) => Some(i.connection_code(c.clone())?),
         _ => None,
     };
     // Como o host acha este PC: pelo servidor (o que foi digitado em
@@ -196,14 +206,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let espera = match (&codigo, &conexao) {
         (_, Some(cc)) => {
             println!("Código de conexão: {cc}");
-            if let Some(p) = &publico {
-                println!("  NAT: {}", p.summary());
+            for linha in internet.iter().flat_map(|i| i.summary()) {
+                println!("  {linha}");
             }
             println!("  Mande para quem vai compartilhar:  fluxo-host --conexao {cc}");
-            if let Some(aviso) = publico.as_ref().and_then(|p| p.warning()) {
-                println!("  {aviso}");
+            match cc.open {
+                true => println!("Ele conecta direto; se não conectar, cole aqui o código de resposta dele:"),
+                false => println!("Depois cole aqui o código de resposta que ele mandar de volta:"),
             }
-            println!("Depois cole aqui o código de resposta que ele mandar de volta:");
             ler_respostas(rx.puncher());
             format!("Fluxo — código de conexão {cc} · cole a resposta do host no terminal")
         }
@@ -275,8 +285,10 @@ fn ler_respostas(furos: fluxo_net::Puncher) {
             }
             match fluxo_net::ReplyCode::parse(&linha) {
                 Ok(r) => {
-                    furos.punch(&[std::net::SocketAddr::V4(r.addr)]);
-                    println!("Abrindo caminho até o host em {}…", r.addr);
+                    let destinos = r.candidates();
+                    furos.punch(&destinos);
+                    let lista: Vec<String> = destinos.iter().map(|d| d.to_string()).collect();
+                    println!("Abrindo caminho até o host em {}…", lista.join(" e "));
                 }
                 Err(e) => println!("{e}. Cole de novo:"),
             }

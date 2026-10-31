@@ -846,3 +846,64 @@ fn anotar(lista: &Eventos) -> PairingObserver {
     let lista = lista.clone();
     PairingObserver::new(move |e| lista.lock().unwrap().push(e.clone()))
 }
+
+#[test]
+fn pareia_por_ipv6_ou_ipv4_o_que_responder() {
+    let (Ok(rx6), Ok(tx6)) = (UdpSocket::bind("[::1]:0"), UdpSocket::bind("[::1]:0")) else {
+        return; // máquina sem IPv6
+    };
+    let rx = VideoReceiver::with_sockets(
+        UdpSocket::bind("127.0.0.1:0").unwrap(),
+        Some(rx6.try_clone().unwrap()),
+        ReceiverConfig {
+            pairing_code: Some(codigo("K7M4-QX9P")),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    let cfg = || SenderConfig {
+        pairing_code: Some(codigo("K7M4-QX9P")),
+        pairing_timeout: Duration::from_secs(3),
+        punch_ttl: Some(fluxo_net::PUNCH_TTL),
+        ..SenderConfig::for_bitrate(20_000_000)
+    };
+    // Só o IPv6 do cliente: pareia por ele (o socket IPv4 fica de fora).
+    let peers = vec![rx6.local_addr().unwrap()];
+    let tx =
+        VideoSender::connect_with_sockets(UdpSocket::bind("127.0.0.1:0").unwrap(), Some(tx6), peers, cfg())
+            .expect("pareia");
+    assert!(tx.peer_addr().is_ipv6(), "{}", tx.peer_addr());
+    tx.send_frame(frame(0, 5_000), true, clock_us()).unwrap();
+    let f = rx
+        .recv_frame(Duration::from_secs(1))
+        .unwrap()
+        .expect("frame por IPv6");
+    assert_eq!(f.frame.data, frame(0, 5_000));
+    drop(tx);
+
+    // IPv6 do código errado (porta sem ninguém): pareia pelo IPv4.
+    let rx2 = VideoReceiver::with_sockets(
+        UdpSocket::bind("127.0.0.1:0").unwrap(),
+        Some(UdpSocket::bind("[::1]:0").unwrap()),
+        ReceiverConfig {
+            pairing_code: Some(codigo("K7M4-QX9P")),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    let mudo6 = UdpSocket::bind("[::1]:0").unwrap().local_addr().unwrap();
+    let tx = VideoSender::connect_with_sockets(
+        UdpSocket::bind("127.0.0.1:0").unwrap(),
+        Some(UdpSocket::bind("[::1]:0").unwrap()),
+        vec![mudo6, rx2.local_addr()],
+        cfg(),
+    )
+    .expect("pareia pelo IPv4");
+    assert_eq!(tx.peer_addr(), rx2.local_addr());
+    tx.send_frame(frame(1, 5_000), true, clock_us()).unwrap();
+    let f = rx2
+        .recv_frame(Duration::from_secs(1))
+        .unwrap()
+        .expect("frame por IPv4");
+    assert_eq!(f.frame.data, frame(1, 5_000));
+}

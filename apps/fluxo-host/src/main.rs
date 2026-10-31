@@ -394,7 +394,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         (Some(c), Some(s), _) => {
             println!("Procurando o cliente pelo servidor de sinalização {s} (código {c})…")
         }
-        (Some(c), None, Some(conexao)) => println!("Conectando ao cliente em {} (código {c})…", conexao.addr),
+        (Some(c), None, Some(conexao)) => {
+            let lista: Vec<String> = conexao.candidates().iter().map(|a| a.to_string()).collect();
+            println!("Conectando ao cliente em {} (código {c})…", lista.join(" e "))
+        }
         (Some(c), None, None) => println!("Pareando com {} (código {c})…", o.destino),
         (None, ..) => println!("TESTE: sem pareamento nem cifra (--sem-cifra)"),
     }
@@ -413,29 +416,30 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let tx = match (servidor, &o.conexao) {
         (Some(s), _) => VideoSender::connect_via_signal(("0.0.0.0", o.porta_local), s, net_cfg)?,
         (None, Some(c)) => {
-            // O endereço público vale só para este socket: o mesmo leva o vídeo.
-            let socket = std::net::UdpSocket::bind(("0.0.0.0", o.porta_local))?;
-            let publico = fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?;
-            let resposta = fluxo_net::ReplyCode { addr: publico.v4()? };
-            println!("\nCódigo de resposta: {resposta}");
+            // Os endereços públicos valem só para estes sockets: os mesmos levam o vídeo.
+            let internet = fluxo_net::Internet::open(o.porta_local, false)?;
+            println!("\nCódigo de resposta: {}", internet.reply_code(c)?);
             println!("  Mande para quem vai assistir: ele cola no terminal do fluxo-client.");
-            if let Some(aviso) = publico.warning() {
-                println!("  {aviso}");
+            println!("  Esperando até 5 min…");
+            for linha in internet.summary() {
+                println!("  {linha}");
             }
-            println!("  Esperando até 5 min…\n");
-            println!("  NAT: {}", publico.summary());
-            if o.ttl_furo > 0 {
-                println!(
-                    "  Pedidos com TTL {} até o furo do outro lado chegar (--ttl-furo)",
-                    o.ttl_furo
-                );
+            // Porta aberta por UPnP do outro lado: direto, sem esperar o furo.
+            let ttl = (o.ttl_furo > 0 && !c.open).then_some(o.ttl_furo);
+            match (ttl, c.open) {
+                (_, true) => println!("  O cliente abriu a porta no roteador (UPnP): conectando direto"),
+                (Some(t), _) => {
+                    println!("  Pedidos IPv4 com TTL {t} até o furo do outro lado chegar (--ttl-furo)")
+                }
+                (None, _) => {}
             }
+            println!();
             let net_cfg = SenderConfig {
                 on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
-                punch_ttl: (o.ttl_furo > 0).then_some(o.ttl_furo),
+                punch_ttl: ttl,
                 ..net_cfg
             };
-            VideoSender::connect_with_socket(socket, std::net::SocketAddr::V4(c.addr), net_cfg)?
+            VideoSender::connect_with_sockets(internet.v4, internet.v6, c.candidates(), net_cfg)?
         }
         (None, None) => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,
     };

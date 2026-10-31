@@ -18,6 +18,7 @@ use crate::bitrate::NetworkReport;
 use crate::history::{LossSample, LossWindow, SentHistory};
 use crate::observar::{kind_of, PairingEvent, PairingObserver, RESUMO_A_CADA};
 use crate::pacer::Pacer;
+use crate::portas::Portas;
 use crate::rtt::{RttEstimator, RttStats};
 use crate::sim::{DelayLine, DelayModel, Rng};
 use crate::sync::ClockSync;
@@ -113,8 +114,9 @@ const MAX_CANDIDATOS: usize = 8;
 
 /// Como achar o cliente.
 enum Rota {
-    /// Endereço conhecido (mesma rede, ou porta aberta no roteador dele).
-    Direta(SocketAddr),
+    /// Endereços conhecidos (mesma rede, código de conexão, porta aberta no
+    /// roteador dele).
+    Direta(Vec<SocketAddr>),
     /// Pelo servidor de sinalização, na sala do código.
     Sinal(SocketAddr),
 }
@@ -151,7 +153,7 @@ impl Tentativa {
 /// que, na nossa rede, é de outro PC): sai da lista, e o handshake recomeça
 /// com os outros.
 fn parear(
-    socket: &UdpSocket,
+    socket: &Portas,
     codigo: &PairingCode,
     prazo: Duration,
     rota: &Rota,
@@ -160,7 +162,7 @@ fn parear(
 ) -> Result<(Session, SocketAddr), NetError> {
     let mut t = Tentativa::nova(codigo)?;
     let (mut candidatos, servidor) = match *rota {
-        Rota::Direta(peer) => (vec![peer], None),
+        Rota::Direta(ref peers) => (peers.clone(), None),
         Rota::Sinal(servidor) => (Vec::new(), Some(servidor)),
     };
     let procura = match servidor {
@@ -170,7 +172,7 @@ fn parear(
                 .encode_with_payload(
                     &SignalMessage::Lookup {
                         room: codigo.room(),
-                        locals: crate::local_candidates(socket),
+                        locals: crate::local_candidates(socket.v4()),
                     }
                     .to_bytes(),
                 )
@@ -185,7 +187,7 @@ fn parear(
     let mut enviados = 0u64;
     let mut proximo_resumo = inicio + RESUMO_A_CADA;
     socket
-        .set_read_timeout(Some(Duration::from_millis(50)))
+        .set_read_timeout(Duration::from_millis(50))
         .map_err(NetError::io("configurar socket"))?;
     let limite = Instant::now() + prazo;
     let mut buf = [0u8; 2048];
@@ -196,7 +198,7 @@ fn parear(
             let _ = socket.send_to(p, s);
         }
         for c in &candidatos {
-            enviados += socket.send_to(&t.init, c).is_ok() as u64;
+            enviados += socket.send_to(&t.init, *c).is_ok() as u64;
         }
         if let Some(o) = observar.filter(|_| Instant::now() >= proximo_resumo) {
             o.notify(&PairingEvent::Waiting {
@@ -238,7 +240,9 @@ fn parear(
                     // O furo do cliente chegou: o caminho está aberto dos dois
                     // lados, e os pedidos já podem ir até ele.
                     if let Some(n) = ttl_normal.take() {
-                        let _ = socket.set_ttl(n);
+                        if let Some(v4) = socket.v4() {
+                            let _ = v4.set_ttl(n);
+                        }
                     }
                 }
                 // Só de um candidato: quem não sabe por onde o cliente anda
@@ -413,7 +417,8 @@ impl VideoSender {
                 message: "nenhum endereço".into(),
             })?;
         let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
-        Self::start(socket, Rota::Direta(peer), cfg)
+        let portas = Portas::one(socket).map_err(NetError::io("abrir socket UDP"))?;
+        Self::start(portas, Rota::Direta(vec![peer]), cfg)
     }
 
     /// Como [`connect`](Self::connect), mas acha o cliente pelo servidor de
@@ -430,7 +435,8 @@ impl VideoSender {
             ));
         }
         let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
-        Self::start(socket, Rota::Sinal(server), cfg)
+        let portas = Portas::one(socket).map_err(NetError::io("abrir socket UDP"))?;
+        Self::start(portas, Rota::Sinal(server), cfg)
     }
 
     /// Como [`connect`](Self::connect), num socket já aberto — o mesmo em que
@@ -443,10 +449,26 @@ impl VideoSender {
         peer: SocketAddr,
         cfg: SenderConfig,
     ) -> Result<Self, NetError> {
-        Self::start(socket, Rota::Direta(peer), cfg)
+        let portas = Portas::one(socket).map_err(NetError::io("abrir socket UDP"))?;
+        Self::start(portas, Rota::Direta(vec![peer]), cfg)
     }
 
-    fn start(socket: UdpSocket, rota: Rota, cfg: SenderConfig) -> Result<Self, NetError> {
+    /// Como [`connect_with_socket`](Self::connect_with_socket), com um
+    /// socket IPv6 também, tentando todos os `peers` (do código de conexão)
+    /// ao mesmo tempo. O vídeo vai pelo que parear primeiro; o TTL baixo
+    /// ([`SenderConfig::punch_ttl`]) vale só no IPv4 (IPv6 não tem NAT para
+    /// ocupar a porta).
+    pub fn connect_with_sockets(
+        v4: UdpSocket,
+        v6: Option<UdpSocket>,
+        peers: Vec<SocketAddr>,
+        cfg: SenderConfig,
+    ) -> Result<Self, NetError> {
+        let portas = Portas::new(Some(v4), v6).map_err(NetError::io("abrir socket UDP"))?;
+        Self::start(portas, Rota::Direta(peers), cfg)
+    }
+
+    fn start(portas: Portas, rota: Rota, cfg: SenderConfig) -> Result<Self, NetError> {
         // Pareamento antes de qualquer outro pacote: com código, nada sai em
         // claro. O socket só se prende ao cliente depois, no endereço que
         // respondeu.
@@ -454,31 +476,40 @@ impl VideoSender {
             (Some(codigo), _) => {
                 // TTL baixo até o furo do cliente; o normal volta depois, dê
                 // certo ou não.
-                let ttl_normal = match cfg.punch_ttl {
-                    Some(baixo) => {
-                        let normal = socket.ttl().map_err(NetError::io("ler TTL"))?;
-                        socket.set_ttl(baixo).map_err(NetError::io("configurar TTL"))?;
+                let ttl_normal = match (cfg.punch_ttl, portas.v4()) {
+                    (Some(baixo), Some(v4)) => {
+                        let normal = v4.ttl().map_err(NetError::io("ler TTL"))?;
+                        v4.set_ttl(baixo).map_err(NetError::io("configurar TTL"))?;
                         Some(normal)
                     }
-                    None => None,
+                    _ => None,
                 };
                 let pareado = parear(
-                    &socket,
+                    &portas,
                     codigo,
                     cfg.pairing_timeout,
                     &rota,
                     cfg.on_pairing.as_ref(),
                     ttl_normal,
                 );
-                if let Some(normal) = ttl_normal {
-                    socket.set_ttl(normal).map_err(NetError::io("configurar TTL"))?;
+                if let (Some(normal), Some(v4)) = (ttl_normal, portas.v4()) {
+                    v4.set_ttl(normal).map_err(NetError::io("configurar TTL"))?;
                 }
                 let (s, peer) = pareado?;
                 (Some(Arc::new(Mutex::new(s.sealer))), Some(s.opener), peer)
             }
-            (None, Rota::Direta(peer)) => (None, None, *peer),
+            (None, Rota::Direta(peers)) => {
+                let peer = *peers
+                    .first()
+                    .ok_or_else(|| NetError::Pairing("nenhum destino".into()))?;
+                (None, None, peer)
+            }
             (None, Rota::Sinal(_)) => unreachable!("conferido em connect_via_signal"),
         };
+        // Só o socket da família que pareou continua.
+        let socket = portas
+            .into_socket(peer)
+            .map_err(NetError::io("definir destino"))?;
         socket.connect(peer).map_err(NetError::io("definir destino"))?;
         // Timeout curto na leitura: a thread de recepção confere `stop` a cada volta.
         socket

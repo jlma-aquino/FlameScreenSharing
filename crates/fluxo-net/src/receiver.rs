@@ -15,6 +15,7 @@ use fluxo_proto::{
 
 use crate::delay::QueueDelay;
 use crate::observar::{kind_of, PairingEvent, PairingObserver, RESUMO_A_CADA};
+use crate::portas::Portas;
 use crate::rtt::{RttEstimator, RttStats};
 use crate::sync::ClockSync;
 use crate::{clock_diff_us, clock_us, is_transient, pong_clock, pong_for, NetError};
@@ -172,7 +173,7 @@ impl Shared {
 
     /// Manda um pacote montado ao host: cifrado se há código de pareamento
     /// (e nada, se o pareamento ainda não aconteceu), em claro se não há.
-    fn enviar(&self, socket: &UdpSocket, mut pacote: Vec<u8>, para: SocketAddr) -> bool {
+    fn enviar(&self, socket: &Portas, mut pacote: Vec<u8>, para: SocketAddr) -> bool {
         if self.cifrado {
             let mut sealer = self.sealer.lock().unwrap_or_else(|e| e.into_inner());
             let Some(s) = sealer.as_mut() else {
@@ -205,7 +206,7 @@ pub struct VideoReceiver {
     thread: Option<JoinHandle<()>>,
     local: SocketAddr,
     /// Cópia do socket para mandar pedidos de keyframe desta thread.
-    socket: UdpSocket,
+    socket: Portas,
     /// Último pedido de keyframe e quantos já foram (número do próximo).
     last_request: Mutex<(Option<Instant>, u32)>,
 }
@@ -226,6 +227,9 @@ impl Puncher {
 /// tempo para o keyframe pedido chegar antes de pedir de novo.
 const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Timeout de leitura do socket (com IPv4 e IPv6, metade em cada).
+const LEITURA: Duration = Duration::from_millis(50);
+
 impl VideoReceiver {
     /// Escuta em `bind` (ex.: `"0.0.0.0:9000"`).
     pub fn bind(bind: impl ToSocketAddrs, cfg: ReceiverConfig) -> Result<Self, NetError> {
@@ -237,13 +241,21 @@ impl VideoReceiver {
     /// [`discover_public_addr`](crate::discover_public_addr) descobriu o
     /// endereço público, que só vale para ele.
     pub fn with_socket(socket: UdpSocket, cfg: ReceiverConfig) -> Result<Self, NetError> {
+        Self::with_sockets(socket, None, cfg)
+    }
+
+    /// Como [`with_socket`](Self::with_socket), escutando também num socket
+    /// IPv6: o host pode parear por qualquer um dos dois; depois só o da
+    /// família que pareou continua.
+    pub fn with_sockets(v4: UdpSocket, v6: Option<UdpSocket>, cfg: ReceiverConfig) -> Result<Self, NetError> {
         if cfg.signal_server.is_some() && cfg.pairing_code.is_none() {
             return Err(NetError::Pairing(
                 "a sinalização precisa do código de pareamento".into(),
             ));
         }
+        let socket = Portas::new(Some(v4), v6).map_err(NetError::io("abrir socket UDP"))?;
         socket
-            .set_read_timeout(Some(Duration::from_millis(50)))
+            .set_read_timeout(LEITURA)
             .map_err(NetError::io("configurar socket"))?;
         let local = socket.local_addr().map_err(NetError::io("endereço local"))?;
         let shared = Arc::new(Shared {
@@ -396,10 +408,10 @@ struct Sinalizacao {
 }
 
 impl Sinalizacao {
-    fn new(servidor: SocketAddr, codigo: &PairingCode, socket: &UdpSocket) -> Self {
+    fn new(servidor: SocketAddr, codigo: &PairingCode, socket: &Portas) -> Self {
         let msg = SignalMessage::Register {
             room: codigo.room(),
-            locals: crate::local_candidates(socket),
+            locals: crate::local_candidates(socket.v4()),
         };
         let registro = PacketKind::Signal
             .control(0, clock_us())
@@ -414,7 +426,7 @@ impl Sinalizacao {
     }
 
     /// Renova o registro, se está na hora.
-    fn renovar(&mut self, socket: &UdpSocket) {
+    fn renovar(&mut self, socket: &Portas) {
         if Instant::now() >= self.proximo {
             let _ = socket.send_to(&self.registro, self.servidor);
             let espera = if self.confirmado {
@@ -428,7 +440,7 @@ impl Sinalizacao {
 
     /// Trata uma mensagem do servidor. Um host procurando por nós: manda um
     /// furo a cada endereço dele, para os `PairInit` passarem pelo nosso NAT.
-    fn tratar(&mut self, payload: &[u8], socket: &UdpSocket, shared: &Shared) {
+    fn tratar(&mut self, payload: &[u8], socket: &Portas, shared: &Shared) {
         match SignalMessage::from_bytes(payload) {
             Ok(SignalMessage::Registered { public }) => {
                 self.confirmado = true;
@@ -454,7 +466,7 @@ impl Sinalizacao {
 }
 
 fn recv_loop(
-    socket: UdpSocket,
+    mut socket: Portas,
     cfg: ReceiverConfig,
     frames: mpsc::SyncSender<ReceivedFrame>,
     shared: Arc<Shared>,
@@ -671,6 +683,11 @@ fn recv_loop(
                 shared.with_stats(|s| s.peer_changes += 1);
             }
             peer = Some(from);
+            // Pareou por uma família: a outra não precisa mais ser escutada.
+            if socket.has_v6() && socket.v4().is_some() {
+                let _ = socket.keep_only(from);
+                let _ = socket.set_read_timeout(LEITURA);
+            }
             next_ping = Instant::now();
             shared.with_stats(|s| s.peer = Some(from));
         }
@@ -747,7 +764,7 @@ fn recv_loop(
 
 /// Manda os furos pedidos por [`VideoReceiver::punch`], se ainda no prazo, e
 /// devolve para onde foram.
-fn furar(socket: &UdpSocket, shared: &Shared) -> Option<Vec<SocketAddr>> {
+fn furar(socket: &Portas, shared: &Shared) -> Option<Vec<SocketAddr>> {
     let mut furos = shared.furos.lock().unwrap_or_else(|e| e.into_inner());
     let (destinos, ate) = furos.as_ref()?;
     if Instant::now() > *ate {
@@ -759,7 +776,7 @@ fn furar(socket: &UdpSocket, shared: &Shared) -> Option<Vec<SocketAddr>> {
     };
     let mut n = 0;
     for d in destinos {
-        n += socket.send_to(&furo, d).is_ok() as u64;
+        n += socket.send_to(&furo, *d).is_ok() as u64;
     }
     let destinos = destinos.clone();
     drop(furos);
@@ -771,7 +788,7 @@ fn furar(socket: &UdpSocket, shared: &Shared) -> Option<Vec<SocketAddr>> {
 /// mesma resposta; um novo gera uma sessão candidata.
 #[allow(clippy::too_many_arguments)]
 fn responder_pareamento(
-    socket: &UdpSocket,
+    socket: &Portas,
     shared: &Shared,
     codigo: &PairingCode,
     h: &PacketHeader,

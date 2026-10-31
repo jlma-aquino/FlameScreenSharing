@@ -13,8 +13,7 @@ use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 use fluxo_net::{
-    ConnectionCode, FrameAction, PairingCode, Puncher, ReceiverConfig, Recovery, RecoveryRequest, ReplyCode,
-    VideoReceiver,
+    FrameAction, PairingCode, Puncher, ReceiverConfig, Recovery, RecoveryRequest, ReplyCode, VideoReceiver,
 };
 
 #[cfg(windows)]
@@ -68,42 +67,43 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     if servidor.is_some() && o.internet {
         return Err("use --sinal ou --internet, não os dois".into());
     }
-    // Sem servidor: o endereço público vem do STUN, e só vale para este socket.
-    let socket = UdpSocket::bind(("0.0.0.0", o.porta))?;
-    let publico = match o.internet {
-        true => Some(fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?),
+    // Sem servidor: endereços públicos pelo STUN (IPv4 e IPv6) e porta aberta
+    // por UPnP, se der; só valem para estes sockets.
+    let internet = match o.internet {
+        true => Some(fluxo_net::Internet::open(o.porta, !o.sem_upnp)?),
         false => None,
     };
-    let rx = VideoReceiver::with_socket(
-        socket,
+    let (v4, v6, keepalive) = match &internet {
+        Some(i) => (
+            i.v4.try_clone()?,
+            i.v6.as_ref().map(UdpSocket::try_clone).transpose()?,
+            Some(i.public.server),
+        ),
+        None => (UdpSocket::bind(("0.0.0.0", o.porta))?, None, None),
+    };
+    let rx = VideoReceiver::with_sockets(
+        v4,
+        v6,
         ReceiverConfig {
             pairing_code: codigo.clone(),
             signal_server: servidor,
-            keepalive_to: publico.as_ref().map(|p| p.server),
-            on_pairing: publico
+            keepalive_to: keepalive,
+            on_pairing: internet
                 .as_ref()
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
             ..ReceiverConfig::default()
         },
     )?;
     let saida = o.saida.clone().unwrap_or_else(|| "recebido.h264".into());
-    match (&codigo, &o.sinal, &publico) {
-        (Some(c), _, Some(p)) => {
-            let cc = ConnectionCode {
-                pairing: c.clone(),
-                addr: p.v4()?,
-            };
-            println!(
-                "Escutando em {} (público {}; {}).",
-                rx.local_addr(),
-                p.addr,
-                p.summary()
-            );
+    match (&codigo, &o.sinal, &internet) {
+        (Some(c), _, Some(i)) => {
+            let cc = i.connection_code(c.clone())?;
+            println!("Escutando em {} (público {}).", rx.local_addr(), i.public.addr);
+            for linha in i.summary() {
+                println!("  {linha}");
+            }
             println!("Código de conexão: {cc}");
             println!("  No PC que envia: fluxo-bench enviar --conexao {cc}");
-            if let Some(aviso) = p.warning() {
-                println!("  {aviso}");
-            }
             println!("Depois cole aqui o código de resposta que ele mostrar:");
             ler_respostas(rx.puncher());
         }
@@ -339,8 +339,10 @@ fn ler_respostas(furos: Puncher) {
             }
             match ReplyCode::parse(&linha) {
                 Ok(r) => {
-                    furos.punch(&[std::net::SocketAddr::V4(r.addr)]);
-                    println!("Abrindo caminho até {}…", r.addr);
+                    let destinos = r.candidates();
+                    furos.punch(&destinos);
+                    let lista: Vec<String> = destinos.iter().map(|d| d.to_string()).collect();
+                    println!("Abrindo caminho até {}…", lista.join(" e "));
                 }
                 Err(e) => println!("{e}. Cole de novo:"),
             }

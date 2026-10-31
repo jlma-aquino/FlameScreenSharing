@@ -58,6 +58,8 @@ struct Opts {
     ttl_furo: u32,
     /// `receber` sem servidor: mostra um código de conexão (STUN público).
     internet: bool,
+    /// `receber --internet` sem tentar abrir a porta no roteador por UPnP.
+    sem_upnp: bool,
     /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
     fec: u8,
     /// Código de pareamento do `receber` (padrão: sorteado) e do `enviar`.
@@ -88,6 +90,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         conexao: None,
         ttl_furo: fluxo_net::PUNCH_TTL,
         internet: false,
+        sem_upnp: false,
         fec: 10,
         codigo: None,
         sem_cifra: false,
@@ -109,6 +112,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--conexao" => o.conexao = Some(valor()?.clone()),
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--internet" => o.internet = true,
+            "--sem-upnp" => o.sem_upnp = true,
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--codigo" => o.codigo = Some(valor()?.clone()),
             "--sem-cifra" => o.sem_cifra = true,
@@ -162,6 +166,7 @@ Opções:
                         nele e o enviar acha o receber por ele (redes diferentes)
   --internet            no receber: redes diferentes sem servidor; mostra um código de
                         conexão e pede no terminal o código de resposta do enviar
+  --sem-upnp            no receber --internet: não abre a porta no roteador por UPnP
   --conexao C           no enviar: o código de conexão do receber --internet
   --ttl-furo N          no enviar --conexao: TTL dos pedidos até o furo do receber chegar
                         (padrão 12; 0 = TTL normal). Alto o bastante para passar o NAT

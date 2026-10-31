@@ -8,10 +8,10 @@
 //! esperando um, e cada frame perdido conta uma vez só.
 
 use std::error::Error;
-use std::net::{SocketAddr, UdpSocket};
+
 use std::time::{Duration, Instant};
 
-use fluxo_net::{clock_us, ConnectionCode, PairingCode, ReplyCode, SenderConfig, VideoSender};
+use fluxo_net::{clock_us, ConnectionCode, PairingCode, SenderConfig, VideoSender};
 
 use crate::Opts;
 
@@ -55,26 +55,28 @@ pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
             VideoSender::connect_via_signal("0.0.0.0:0", s, cfg)?
         }
         (None, None, Some(cc)) => {
-            let socket = UdpSocket::bind("0.0.0.0:0")?;
-            let publico = fluxo_net::discover_public_addr(&socket, fluxo_net::STUN_SERVERS)?;
-            println!("Código de resposta: {}", ReplyCode { addr: publico.v4()? });
+            let internet = fluxo_net::Internet::open(0, false)?;
+            println!("Código de resposta: {}", internet.reply_code(&cc)?);
             println!("  Mande para quem roda o receber (ele cola no terminal). Esperando até 5 min…");
-            if let Some(aviso) = publico.warning() {
-                println!("  {aviso}");
+            for linha in internet.summary() {
+                println!("  {linha}");
             }
-            println!("  NAT: {}", publico.summary());
-            if o.ttl_furo > 0 {
-                println!(
-                    "  Pedidos com TTL {} até o furo do outro lado chegar (--ttl-furo)",
-                    o.ttl_furo
-                );
+            // Porta aberta por UPnP do outro lado: dá para ir direto, sem
+            // esperar o furo (nada para ocupar a porta lá).
+            let ttl = (o.ttl_furo > 0 && !cc.open).then_some(o.ttl_furo);
+            match (ttl, cc.open) {
+                (_, true) => println!("  O receber abriu a porta no roteador (UPnP): conectando direto"),
+                (Some(t), _) => {
+                    println!("  Pedidos IPv4 com TTL {t} até o furo do outro lado chegar (--ttl-furo)")
+                }
+                (None, _) => {}
             }
             let cfg = SenderConfig {
                 on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
-                punch_ttl: (o.ttl_furo > 0).then_some(o.ttl_furo),
+                punch_ttl: ttl,
                 ..cfg
             };
-            VideoSender::connect_with_socket(socket, SocketAddr::V4(cc.addr), cfg)?
+            VideoSender::connect_with_sockets(internet.v4, internet.v6, cc.candidates(), cfg)?
         }
         (None, None, None) => unreachable!("conferido acima"),
     };

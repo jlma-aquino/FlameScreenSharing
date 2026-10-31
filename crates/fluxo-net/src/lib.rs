@@ -52,8 +52,10 @@ mod clock;
 mod conexao;
 mod delay;
 mod history;
+mod internet;
 mod observar;
 mod pacer;
+mod portas;
 mod receiver;
 mod recovery;
 mod rtt;
@@ -62,12 +64,14 @@ mod signal;
 mod sim;
 mod stun;
 mod sync;
+mod upnp;
 
 use std::fmt;
 
 pub use bitrate::{BitrateChange, BitrateController, NetworkReport, DEFAULT_QUEUE_LIMIT_MS, START_KBPS};
 pub use clock::{clock_diff_us, clock_us};
 pub use conexao::{CodeError, ConnectionCode, ReplyCode};
+pub use internet::Internet;
 pub use observar::{PairingEvent, PairingObserver};
 pub use receiver::{Puncher, ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
@@ -75,6 +79,7 @@ pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL};
 pub use signal::{SignalEvent, SignalServer, ROOM_TTL};
 pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
+pub use upnp::{find_gateway, is_private_v4, open_port, Gateway, PortMapping, UpnpOutcome, UPNP_LEASE};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
 pub use fluxo_proto::{FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
 // Código de pareamento (`SenderConfig`/`ReceiverConfig::pairing_code`).
@@ -157,8 +162,8 @@ pub fn local_ip() -> Option<std::net::IpAddr> {
 /// Endereços locais para informar ao servidor de sinalização: o IP da rede
 /// local com a porta do socket (o outro lado tenta direto, se estiver na
 /// mesma rede).
-pub(crate) fn local_candidates(socket: &std::net::UdpSocket) -> Vec<std::net::SocketAddr> {
-    let porta = socket.local_addr().map(|a| a.port()).unwrap_or(0);
+pub(crate) fn local_candidates(socket: Option<&std::net::UdpSocket>) -> Vec<std::net::SocketAddr> {
+    let porta = socket.and_then(|s| s.local_addr().ok()).map_or(0, |a| a.port());
     local_ip()
         .filter(|_| porta != 0)
         .map(|ip| std::net::SocketAddr::new(ip, porta))
