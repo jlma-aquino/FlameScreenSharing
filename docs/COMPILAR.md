@@ -64,18 +64,20 @@ Windows e mede a fidelidade. Como interpretar:
 ## 6. Testar a transmissão
 
 Em dois terminais (ou dois PCs, trocando `127.0.0.1` pelo IP de quem recebe).
-Primeiro quem assiste, depois quem compartilha:
+Primeiro quem assiste, depois quem compartilha. O cliente mostra um código de
+pareamento (ex.: `K7M4-QX9P`) e o comando pronto para o host:
 
 ```powershell
 .\target\release\fluxo-client.exe --porta 9000
-.\target\release\fluxo-host.exe --destino 127.0.0.1:9000
+.\target\release\fluxo-host.exe --destino 127.0.0.1:9000 --codigo <código mostrado pelo cliente>
 ```
 
-Sem janela, só medindo e gravando o que chega:
+Sem janela, só medindo e gravando o que chega (`--codigo` fixa o código nos
+dois lados, útil em scripts):
 
 ```powershell
-.\target\release\fluxo-bench.exe receber --porta 9000 --segundos 30 --verificar
-.\target\release\fluxo-host.exe --destino 127.0.0.1:9000 --segundos 35
+.\target\release\fluxo-bench.exe receber --porta 9000 --segundos 30 --verificar --codigo K7M4-QX9P
+.\target\release\fluxo-host.exe --destino 127.0.0.1:9000 --segundos 35 --codigo K7M4-QX9P
 ```
 
 Na primeira vez o Windows pode pedir para liberar o `fluxo-client` (ou o
@@ -114,10 +116,10 @@ verdade (perdas, RTT, bitrate) com o host no Windows.
    ativo, liberar a porta: `sudo ufw allow 9000/udp`.
 5. Receber (Linux) e transmitir (Windows):
    ```bash
-   ./target/release/fluxo-bench receber --porta 9000 --segundos 30
+   ./target/release/fluxo-bench receber --porta 9000 --segundos 30   # mostra o código
    ```
    ```powershell
-   .\target\release\fluxo-host.exe --destino <IP do notebook>:9000 --segundos 35
+   .\target\release\fluxo-host.exe --destino <IP do notebook>:9000 --segundos 35 --codigo <código>
    ```
 6. Conferir a imagem: `ffplay recebido.h264` (ou abrir no VLC).
 

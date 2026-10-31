@@ -10,7 +10,7 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use fluxo_net::{clock_us, SenderConfig, VideoSender};
+use fluxo_net::{clock_us, PairingCode, SenderConfig, VideoSender};
 
 use crate::Opts;
 
@@ -22,8 +22,16 @@ pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
     let bitrate_bps = (o.mbps * 1e6).round() as u64;
     let fps = o.fps.max(1);
     let tamanho = (bitrate_bps / 8 / fps as u64).max(1) as usize;
+    let pairing_code = match (&o.codigo, o.sem_cifra) {
+        (_, true) => None,
+        (Some(c), false) => Some(PairingCode::parse(c)?),
+        (None, false) => {
+            return Err("enviar precisa de --codigo (mostrado pelo receber) ou --sem-cifra".into())
+        }
+    };
     let cfg = SenderConfig {
         fec_group: o.fec,
+        pairing_code,
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let pacing = cfg.pacing_bps;

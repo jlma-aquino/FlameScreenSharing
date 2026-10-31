@@ -38,6 +38,8 @@ Opções:
   --largura L     largura inicial da janela (padrão 1280)
   --altura A      altura inicial da janela (padrão 720)
   --no-topo       janela sempre por cima das outras
+  --codigo X      usa este código de pareamento (padrão: um novo, sorteado)
+  --sem-cifra     TESTE: sem pareamento nem cifra (o host também)
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
 
 Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
@@ -51,6 +53,8 @@ struct Opts {
     largura: u32,
     altura: u32,
     no_topo: bool,
+    codigo: Option<String>,
+    sem_cifra: bool,
     sem_painel: bool,
 }
 
@@ -62,6 +66,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         largura: 1280,
         altura: 720,
         no_topo: false,
+        codigo: None,
+        sem_cifra: false,
         sem_painel: false,
     };
     let mut it = args.iter();
@@ -74,6 +80,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--largura" => o.largura = valor()?.parse().map_err(|_| "largura inválida")?,
             "--altura" => o.altura = valor()?.parse().map_err(|_| "altura inválida")?,
             "--no-topo" => o.no_topo = true,
+            "--codigo" => o.codigo = Some(valor()?.clone()),
+            "--sem-cifra" => o.sem_cifra = true,
             "--sem-painel" => o.sem_painel = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
@@ -118,18 +126,40 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use fluxo_net::{ReceiverConfig, VideoReceiver};
+    use fluxo_net::{PairingCode, ReceiverConfig, VideoReceiver};
 
     use crate::exibir::{exibir, Compartilhado, Config};
     use crate::window::Window;
 
-    let rx = VideoReceiver::bind(("0.0.0.0", o.porta), ReceiverConfig::default())?;
-    let mut janela = Window::new(
-        &format!("Fluxo — aguardando o host na porta {}", o.porta),
-        o.largura,
-        o.altura,
-        o.no_topo,
+    // Código de pareamento: o host digita este, junto com o nosso endereço.
+    let codigo = match (&o.codigo, o.sem_cifra) {
+        (_, true) => None,
+        (Some(c), false) => Some(PairingCode::parse(c)?),
+        (None, false) => Some(PairingCode::generate()?),
+    };
+    let rx = VideoReceiver::bind(
+        ("0.0.0.0", o.porta),
+        ReceiverConfig {
+            pairing_code: codigo.clone(),
+            ..ReceiverConfig::default()
+        },
     )?;
+    let endereco = match ip_local() {
+        Some(ip) => format!("{ip}:{}", o.porta),
+        None => format!("<IP deste PC>:{}", o.porta),
+    };
+    let espera = match &codigo {
+        Some(c) => {
+            println!("Código de pareamento: {c}");
+            println!("No PC que compartilha:  fluxo-host --destino {endereco} --codigo {c}");
+            format!("Fluxo — código {c} · aguardando o host em {endereco}")
+        }
+        None => {
+            println!("TESTE: sem pareamento nem cifra (--sem-cifra)");
+            format!("Fluxo — aguardando o host em {endereco} (sem cifra)")
+        }
+    };
+    let mut janela = Window::new(&espera, o.largura, o.altura, o.no_topo)?;
     let comp = Arc::new(Compartilhado::default());
     comp.painel.store(!o.sem_painel, Ordering::Relaxed);
     let cfg = Config {
@@ -137,6 +167,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         tamanho: janela.client_size(),
         vsync: o.vsync,
         segundos: o.segundos,
+        espera: match &codigo {
+            Some(c) => format!("código {c}\nhost: --destino {endereco}\n--codigo {c}"),
+            None => format!("aguardando o host em\n{endereco} (sem cifra)"),
+        },
     };
     let c = comp.clone();
     let exibicao = std::thread::Builder::new()
@@ -166,4 +200,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .join()
         .map_err(|_| "a thread de exibição terminou com pânico")??;
     Ok(())
+}
+
+/// Endereço provável deste PC na rede local: o da interface que o sistema
+/// usaria para chegar à internet. `connect` num socket UDP só escolhe a rota;
+/// nenhum pacote sai.
+#[cfg(windows)]
+fn ip_local() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("8.8.8.8:53").ok()?;
+    Some(s.local_addr().ok()?.ip())
 }

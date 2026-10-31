@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use fluxo_net::{clock_us, ReceiverConfig, SenderConfig, VideoReceiver, VideoSender};
+use fluxo_net::{clock_us, NetError, PairingCode, ReceiverConfig, SenderConfig, VideoReceiver, VideoSender};
 
 /// Conteúdo reconhecível: cada frame tem bytes derivados do seu número.
 fn frame(n: usize, len: usize) -> Vec<u8> {
@@ -153,9 +153,12 @@ fn host_novo_e_aceito_depois_do_timeout() {
 
 #[test]
 fn pedido_de_keyframe_chega_ao_host_uma_vez() {
+    // Antes de conhecer um host, não há para quem pedir. (Com o par criado,
+    // o ping de largada do host pode já ter chegado.)
+    let sozinho = VideoReceiver::bind("127.0.0.1:0", ReceiverConfig::default()).unwrap();
+    assert!(!sozinho.request_keyframe());
+
     let (rx, tx) = par(0, Duration::from_secs(10));
-    // Antes de conhecer o host, não há para quem pedir.
-    assert!(!rx.request_keyframe());
     tx.send_frame(frame(0, 1_000), true, clock_us()).unwrap();
     rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
 
@@ -468,4 +471,117 @@ fn pedido_de_refresh_e_marcas_da_onda() {
     assert!(recebidos[0].refresh_start && !recebidos[0].refresh_end);
     assert!(!recebidos[1].refresh_start && !recebidos[1].refresh_end);
     assert!(recebidos[2].refresh_end && !recebidos[2].keyframe);
+}
+
+fn codigo(s: &str) -> PairingCode {
+    PairingCode::parse(s).unwrap()
+}
+
+fn par_cifrado(host: &str, cliente: Option<&str>) -> (VideoReceiver, Result<VideoSender, NetError>) {
+    let rx = VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            ping_interval: Duration::from_millis(50),
+            pairing_code: cliente.map(codigo),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            ping_interval: Duration::from_millis(50),
+            pairing_code: Some(codigo(host)),
+            pairing_timeout: Duration::from_secs(1),
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    );
+    (rx, tx)
+}
+
+#[test]
+fn com_o_mesmo_codigo_tudo_passa_cifrado() {
+    let (rx, tx) = par_cifrado("K7M4-QX9P", Some("k7m4 qx9p"));
+    let tx = tx.expect("pareamento");
+    assert!(tx.stats().encrypted);
+    for n in 0..5 {
+        tx.send_frame(frame(n, 20_000), n == 0, clock_us()).unwrap();
+        let f = rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
+        assert_eq!(f.frame.data, frame(n, 20_000));
+    }
+    // Pings, pongs e relatórios também passam (cifrados) nos dois sentidos.
+    let limite = Instant::now() + Duration::from_secs(2);
+    while (rx.stats().rtt.samples == 0 || tx.stats().rtt.samples == 0 || tx.stats().feedbacks_received == 0)
+        && Instant::now() < limite
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (c, h) = (rx.stats(), tx.stats());
+    assert!(c.encrypted && c.pairings >= 1);
+    assert!(
+        c.rtt.samples > 0 && h.rtt.samples > 0 && h.feedbacks_received > 0,
+        "{c:?} {h:?}"
+    );
+    assert_eq!(h.rejected_packets, 0);
+}
+
+#[test]
+fn codigo_errado_e_recusado_na_hora() {
+    let inicio = Instant::now();
+    let (rx, tx) = par_cifrado("K7M4-QX9P", Some("K7M4-QX9Q"));
+    let erro = tx.err().expect("não deveria parear");
+    assert!(erro.to_string().contains("não confere"), "{erro}");
+    assert!(
+        inicio.elapsed() < Duration::from_millis(900),
+        "devia falhar antes do prazo"
+    );
+    assert!(!rx.stats().encrypted);
+}
+
+#[test]
+fn cliente_sem_codigo_nao_pareia() {
+    let (rx, tx) = par_cifrado("K7M4-QX9P", None);
+    assert!(matches!(tx, Err(NetError::Pairing(_))));
+    assert!(rx.stats().invalid_packets > 0, "PairInit em claro é recusado");
+}
+
+#[test]
+fn intruso_nao_atrapalha_a_sessao() {
+    let (rx, tx) = par_cifrado("K7M4-QX9P", Some("K7M4-QX9P"));
+    let tx = tx.unwrap();
+    tx.send_frame(frame(0, 5_000), true, clock_us()).unwrap();
+    rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame 0");
+
+    // Um intruso sem o código: pede pareamento e manda vídeo em claro.
+    let intruso = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig {
+            pairing_code: Some(codigo("ZZZZ-ZZZZ")),
+            pairing_timeout: Duration::from_millis(500),
+            ..SenderConfig::for_bitrate(20_000_000)
+        },
+    );
+    assert!(intruso.is_err(), "o intruso não pode parear");
+    let em_claro = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig::for_bitrate(20_000_000),
+    )
+    .unwrap();
+    em_claro.send_frame(frame(99, 5_000), true, clock_us()).unwrap();
+    drop(em_claro);
+
+    // O host de verdade continua sendo ouvido; nada do intruso aparece.
+    for n in 1..4 {
+        tx.send_frame(frame(n, 5_000), false, clock_us()).unwrap();
+        let f = rx
+            .recv_frame(Duration::from_secs(1))
+            .unwrap()
+            .expect("frame do host");
+        assert_eq!(f.frame.data, frame(n, 5_000));
+    }
+    assert_eq!(rx.stats().peer_changes, 0);
+    assert!(rx.stats().invalid_packets > 0);
 }

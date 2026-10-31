@@ -8,18 +8,27 @@ Lado de quem assiste: rede (`fluxo-net`) → decode (`fluxo-decode`) → tela.
 
 ```text
 fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
-             [--sem-painel]
+             [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra]
 ```
 
 `--no-topo` mantém a janela sempre por cima das outras: útil para acompanhar
 enquanto usa o PC, e necessário quando o cliente é aberto por outro programa
 em segundo plano (o Windows não deixa essa janela tomar o foco).
 
+Ao abrir, o cliente sorteia um **código de pareamento** e mostra no
+terminal, no título e no painel, junto com o comando pronto para o host (com
+o IP provável deste PC, descoberto sem mandar nenhum pacote). Só um host com
+esse código consegue transmitir, e tudo vai cifrado; o painel e o título
+mostram "cifrado" durante a transmissão. `--codigo` fixa um código (útil em
+scripts); `--sem-cifra` desliga o pareamento, só para teste.
+
 ```powershell
 # No PC que assiste
 .\target\release\fluxo-client.exe --porta 9000
+#   Código de pareamento: K7M4-QX9P
+#   No PC que compartilha:  fluxo-host --destino 192.168.1.2:9000 --codigo K7M4-QX9P
 # No PC que compartilha
-.\target\release\fluxo-host.exe --destino <IP do PC que assiste>:9000
+.\target\release\fluxo-host.exe --destino 192.168.1.2:9000 --codigo K7M4-QX9P
 ```
 
 Na janela: **F11** ou **Alt+Enter** alterna tela cheia sem bordas; **Esc**

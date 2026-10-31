@@ -1,27 +1,31 @@
 //! Cabeçalho binário dos pacotes do Fluxo.
 //!
 //! Todo pacote UDP do Fluxo começa com este cabeçalho fixo de
-//! [`HEADER_LEN`] = 24 bytes, em ordem de bytes *big-endian* (padrão de rede),
+//! [`HEADER_LEN`] = 28 bytes, em ordem de bytes *big-endian* (padrão de rede),
 //! seguido de `payload_len` bytes de dados.
 //!
 //! ```text
-//!  0       2   3   4               8       10      12  13  14      16              20              24
-//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+---------------+
-//!  | magic |ver|knd|   frame_id    | frag  | frag  |flg|fec|payload|  timestamp_us |    send_us    |
-//!  | "FL"  |   |   |               | index | count |   |grp|  len  |   (captura)   |    (envio)    |
-//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+---------------+
+//!  0       2   3   4               8       10      12  13  14      16              20              24              28
+//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+---------------+---------------+
+//!  | magic |ver|knd|   frame_id    | frag  | frag  |flg|fec|payload|  timestamp_us |    send_us    |      seq      |
+//!  | "FL"  |   |   |               | index | count |   |grp|  len  |   (captura)   |    (envio)    | (nonce/cifra) |
+//!  +-------+---+---+---------------+-------+-------+---+---+-------+---------------+---------------+---------------+
 //! ```
 //!
-//! Detalhes de cada campo: `docs/PROTOCOLO.md`.
+//! Com [`FLAG_ENCRYPTED`], o payload vem cifrado e com a tag de 16 bytes no
+//! fim; o cabeçalho continua visível, mas autenticado. Detalhes de cada
+//! campo: `docs/PROTOCOLO.md`.
 
 use std::fmt;
 
 /// Tamanho fixo do cabeçalho em bytes.
-pub const HEADER_LEN: usize = 24;
+pub const HEADER_LEN: usize = 28;
 
 /// Posição de `send_us` no cabeçalho: o emissor o preenche com
 /// [`stamp_send_time`] na hora exata de mandar cada pacote.
 const SEND_US_AT: usize = 20;
+/// Posição de `seq`: número do pacote no sentido dele, nonce da cifra.
+const SEQ_AT: usize = 24;
 
 /// Assinatura "FL" (0x46 0x4C) no início de todo pacote.
 /// Serve para descartar rapidamente lixo que chegue na porta.
@@ -38,7 +42,9 @@ pub const MAGIC: u16 = 0x464C;
 /// - 6: cabeçalho de 24 bytes: + `send_us`, a hora em que o pacote saiu.
 /// - 7: flags de intra-refresh no vídeo; o KeyframeRequest diz se aceita uma
 ///   onda de intra-refresh em vez de keyframe.
-pub const PROTOCOL_VERSION: u8 = 7;
+/// - 8: cabeçalho de 28 bytes (+ `seq`), pacotes de pareamento (PairInit,
+///   PairReply) e payload cifrado ([`FLAG_ENCRYPTED`]).
+pub const PROTOCOL_VERSION: u8 = 8;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 /// Num [`PacketKind::KeyframeRequest`]: o cliente **precisa** de um keyframe
@@ -51,6 +57,9 @@ pub const FLAG_REFRESH_START: u8 = 0b0000_0010;
 /// que perdeu algo **antes** do início da onda está limpo de novo depois
 /// deste frame.
 pub const FLAG_REFRESH_END: u8 = 0b0000_0100;
+/// Bit 3 de `flags`: payload cifrado (ChaCha20-Poly1305, tag no fim),
+/// cabeçalho autenticado. Vale para qualquer tipo menos os de pareamento.
+pub const FLAG_ENCRYPTED: u8 = 0b0000_1000;
 
 /// Tamanho do payload de um [`PacketKind::Pong`]: o relógio (u32, big-endian)
 /// de quem respondeu.
@@ -79,6 +88,12 @@ pub enum PacketKind {
     /// Cliente → host: relatório periódico (pacotes recebidos, atraso de fila,
     /// perdas) para o bitrate adaptativo. Payload: [`crate::Feedback`].
     Feedback = 6,
+    /// Host → cliente: início do pareamento (mensagem SPAKE2). Em claro.
+    /// `frame_id` = número da tentativa (o mesmo nos reenvios).
+    PairInit = 7,
+    /// Cliente → host: resposta do pareamento (mensagem SPAKE2 + confirmação
+    /// da chave). Em claro; `frame_id` igual ao do PairInit.
+    PairReply = 8,
 }
 
 impl PacketKind {
@@ -90,8 +105,15 @@ impl PacketKind {
             4 => Some(Self::KeyframeRequest),
             5 => Some(Self::Parity),
             6 => Some(Self::Feedback),
+            7 => Some(Self::PairInit),
+            8 => Some(Self::PairReply),
             _ => None,
         }
+    }
+
+    /// `true` nos pacotes de pareamento, que nunca vão cifrados.
+    pub fn is_pairing(self) -> bool {
+        matches!(self, Self::PairInit | Self::PairReply)
     }
 
     /// Cabeçalho de um pacote de controle (sem payload nem fragmentos).
@@ -106,8 +128,23 @@ impl PacketKind {
             payload_len: 0,
             timestamp_us,
             send_us: timestamp_us,
+            seq: 0,
         }
     }
+}
+
+/// Prepara um pacote montado para a cifra: grava `seq`, liga
+/// [`FLAG_ENCRYPTED`] e soma `tag_len` ao `payload_len`. Depois disso o
+/// cabeçalho (os [`HEADER_LEN`] primeiros bytes) não muda mais: é o dado
+/// autenticado da cifra, que cifra o resto e acrescenta a tag.
+///
+/// # Panics
+/// Se `datagram.len() < HEADER_LEN` (erro de programação).
+pub fn prepare_seal(datagram: &mut [u8], seq: u32, tag_len: usize) {
+    datagram[12] |= FLAG_ENCRYPTED;
+    let len = u16::from_be_bytes([datagram[14], datagram[15]]).saturating_add(tag_len as u16);
+    datagram[14..16].copy_from_slice(&len.to_be_bytes());
+    datagram[SEQ_AT..HEADER_LEN].copy_from_slice(&seq.to_be_bytes());
 }
 
 /// Grava `send_us` (relógio de quem envia, µs em 32 bits) num pacote já
@@ -117,7 +154,7 @@ impl PacketKind {
 /// # Panics
 /// Se `datagram.len() < HEADER_LEN` (erro de programação).
 pub fn stamp_send_time(datagram: &mut [u8], send_us: u32) {
-    datagram[SEND_US_AT..HEADER_LEN].copy_from_slice(&send_us.to_be_bytes());
+    datagram[SEND_US_AT..SEQ_AT].copy_from_slice(&send_us.to_be_bytes());
 }
 
 /// Erros ao decodificar um pacote recebido.
@@ -191,12 +228,58 @@ pub struct PacketHeader {
     /// não inclui encode, espera do limite de fps nem pacing. Base do atraso
     /// de fila do bitrate adaptativo.
     pub send_us: u32,
+    /// Número do pacote no seu sentido (host → cliente ou o contrário),
+    /// nonce da cifra. 0 em pacotes em claro.
+    pub seq: u32,
 }
 
 impl PacketHeader {
     /// `true` se o frame deste pacote é um keyframe.
     pub fn is_keyframe(&self) -> bool {
         self.flags & FLAG_KEYFRAME != 0
+    }
+
+    /// `true` se o payload vem cifrado ([`FLAG_ENCRYPTED`]).
+    pub fn is_encrypted(&self) -> bool {
+        self.flags & FLAG_ENCRYPTED != 0
+    }
+
+    /// Cabeçalho do pacote depois de decifrado: sem [`FLAG_ENCRYPTED`] e com
+    /// o tamanho do payload em claro. Confira o payload com
+    /// [`check_payload`](Self::check_payload) antes de usar.
+    pub fn decrypted(&self, payload_len: usize) -> PacketHeader {
+        PacketHeader {
+            flags: self.flags & !FLAG_ENCRYPTED,
+            payload_len: payload_len as u16,
+            ..*self
+        }
+    }
+
+    /// Confere o payload contra o tipo do pacote (tamanhos fixos, paridade
+    /// coerente). [`decode`](Self::decode) faz isso sozinho nos pacotes em
+    /// claro; nos cifrados, chame depois de decifrar.
+    pub fn check_payload(&self, payload: &[u8]) -> Result<(), ProtoError> {
+        let actual = payload.len();
+        let esperado = match self.kind {
+            PacketKind::Pong => Some(PONG_LEN),
+            PacketKind::Feedback => Some(crate::feedback::FEEDBACK_LEN),
+            _ => None,
+        };
+        if let Some(declared) = esperado.filter(|&e| e != actual) {
+            return Err(ProtoError::LengthMismatch { declared, actual });
+        }
+        if self.kind == PacketKind::Parity
+            && (self.frag_count == 0
+                || self.fec_group == 0
+                || self.frag_index >= crate::fec::group_count(self.frag_count, self.fec_group)
+                || actual < crate::fec::PARITY_HEADER_LEN)
+        {
+            return Err(ProtoError::BadFragment {
+                index: self.frag_index,
+                count: self.frag_count,
+            });
+        }
+        Ok(())
     }
 
     /// Escreve o cabeçalho nos primeiros [`HEADER_LEN`] bytes de `out`.
@@ -215,7 +298,8 @@ impl PacketHeader {
         b[13] = self.fec_group;
         b[14..16].copy_from_slice(&self.payload_len.to_be_bytes());
         b[16..20].copy_from_slice(&self.timestamp_us.to_be_bytes());
-        b[SEND_US_AT..HEADER_LEN].copy_from_slice(&self.send_us.to_be_bytes());
+        b[SEND_US_AT..SEQ_AT].copy_from_slice(&self.send_us.to_be_bytes());
+        b[SEQ_AT..HEADER_LEN].copy_from_slice(&self.seq.to_be_bytes());
     }
 
     /// Monta um pacote completo (cabeçalho + payload) num `Vec` novo.
@@ -258,6 +342,7 @@ impl PacketHeader {
             payload_len: be16(14),
             timestamp_us: be32(16),
             send_us: be32(SEND_US_AT),
+            seq: be32(SEQ_AT),
         };
 
         let actual = datagram.len() - HEADER_LEN;
@@ -273,31 +358,13 @@ impl PacketHeader {
                 count: header.frag_count,
             });
         }
-        if kind == PacketKind::Pong && actual != PONG_LEN {
-            return Err(ProtoError::LengthMismatch {
-                declared: PONG_LEN,
-                actual,
-            });
+        let payload = &datagram[HEADER_LEN..];
+        // Cifrado: o payload ainda tem a tag e não dá para conferir; quem
+        // decifra chama `check_payload` depois.
+        if !header.is_encrypted() {
+            header.check_payload(payload)?;
         }
-        if kind == PacketKind::Feedback && actual != crate::feedback::FEEDBACK_LEN {
-            return Err(ProtoError::LengthMismatch {
-                declared: crate::feedback::FEEDBACK_LEN,
-                actual,
-            });
-        }
-        if kind == PacketKind::Parity
-            && (header.frag_count == 0
-                || header.fec_group == 0
-                || header.frag_index >= crate::fec::group_count(header.frag_count, header.fec_group)
-                || actual < crate::fec::PARITY_HEADER_LEN)
-        {
-            return Err(ProtoError::BadFragment {
-                index: header.frag_index,
-                count: header.frag_count,
-            });
-        }
-
-        Ok((header, &datagram[HEADER_LEN..]))
+        Ok((header, payload))
     }
 }
 
@@ -316,7 +383,26 @@ mod tests {
             payload_len: 0,
             timestamp_us: 123_456,
             send_us: 130_000,
+            seq: 77,
         }
+    }
+
+    #[test]
+    fn pacote_cifrado_so_e_conferido_depois_de_decifrar() {
+        let mut pkt = PacketKind::Pong
+            .control(1, 2)
+            .encode_with_payload(&[0; 4])
+            .unwrap();
+        prepare_seal(&mut pkt, 42, 16);
+        pkt.extend_from_slice(&[0; 16]); // o lugar da tag
+                                         // Pong com 20 bytes de payload: em claro seria recusado, cifrado passa.
+        let (h, payload) = PacketHeader::decode(&pkt).unwrap();
+        assert!(h.is_encrypted());
+        assert_eq!((h.seq, payload.len()), (42, 20));
+        let claro = h.decrypted(4);
+        assert!(!claro.is_encrypted());
+        assert!(claro.check_payload(&[0; 4]).is_ok());
+        assert!(claro.check_payload(&[0; 3]).is_err());
     }
 
     #[test]

@@ -6,6 +6,18 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Protocolo v8 — pareamento e cifra** (fase 5, ADR-008): o cliente mostra
+  um código de 8 caracteres (`K7M4-QX9P`) e o comando pronto para o host;
+  `fluxo-host --codigo` faz o handshake SPAKE2 (PairInit/PairReply) e daí em
+  diante todo pacote vai cifrado com ChaCha20-Poly1305 (cabeçalho
+  autenticado, `seq` como nonce, anti-replay de 64). Código errado é recusado
+  na hora; um intruso sem o código não lê, não injeta e não derruba a
+  sessão; pacotes autenticados podem chegar de outro endereço (NAT).
+  `--sem-cifra` desliga tudo, só para teste. Cabeçalho de 28 bytes, payload
+  máximo 1180.
+- **Crate `fluxo-crypto`**: `PairingCode`, `HostHandshake`/`respond`,
+  `Sealer`/`Opener`, só com bibliotecas do RustCrypto (`spake2`,
+  `chacha20poly1305`, `hkdf`, `sha2`, `getrandom`).
 - **`fluxo-bench enviar`**: frames sintéticos a bitrate fixo para o
   `receber`, sem captura nem encode — mede a rede com carga controlada.
 - `ReassemblerStats::fec_groups_failed_2` / `fec_groups_failed_3plus` /
@@ -123,6 +135,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Teste `pedido_de_keyframe_chega_ao_host_uma_vez` falhava às vezes: o ping
+  de largada do host chegava antes da checagem "sem host, sem pedido".
 - `fluxo-client`: arrastar ou redimensionar a janela parava a imagem (o
   Windows prende a thread da janela até soltar o mouse; frames esperavam até
   5,6 s). Decode e apresentação agora rodam numa thread própria (`exibir.rs`):
@@ -150,6 +164,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- Cifra no Wi-Fi (Windows → notebook Linux, 30 Mbps sintéticos, 20 s):
+  latência p50 13,7 ms cifrado contra 13,2 ms em claro, nenhuma perda. Host
+  e cliente reais na mesma máquina, pareados: 59,6 fps, captura→tela p50
+  10,7 ms.
 - Perdas no Wi-Fi (Windows → notebook Linux, carga sintética, 20 s por
   carga): nenhum pacote perdido de 10 a 40 Mbps; acima da capacidade
   (~45 Mbps), perdas em rajada — a 60 Mbps, 3.348 grupos de FEC falharam

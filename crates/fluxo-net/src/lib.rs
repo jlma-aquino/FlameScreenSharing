@@ -68,6 +68,8 @@ pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
 pub use fluxo_proto::{FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
+// Código de pareamento (`SenderConfig`/`ReceiverConfig::pairing_code`).
+pub use fluxo_crypto::PairingCode;
 
 /// Erros da camada de rede.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +80,8 @@ pub enum NetError {
     Proto(fluxo_proto::ProtoError),
     /// A thread de rede terminou (o objeto está sendo destruído ou falhou).
     Closed,
+    /// O pareamento com o cliente falhou (código errado, ou ele não respondeu).
+    Pairing(String),
 }
 
 impl NetError {
@@ -95,6 +99,7 @@ impl fmt::Display for NetError {
             Self::Io { context, message } => write!(f, "{context}: {message}"),
             Self::Proto(e) => write!(f, "protocolo: {e}"),
             Self::Closed => write!(f, "a thread de rede foi encerrada"),
+            Self::Pairing(m) => write!(f, "pareamento: {m}"),
         }
     }
 }

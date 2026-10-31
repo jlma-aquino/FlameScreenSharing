@@ -88,8 +88,10 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 
 ## Fase 5 — Internet e segurança
 
-- [ ] Handshake e código de pareamento
-- [ ] Criptografia ChaCha20-Poly1305
+- [x] Handshake e código de pareamento (protocolo v8, SPAKE2: o cliente mostra `K7M4-QX9P`, o host digita;
+      código errado é recusado na hora, intruso sem o código não derruba a sessão)
+- [x] Criptografia ChaCha20-Poly1305 de todo pacote, com anti-replay (ADR-008). Wi-Fi a 30 Mbps: p50 13,7 ms
+      cifrado contra 13,2 ms em claro
 - [ ] Servidor de sinalização mínimo (troca de endereços)
 - [ ] STUN + UDP hole punching
 - [ ] Relay de fallback para CGNAT

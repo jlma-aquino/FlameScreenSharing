@@ -25,8 +25,8 @@ fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
                        [--saida arquivo.h264] [--verificar] [--refresh N] [--perder-a-cada S]
 fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
-fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
-fluxo-bench enviar     --destino IP:PORTA [--mbps M] [--fps F] [--segundos S] [--fec K]
+fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra]
+fluxo-bench enviar     --destino IP:PORTA (--codigo C | --sem-cifra) [--mbps M] [--fps F] [--segundos S] [--fec K]
 ```
 
 ## Lendo o resultado do `bench`
@@ -105,7 +105,9 @@ ondas com mais de um quadro de referência.
 Receptor sem janela: escuta numa porta UDP (`--porta`, padrão 9000), recebe
 o vídeo do [fluxo-host](fluxo-host.md), grava em `recebido.h264` a partir do
 primeiro keyframe e mostra estatísticas. `--segundos` conta a partir do
-primeiro frame recebido (0 = até Ctrl+C).
+primeiro frame recebido (0 = até Ctrl+C). Como o cliente, mostra um código de
+pareamento (ou usa `--codigo`); o host precisa dele. `--sem-cifra` só para
+teste.
 
 É o único comando que **roda também em Linux/macOS** (usa só o `fluxo-net`):
 serve para testar a rede com um segundo PC que não seja Windows. Lá,
@@ -131,9 +133,9 @@ keyframe, para o receptor nunca pular frames. Também roda em Linux.
 
 ```powershell
 # No PC que recebe (Linux: --saida /dev/null)
-fluxo-bench receber --porta 9000 --segundos 20
+fluxo-bench receber --porta 9000 --segundos 20 --codigo K7M4-QX9P
 # No PC que envia
-fluxo-bench enviar --destino <IP>:9000 --mbps 40 --segundos 21
+fluxo-bench enviar --destino <IP>:9000 --mbps 40 --segundos 21 --codigo K7M4-QX9P
 ```
 
 Foi assim que se mediu que o Wi-Fi de teste não perde nada até ~40 Mbps e

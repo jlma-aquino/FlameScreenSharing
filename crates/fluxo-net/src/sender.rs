@@ -8,7 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use fluxo_proto::{stamp_send_time, Feedback, Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD};
+use fluxo_crypto::{HostHandshake, Opener, PairingCode, Sealer, Session, TAG_LEN};
+use fluxo_proto::{
+    prepare_seal, stamp_send_time, Feedback, Fragmenter, PacketHeader, PacketKind, DEFAULT_MAX_PAYLOAD,
+    HEADER_LEN,
+};
 
 use crate::bitrate::NetworkReport;
 use crate::history::{LossSample, LossWindow, SentHistory};
@@ -48,6 +52,12 @@ pub struct SenderConfig {
     /// **Só para testes:** atraso extra sorteado em `[0, jitter]` a cada
     /// 20 ms, em cada sentido; os pacotes nunca se ultrapassam.
     pub simulated_jitter: Duration,
+    /// Código de pareamento mostrado pelo cliente. Com ele, [`VideoSender::connect`]
+    /// faz o handshake antes de tudo e cifra todos os pacotes. `None`: sem
+    /// cifra (rede de teste; o cliente também precisa estar sem código).
+    pub pairing_code: Option<PairingCode>,
+    /// Quanto [`VideoSender::connect`] espera o cliente responder ao pareamento.
+    pub pairing_timeout: Duration,
 }
 
 /// Tamanho da "fila do roteador" da banda simulada, em frames (~66 ms a 60 fps).
@@ -68,8 +78,49 @@ impl SenderConfig {
             simulated_bandwidth_bps: 0,
             simulated_delay: Duration::ZERO,
             simulated_jitter: Duration::ZERO,
+            pairing_code: None,
+            pairing_timeout: Duration::from_secs(10),
         }
     }
+}
+
+/// Intervalo entre reenvios do `PairInit` enquanto o cliente não responde.
+const REENVIO_PAREAMENTO: Duration = Duration::from_millis(250);
+
+/// Handshake com o cliente pelo socket já conectado: manda `PairInit` até
+/// chegar o `PairReply` correspondente (ou acabar o prazo).
+fn parear(socket: &UdpSocket, codigo: &PairingCode, prazo: Duration) -> Result<Session, NetError> {
+    let hs = HostHandshake::start(codigo);
+    let id = clock_us();
+    let init = PacketKind::PairInit
+        .control(id, clock_us())
+        .encode_with_payload(hs.message())
+        .map_err(NetError::Proto)?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .map_err(NetError::io("configurar socket"))?;
+    let limite = Instant::now() + prazo;
+    let mut buf = [0u8; 2048];
+    while Instant::now() < limite {
+        // Erro de envio (porta do cliente ainda fechada, por exemplo): tenta de novo.
+        let _ = socket.send(&init);
+        let reenvio = Instant::now() + REENVIO_PAREAMENTO;
+        while Instant::now() < reenvio {
+            let Ok(n) = socket.recv(&mut buf) else {
+                continue;
+            };
+            match PacketHeader::decode(&buf[..n]) {
+                Ok((h, resposta)) if h.kind == PacketKind::PairReply && h.frame_id == id => {
+                    return hs.finish(resposta).map_err(|e| NetError::Pairing(e.to_string()));
+                }
+                _ => {} // outra coisa na porta: ignora
+            }
+        }
+    }
+    Err(NetError::Pairing(format!(
+        "o cliente não respondeu em {} s (endereço, firewall ou cliente sem código?)",
+        prazo.as_secs()
+    )))
 }
 
 /// Espera máxima, na largada, pela resposta do primeiro ping antes de mandar
@@ -119,6 +170,11 @@ pub struct SenderStats {
     /// Relógio do cliente menos o nosso, em ms (`None` antes da 1ª medição).
     pub clock_offset_ms: Option<f64>,
     pub rtt: RttStats,
+    /// A sessão é cifrada (pareamento com código).
+    pub encrypted: bool,
+    /// Pacotes recebidos que não decifraram (forjados, de outra sessão) ou
+    /// em claro numa sessão cifrada.
+    pub rejected_packets: u64,
 }
 
 struct Job {
@@ -192,6 +248,14 @@ impl VideoSender {
     ) -> Result<Self, NetError> {
         let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
         socket.connect(peer).map_err(NetError::io("definir destino"))?;
+        // Pareamento antes de qualquer outro pacote: com código, nada sai em claro.
+        let (cifra, opener) = match &cfg.pairing_code {
+            Some(codigo) => {
+                let s = parear(&socket, codigo, cfg.pairing_timeout)?;
+                (Some(Arc::new(Mutex::new(s.sealer))), Some(s.opener))
+            }
+            None => (None, None),
+        };
         // Timeout curto na leitura: a thread de recepção confere `stop` a cada volta.
         socket
             .set_read_timeout(Some(Duration::from_millis(100)))
@@ -200,7 +264,10 @@ impl VideoSender {
         let peer = socket.peer_addr().map_err(NetError::io("endereço do destino"))?;
 
         let shared = Arc::new(Shared {
-            stats: Mutex::new(SenderStats::default()),
+            stats: Mutex::new(SenderStats {
+                encrypted: cifra.is_some(),
+                ..SenderStats::default()
+            }),
             rtt: Mutex::new(RttEstimator::default()),
             pacing_bps: AtomicU64::new(cfg.pacing_bps),
             stop: AtomicBool::new(false),
@@ -231,6 +298,7 @@ impl VideoSender {
         let saida = Saida {
             socket: duplicar()?,
             atraso: atraso.clone(),
+            cifra: cifra.clone(),
         };
         let s = shared.clone();
         let sender = thread::Builder::new()
@@ -240,11 +308,12 @@ impl VideoSender {
         let saida = Saida {
             socket: duplicar()?,
             atraso,
+            cifra,
         };
         let s = shared.clone();
         let receiver = thread::Builder::new()
             .name("fluxo-net-pings".into())
-            .spawn(move || recv_loop(socket, saida, atraso_chegada, s))
+            .spawn(move || recv_loop(socket, saida, atraso_chegada, opener, s))
             .map_err(NetError::io("criar thread de recepção"))?;
 
         Ok(Self {
@@ -355,15 +424,37 @@ impl Drop for VideoSender {
     }
 }
 
-/// Por onde os pacotes saem: direto no socket, ou pela linha de atraso
-/// simulada.
+/// Por onde os pacotes saem: cifrados (com pareamento) e direto no socket ou
+/// pela linha de atraso simulada.
 struct Saida {
     socket: UdpSocket,
     atraso: Option<Arc<DelayLine>>,
+    /// Chave do sentido host → cliente, dividida entre as duas threads (o
+    /// número de sequência é um só).
+    cifra: Option<Arc<Mutex<Sealer>>>,
 }
 
 impl Saida {
+    /// Manda um pacote montado. Cifra por último: `send_us` já está gravado
+    /// e o cabeçalho inteiro vira dado autenticado.
     fn send(&self, pacote: &[u8]) -> std::io::Result<usize> {
+        let cifrado;
+        let pacote = match &self.cifra {
+            Some(c) => {
+                let mut sealer = c.lock().unwrap_or_else(|e| e.into_inner());
+                let seq = sealer.next_seq().ok_or_else(|| {
+                    std::io::Error::other("sessão esgotou os números de sequência; pareie de novo")
+                })?;
+                let mut p = pacote.to_vec();
+                prepare_seal(&mut p, seq, TAG_LEN);
+                sealer
+                    .seal(seq, &mut p, HEADER_LEN)
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                cifrado = p;
+                &cifrado[..]
+            }
+            None => pacote,
+        };
         match &self.atraso {
             Some(linha) => Ok(linha.send(pacote)),
             None => self.socket.send(pacote),
@@ -502,7 +593,13 @@ fn send_job(
     });
 }
 
-fn recv_loop(socket: UdpSocket, saida: Saida, mut atraso: Option<DelayModel>, shared: Arc<Shared>) {
+fn recv_loop(
+    socket: UdpSocket,
+    saida: Saida,
+    mut atraso: Option<DelayModel>,
+    mut opener: Option<Opener>,
+    shared: Arc<Shared>,
+) {
     let mut buf = [0u8; 2048];
     // Diferença entre o relógio do cliente e o nosso, pelos Ping/Pong.
     let mut relogio = ClockSync::default();
@@ -514,7 +611,7 @@ fn recv_loop(socket: UdpSocket, saida: Saida, mut atraso: Option<DelayModel>, sh
             .is_some_and(|(quando, _)| *quando <= Instant::now())
         {
             if let Some((_, pacote)) = segurados.pop_front() {
-                on_packet(&pacote, &saida, &mut relogio, &shared);
+                on_packet(&pacote, &saida, &mut relogio, &mut opener, &shared);
             }
         }
         if atraso.is_some() {
@@ -540,15 +637,43 @@ fn recv_loop(socket: UdpSocket, saida: Saida, mut atraso: Option<DelayModel>, sh
         };
         match atraso.as_mut() {
             Some(modelo) => segurados.push_back((modelo.due(Instant::now()), buf[..n].to_vec())),
-            None => on_packet(&buf[..n], &saida, &mut relogio, &shared),
+            None => on_packet(&buf[..n], &saida, &mut relogio, &mut opener, &shared),
         }
     }
 }
 
-/// Trata um pacote que chegou do cliente.
-fn on_packet(pacote: &[u8], socket: &Saida, relogio: &mut ClockSync, shared: &Shared) {
+/// Trata um pacote que chegou do cliente. Com pareamento, só aceita o que
+/// decifrar com a chave da sessão.
+fn on_packet(
+    pacote: &[u8],
+    socket: &Saida,
+    relogio: &mut ClockSync,
+    opener: &mut Option<Opener>,
+    shared: &Shared,
+) {
     let Ok((h, payload)) = PacketHeader::decode(pacote) else {
         return; // lixo na porta: ignorar
+    };
+    let claro;
+    let (h, payload) = match opener {
+        Some(o) => {
+            let aberto = match h.is_encrypted() {
+                true => o.open(h.seq, pacote, HEADER_LEN).ok(),
+                false => None,
+            };
+            let Some(c) = aberto else {
+                shared.with_stats(|s| s.rejected_packets += 1);
+                return;
+            };
+            let h = h.decrypted(c.len());
+            if h.check_payload(&c).is_err() {
+                return;
+            }
+            claro = c;
+            (h, claro.as_slice())
+        }
+        None if h.is_encrypted() => return,
+        None => (h, payload),
     };
     match h.kind {
         PacketKind::Pong => {
@@ -586,7 +711,9 @@ fn on_packet(pacote: &[u8], socket: &Saida, relogio: &mut ClockSync, shared: &Sh
                 on_feedback(shared, &f);
             }
         }
-        PacketKind::Video | PacketKind::Parity => {} // o host não recebe vídeo
+        // O host não recebe vídeo; pareamento depois da sessão pronta é sobra
+        // (reenvio de uma resposta que já chegou).
+        PacketKind::Video | PacketKind::Parity | PacketKind::PairInit | PacketKind::PairReply => {}
     }
 }
 

@@ -127,6 +127,7 @@ impl Fragmenter {
                 timestamp_us,
                 // O emissor regrava na hora de mandar (`stamp_send_time`).
                 send_us: timestamp_us,
+                seq: 0, // idem, se a sessão for cifrada (`prepare_seal`)
             };
             packets.push(header.encode_with_payload(payload)?);
 

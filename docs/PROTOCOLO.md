@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 7
+# Protocolo de rede — versão 8
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -7,22 +7,23 @@ referência: `crates/fluxo-proto`.
 `crates/fluxo-proto/src/packet.rs`, atualize este documento e registre no
 CHANGELOG.
 
-## 1. Cabeçalho (24 bytes, big-endian)
+## 1. Cabeçalho (28 bytes, big-endian)
 
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `7`. Versões diferentes são descartadas (histórico na seção 6). |
-| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback. |
+| 2 | 1 | `version` | `8`. Versões diferentes são descartadas (histórico na seção 6). |
+| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply. |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
-| 12 | 1 | `flags` | Bit 0: keyframe. Bit 1: início de uma onda de intra-refresh. Bit 2: fim da onda. Bits 3–7 reservados (enviar 0, ignorar ao ler). No KeyframeRequest, o bit 0 diz que só keyframe serve. |
+| 12 | 1 | `flags` | Bit 0: keyframe. Bit 1: início de uma onda de intra-refresh. Bit 2: fim da onda. Bit 3: payload cifrado (seção 2.1). Bits 4–7 reservados (enviar 0, ignorar ao ler). No KeyframeRequest, o bit 0 diz que só keyframe serve. |
 | 13 | 1 | `fec_group` | Só em Parity: fragmentos por grupo de FEC (≥ 1). Nos outros tipos, 0. |
-| 14 | 2 | `payload_len` | Bytes de payload. Deve ser igual a `tamanho do datagrama − 24`. |
+| 14 | 2 | `payload_len` | Bytes de payload (cifrado: inclui a tag de 16). Deve ser igual a `tamanho do datagrama − 28`. |
 | 16 | 4 | `timestamp_us` | Momento da captura em µs: relógio de parede (UTC) truncado para 32 bits, volta a cada ~71 min (`fluxo_net::clock_us`). |
 | 20 | 4 | `send_us` | Momento em que **este pacote** saiu, no mesmo relógio. Gravado na hora do envio (`stamp_send_time`), depois do pacing. Ver "Atraso de fila" no Feedback. |
-| 24 | N | payload | Dados. |
+| 24 | 4 | `seq` | Número do pacote no seu sentido (host → cliente ou o contrário), começando em 0: o nonce da cifra. 0 em pacotes em claro. |
+| 28 | N | payload | Dados (cifrado: dados cifrados + tag de 16 bytes). |
 
 ## 2. Tipos de pacote
 
@@ -113,19 +114,55 @@ um frame são divididos em grupos de `fec_group` (padrão 10); depois do
 - Custo: `1/fec_group` a mais de pacotes. Medido com 1% de perda: 98,7% dos
   frames inteiros com grupos de 10, contra 68% sem FEC.
 
-## 2.1. Endereços (provisório, até o handshake da fase 5)
+### PairInit (`kind = 7`) / PairReply (`kind = 8`) — pareamento
+Sempre em claro. Transformam o código de pareamento (8 caracteres que o
+cliente mostra e quem compartilha digita) numa chave de sessão, com SPAKE2
+(Ed25519): quem não sabe o código ganha **um** palpite por tentativa e não
+consegue testar códigos depois, gravando a troca.
 
-- O host envia para um `IP:porta` informado à mão.
-- O cliente aceita o primeiro endereço que mandar um pacote válido e ignora
-  os outros; após 2 s sem pacotes dele, aceita um novo (host reiniciado) e
-  zera a remontagem.
+- **PairInit** (host → cliente): `frame_id` = número da tentativa (o mesmo
+  nos reenvios, a cada 250 ms até a resposta); payload de 33 bytes, a
+  mensagem SPAKE2 do host (identidade `fluxo-host`).
+- **PairReply** (cliente → host): mesmo `frame_id`; payload de 49 bytes, a
+  mensagem SPAKE2 do cliente (identidade `fluxo-cliente`) + 16 bytes de
+  confirmação (ChaCha20-Poly1305 de um bloco vazio, dado autenticado
+  `fluxo: o cliente confirma a chave`, com uma chave derivada só para isso).
+  O host confere e, se não bater, para com "o código não confere". Um
+  PairInit repetido recebe a mesma resposta.
+- **Chaves:** HKDF-SHA256 do segredo do SPAKE2 (sal `fluxo protocolo v8`)
+  dá uma chave por sentido (`host -> cliente`, `cliente -> host`) e a de
+  confirmação. Cada pareamento gera chaves novas.
+
+## 2.1. Cifra e endereços
+
+Com código de pareamento (o padrão), **todo** pacote depois do pareamento —
+vídeo, paridade, pings, pongs, relatórios, pedidos — vai cifrado:
+
+- ChaCha20-Poly1305 com a chave do sentido; nonce = `seq` (12 bytes: 8
+  zeros + `seq`). O cabeçalho inteiro é o dado autenticado: visível, mas
+  qualquer mudança é detectada. O payload sai cifrado com a tag de 16 bytes
+  no fim, e o bit 3 de `flags` ligado.
+- **Anti-replay:** o receptor guarda o maior `seq` visto e um mapa dos 64
+  anteriores; pacote repetido ou mais de 64 atrás é recusado (como no IPsec
+  e no DTLS). Depois de 2³² pacotes num sentido (~10 dias a 5 000/s), é
+  preciso parear de novo.
+- **Endereços:** o host envia para um `IP:porta` informado à mão. O cliente
+  só aceita pacotes que decifrem com a sessão; o endereço do host passa a
+  ser o do último pacote autenticado (se o NAT mudar a porta, a conexão
+  segue). Um PairInit novo cria uma sessão **candidata**, que só substitui
+  a atual quando um pacote decifrar com ela — um intruso sem o código não
+  derruba a conexão.
+- **Sem cifra** (`--sem-cifra` nos dois lados, só para teste): pacotes em
+  claro; o cliente aceita o primeiro endereço que mandar um pacote válido e,
+  após 2 s sem pacotes dele, aceita um novo. Os dois modos não se misturam:
+  cada lado descarta o que vier no modo do outro.
 
 ## 3. Fragmentação (emissor)
 
-- Payload máximo por pacote: **1200 bytes** (`DEFAULT_MAX_PAYLOAD`). Com
-  cabeçalhos IP/UDP fica abaixo de 1280, o MTU mínimo do IPv6, evitando
-  fragmentação IP (ADR-005).
-- `frag_count = ceil(tamanho_do_frame / 1200)`, mínimo 1 (frame vazio gera
+- Payload máximo por pacote: **1180 bytes** (`DEFAULT_MAX_PAYLOAD`). Com o
+  cabeçalho de 28, a tag de 16 e os cabeçalhos IP/UDP fica abaixo de 1280, o
+  MTU mínimo do IPv6, evitando fragmentação IP (ADR-005).
+- `frag_count = ceil(tamanho_do_frame / 1180)`, mínimo 1 (frame vazio gera
   1 pacote com payload vazio).
 - Máximo de 65535 fragmentos por frame (limite do campo).
 
@@ -164,10 +201,9 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 - ~~**FEC mais forte** (Reed-Solomon)~~ — medido e descartado: no Wi-Fi de
   teste as perdas são rajadas longas de fila cheia (ver `modulos/fluxo-net.md`),
   que 2 paridades por grupo não salvam; quem resolve é o bitrate adaptativo.
-- **Criptografia**: chave por sessão trocada no handshake; payload cifrado
-  com AEAD (ChaCha20-Poly1305), cabeçalho como dado autenticado.
-- **Handshake/sessão**: identificador de sessão no cabeçalho para ignorar
-  pacotes de conexões antigas.
+- ~~**Criptografia** e **handshake**~~ — feitos na versão 8 (seções 2 e 2.1).
+  Um ID de sessão no cabeçalho não foi preciso: pacote de outra sessão não
+  decifra.
 
 ## 6. Histórico de versões
 
@@ -180,3 +216,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 5 | Pong leva 4 bytes com o relógio de quem responde (sincronização). Versões anteriores recusadas. |
 | 6 | Cabeçalho de 24 bytes: + `send_us` (hora de saída de cada pacote), base do atraso de fila. Versões anteriores recusadas. |
 | 7 | Flags de onda de intra-refresh no vídeo (bits 1 e 2); KeyframeRequest com bit 0 = "só keyframe serve". Versões anteriores recusadas. |
+| 8 | Cabeçalho de 28 bytes (+ `seq`), PairInit e PairReply (pareamento SPAKE2), payload cifrado com ChaCha20-Poly1305 (bit 3 de `flags`) e anti-replay; payload máximo 1180. Versões anteriores recusadas. |

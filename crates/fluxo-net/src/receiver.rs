@@ -7,9 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use fluxo_crypto::{Opener, PairingCode, Sealer, Session, TAG_LEN};
 use fluxo_proto::{
-    CompletedFrame, Feedback, PacketHeader, PacketKind, Reassembler, ReassemblerConfig, ReassemblerStats,
-    FLAG_KEYFRAME,
+    prepare_seal, CompletedFrame, Feedback, PacketHeader, PacketKind, Reassembler, ReassemblerConfig,
+    ReassemblerStats, FLAG_KEYFRAME, HEADER_LEN,
 };
 
 use crate::delay::QueueDelay;
@@ -38,6 +39,10 @@ pub struct ReceiverConfig {
     /// Intervalo entre relatórios ([`Feedback`]) ao host, para o bitrate
     /// adaptativo.
     pub feedback_interval: Duration,
+    /// Código de pareamento. Com ele, só se aceita o host que fizer o
+    /// handshake com o mesmo código, e tudo trafega cifrado; pacotes em
+    /// claro são descartados. `None`: sem cifra (rede de teste).
+    pub pairing_code: Option<PairingCode>,
 }
 
 impl Default for ReceiverConfig {
@@ -48,6 +53,7 @@ impl Default for ReceiverConfig {
             queue_frames: 120,
             peer_timeout: Duration::from_secs(2),
             feedback_interval: Duration::from_millis(250),
+            pairing_code: None,
         }
     }
 }
@@ -101,17 +107,44 @@ pub struct ReceiverStats {
     /// Erro máximo de [`Self::clock_offset_ms`] (metade do melhor RTT), em ms.
     pub clock_error_ms: Option<f64>,
     pub rtt: RttStats,
+    /// Pedidos de pareamento respondidos (com código configurado).
+    pub pairings: u64,
+    /// Há uma sessão cifrada com o host (o handshake deu certo).
+    pub encrypted: bool,
 }
 
 struct Shared {
     stats: Mutex<ReceiverStats>,
     rtt: Mutex<RttEstimator>,
     stop: AtomicBool,
+    /// Com código de pareamento: tudo o que sai vai cifrado.
+    cifrado: bool,
+    /// Chave do sentido cliente → host, depois do pareamento.
+    sealer: Mutex<Option<Sealer>>,
 }
 
 impl Shared {
     fn with_stats(&self, f: impl FnOnce(&mut ReceiverStats)) {
         f(&mut self.stats.lock().unwrap_or_else(|e| e.into_inner()));
+    }
+
+    /// Manda um pacote montado ao host: cifrado se há código de pareamento
+    /// (e nada, se o pareamento ainda não aconteceu), em claro se não há.
+    fn enviar(&self, socket: &UdpSocket, mut pacote: Vec<u8>, para: SocketAddr) -> bool {
+        if self.cifrado {
+            let mut sealer = self.sealer.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(s) = sealer.as_mut() else {
+                return false;
+            };
+            let Some(seq) = s.next_seq() else {
+                return false;
+            };
+            prepare_seal(&mut pacote, seq, TAG_LEN);
+            if s.seal(seq, &mut pacote, HEADER_LEN).is_err() {
+                return false;
+            }
+        }
+        socket.send_to(&pacote, para).is_ok()
     }
 }
 
@@ -151,6 +184,8 @@ impl VideoReceiver {
             stats: Mutex::new(ReceiverStats::default()),
             rtt: Mutex::new(RttEstimator::default()),
             stop: AtomicBool::new(false),
+            cifrado: cfg.pairing_code.is_some(),
+            sealer: Mutex::new(None),
         });
         let (tx, frames) = mpsc::sync_channel(cfg.queue_frames.max(1));
         let s = shared.clone();
@@ -206,7 +241,7 @@ impl VideoReceiver {
         }
         let ok = pedido
             .encode_with_payload(&[])
-            .is_ok_and(|p| self.socket.send_to(&p, peer).is_ok());
+            .is_ok_and(|p| self.shared.enviar(&self.socket, p, peer));
         if ok {
             *ultimo = (Some(Instant::now()), ultimo.1.wrapping_add(1));
             self.shared.with_stats(|s| match precisa_keyframe {
@@ -254,6 +289,21 @@ impl Drop for VideoReceiver {
     }
 }
 
+/// Sessão nova, respondida mas ainda não confirmada: vira a ativa no
+/// primeiro pacote do host que ela decifrar. Até lá a sessão antiga continua
+/// valendo — um `PairInit` forjado, sem o código, não derruba a conexão.
+struct Candidata {
+    sessao: Session,
+}
+
+/// Resposta já mandada a um `PairInit`: reenviada se ele chegar de novo
+/// (o host reenvia enquanto a resposta não chega).
+struct Respondido {
+    id: u32,
+    de: SocketAddr,
+    pacote: Vec<u8>,
+}
+
 fn recv_loop(
     socket: UdpSocket,
     cfg: ReceiverConfig,
@@ -273,11 +323,18 @@ fn recv_loop(
     // Diferença entre o relógio do host e o nosso, pelos Ping/Pong.
     let mut relogio = ClockSync::default();
     let mut next_feedback = Instant::now() + cfg.feedback_interval;
+    // Pareamento (só com código): chave de abrir o que o host manda.
+    let mut ativa: Option<Opener> = None;
+    let mut candidata: Option<Candidata> = None;
+    let mut respondido: Option<Respondido> = None;
 
     while !shared.stop.load(Ordering::Relaxed) {
         if let Some(p) = peer {
             if Instant::now() >= next_ping {
-                if ping_to(&socket, p, ping_id) {
+                let ping = PacketKind::Ping
+                    .control(ping_id, clock_us())
+                    .encode_with_payload(&[]);
+                if ping.is_ok_and(|pkt| shared.enviar(&socket, pkt, p)) {
                     shared.with_stats(|s| s.pings_sent += 1);
                 }
                 ping_id = ping_id.wrapping_add(1);
@@ -294,7 +351,7 @@ fn recv_loop(
                 let ok = PacketKind::Feedback
                     .control(0, clock_us())
                     .encode_with_payload(&f.to_bytes())
-                    .is_ok_and(|pkt| socket.send_to(&pkt, p).is_ok());
+                    .is_ok_and(|pkt| shared.enviar(&socket, pkt, p));
                 if ok {
                     shared.with_stats(|s| {
                         s.feedbacks_sent += 1;
@@ -313,38 +370,112 @@ fn recv_loop(
                 continue;
             }
         };
-        let Ok((h, payload)) = PacketHeader::decode(&buf[..n]) else {
+        let datagrama = &buf[..n];
+        let Ok((h, payload)) = PacketHeader::decode(datagrama) else {
             shared.with_stats(|s| s.invalid_packets += 1);
             continue;
         };
 
-        // Um host por vez. Host novo: remontagem do zero (a numeração dos
-        // frames dele recomeça e pareceria "atrasada").
-        match peer {
-            Some(p) if p == from => {}
-            Some(_) if last_from_peer.elapsed() < cfg.peer_timeout => {
-                shared.with_stats(|s| s.invalid_packets += 1);
-                continue;
-            }
-            anterior => {
-                if anterior.is_some() {
-                    reasm = Reassembler::new(cfg.reassembler);
-                    fila = QueueDelay::default();
-                    relogio = ClockSync::default();
-                    shared.with_stats(|s| s.peer_changes += 1);
+        // Daqui sai o pacote em claro, e se ele inaugura uma sessão (host novo).
+        let claro: Vec<u8>;
+        let (h, payload, host_novo) = match &cfg.pairing_code {
+            Some(codigo) => {
+                if h.kind == PacketKind::PairInit {
+                    responder_pareamento(
+                        &socket,
+                        &shared,
+                        codigo,
+                        &h,
+                        payload,
+                        from,
+                        &mut candidata,
+                        &mut respondido,
+                    );
+                    continue;
                 }
-                peer = Some(from);
-                next_ping = Instant::now();
-                shared.with_stats(|s| s.peer = Some(from));
+                if !h.is_encrypted() || h.kind.is_pairing() {
+                    shared.with_stats(|s| s.invalid_packets += 1);
+                    continue;
+                }
+                // A sessão ativa primeiro; senão a candidata, que vira a ativa.
+                let mut host_novo = false;
+                let aberto = match ativa.as_mut().map(|o| o.open(h.seq, datagrama, HEADER_LEN)) {
+                    Some(Ok(c)) => Some(c),
+                    _ => match candidata
+                        .as_mut()
+                        .map(|c| c.sessao.opener.open(h.seq, datagrama, HEADER_LEN))
+                    {
+                        Some(Ok(c)) => {
+                            let Candidata { sessao } = candidata.take().expect("conferida acima");
+                            ativa = Some(sessao.opener);
+                            *shared.sealer.lock().unwrap_or_else(|e| e.into_inner()) = Some(sessao.sealer);
+                            shared.with_stats(|s| s.encrypted = true);
+                            host_novo = true;
+                            Some(c)
+                        }
+                        _ => None,
+                    },
+                };
+                let Some(c) = aberto else {
+                    shared.with_stats(|s| s.invalid_packets += 1);
+                    continue;
+                };
+                let h = h.decrypted(c.len());
+                if h.check_payload(&c).is_err() {
+                    shared.with_stats(|s| s.invalid_packets += 1);
+                    continue;
+                }
+                claro = c;
+                // Autenticado: o host pode ter mudado de endereço (NAT).
+                if !host_novo && peer != Some(from) {
+                    peer = Some(from);
+                    shared.with_stats(|s| s.peer = Some(from));
+                }
+                (h, claro.as_slice(), host_novo)
             }
+            None => {
+                if h.is_encrypted() || h.kind.is_pairing() {
+                    shared.with_stats(|s| s.invalid_packets += 1);
+                    continue;
+                }
+                // Sem cifra: um host por vez; outro endereço só depois de
+                // `peer_timeout` sem notícias do atual.
+                let host_novo = match peer {
+                    Some(p) if p == from => false,
+                    Some(_) if last_from_peer.elapsed() < cfg.peer_timeout => {
+                        shared.with_stats(|s| s.invalid_packets += 1);
+                        continue;
+                    }
+                    _ => true,
+                };
+                (h, payload, host_novo)
+            }
+        };
+
+        // Host novo: remontagem do zero (a numeração dos frames dele
+        // recomeça e pareceria "atrasada").
+        if host_novo {
+            if peer.is_some() {
+                reasm = Reassembler::new(cfg.reassembler);
+                fila = QueueDelay::default();
+                relogio = ClockSync::default();
+                shared.with_stats(|s| s.peer_changes += 1);
+            }
+            peer = Some(from);
+            next_ping = Instant::now();
+            shared.with_stats(|s| s.peer = Some(from));
         }
         last_from_peer = Instant::now();
 
         match h.kind {
-            // Só o host recebe pedidos de keyframe e relatórios.
-            PacketKind::KeyframeRequest | PacketKind::Feedback => {}
+            // Só o host recebe pedidos de keyframe e relatórios; pareamento
+            // já foi tratado acima.
+            PacketKind::KeyframeRequest
+            | PacketKind::Feedback
+            | PacketKind::PairInit
+            | PacketKind::PairReply => {}
             PacketKind::Ping => {
-                if pong_for(&h).is_some_and(|p| socket.send_to(&p, from).is_ok()) {
+                if pong_for(&h).is_some_and(|p| shared.enviar(&socket, p, from)) {
                     shared.with_stats(|s| s.pings_answered += 1);
                 }
             }
@@ -403,9 +534,39 @@ fn recv_loop(
     }
 }
 
-fn ping_to(socket: &UdpSocket, to: SocketAddr, id: u32) -> bool {
-    PacketKind::Ping
-        .control(id, clock_us())
-        .encode_with_payload(&[])
-        .is_ok_and(|p| socket.send_to(&p, to).is_ok())
+/// Responde a um `PairInit`: o mesmo de antes (reenvio do host) recebe a
+/// mesma resposta; um novo gera uma sessão candidata.
+#[allow(clippy::too_many_arguments)]
+fn responder_pareamento(
+    socket: &UdpSocket,
+    shared: &Shared,
+    codigo: &PairingCode,
+    h: &PacketHeader,
+    payload: &[u8],
+    from: SocketAddr,
+    candidata: &mut Option<Candidata>,
+    respondido: &mut Option<Respondido>,
+) {
+    if let Some(r) = respondido.as_ref().filter(|r| r.id == h.frame_id && r.de == from) {
+        let _ = socket.send_to(&r.pacote, from);
+        return;
+    }
+    let Ok((sessao, resposta)) = fluxo_crypto::respond(codigo, payload) else {
+        shared.with_stats(|s| s.invalid_packets += 1);
+        return;
+    };
+    let Ok(pacote) = PacketKind::PairReply
+        .control(h.frame_id, clock_us())
+        .encode_with_payload(&resposta)
+    else {
+        return;
+    };
+    let _ = socket.send_to(&pacote, from);
+    *respondido = Some(Respondido {
+        id: h.frame_id,
+        de: from,
+        pacote,
+    });
+    *candidata = Some(Candidata { sessao });
+    shared.with_stats(|s| s.pairings += 1);
 }

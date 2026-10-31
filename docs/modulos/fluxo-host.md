@@ -8,22 +8,26 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 ## Uso
 
 ```text
-fluxo-host --destino IP:PORTA [--monitor N] [--encoder auto|nvenc|mf]
+fluxo-host --destino IP:PORTA --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S] [--refresh N] [--fec K]
-           [--segundos S] [--porta-local P]
+           [--segundos S] [--porta-local P] [--sem-cifra]
 ```
 
-Enquanto o cliente de verdade não existe (fase 3), o receptor é o
-`fluxo-bench receber`:
+O receptor ([fluxo-client](fluxo-client.md), ou o `fluxo-bench receber`
+sem janela) mostra um **código de pareamento** e o comando pronto:
 
 ```powershell
 # No PC que vai assistir (ou outro terminal, para teste local)
-.\target\release\fluxo-bench.exe receber --porta 9000 --segundos 30 --verificar
-# No PC que compartilha
-.\target\release\fluxo-host.exe --destino 192.168.0.20:9000
+.\target\release\fluxo-client.exe --porta 9000
+# No PC que compartilha, com o código que apareceu lá
+.\target\release\fluxo-host.exe --destino 192.168.0.20:9000 --codigo K7M4-QX9P
 ```
 
-Para teste na mesma máquina, use `--destino 127.0.0.1:9000`.
+O host espera até 30 s pelo pareamento; com o código errado, para na hora
+("o código de pareamento não confere"). Pareado, só esse cliente recebe e
+tudo vai cifrado (ver [fluxo-net](fluxo-net.md), "Pareamento e cifra").
+`--sem-cifra` (nos dois lados) desliga tudo isso, só para teste. Na mesma
+máquina, use `--destino 127.0.0.1:9000`.
 
 ## Firewall
 

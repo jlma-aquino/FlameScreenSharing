@@ -25,10 +25,13 @@ const AJUDA: &str = "\
 fluxo-host — transmite a tela para um cliente Fluxo
 
 Uso:
-  fluxo-host --destino IP:PORTA [opções]
+  fluxo-host --destino IP:PORTA --codigo XXXX-XXXX [opções]
 
 Opções:
   --destino IP:PORTA    para onde enviar (obrigatório), ex.: 192.168.0.20:9000
+  --codigo XXXX-XXXX    código de pareamento mostrado pelo fluxo-client (obrigatório):
+                        só o cliente com esse código recebe, e tudo vai cifrado
+  --sem-cifra           TESTE: sem pareamento nem cifra (o cliente também)
   --monitor N           monitor a transmitir (padrão 0)
   --encoder E           auto, nvenc ou mf (padrão auto)
   --mbps M              bitrate máximo do vídeo (padrão 20). O bitrate adaptativo
@@ -79,6 +82,8 @@ struct Opts {
     mbps_min: Option<f64>,
     bitrate_fixo: bool,
     fila_max: f64,
+    codigo: Option<String>,
+    sem_cifra: bool,
     simular_banda: f64,
     simular_atraso: f64,
     simular_jitter: f64,
@@ -101,6 +106,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         mbps_min: None,
         bitrate_fixo: false,
         fila_max: fluxo_net::DEFAULT_QUEUE_LIMIT_MS,
+        codigo: None,
+        sem_cifra: false,
         simular_banda: 0.0,
         simular_atraso: 0.0,
         simular_jitter: 0.0,
@@ -126,6 +133,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--mbps-min" => o.mbps_min = Some(valor()?.parse().map_err(|_| "mbps-min inválido")?),
             "--bitrate-fixo" => o.bitrate_fixo = true,
             "--fila-max" => o.fila_max = valor()?.parse().map_err(|_| "fila-max inválido")?,
+            "--codigo" => o.codigo = Some(valor()?.clone()),
+            "--sem-cifra" => o.sem_cifra = true,
             "--simular-banda" => o.simular_banda = valor()?.parse().map_err(|_| "simular-banda inválido")?,
             "--simular-atraso" => {
                 o.simular_atraso = valor()?.parse().map_err(|_| "simular-atraso inválido")?
@@ -139,6 +148,18 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     }
     if o.destino.is_empty() {
         return Err("falta --destino IP:PORTA".into());
+    }
+    match (&o.codigo, o.sem_cifra) {
+        (None, false) => {
+            return Err(
+                "falta --codigo XXXX-XXXX (o código aparece no fluxo-client; --sem-cifra só para teste)"
+                    .into(),
+            )
+        }
+        (Some(c), false) => {
+            fluxo_net::PairingCode::parse(c).map_err(|e| e.to_string())?;
+        }
+        (_, true) => o.codigo = None,
     }
     Ok(o)
 }
@@ -283,7 +304,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
 
     use fluxo_capture::{enable_dpi_awareness, CaptureError, DesktopCapturer};
     use fluxo_encode::{open_encoder, EncoderConfig};
-    use fluxo_net::{clock_us, BitrateChange, BitrateController, SenderConfig, VideoSender};
+    use fluxo_net::{clock_us, BitrateChange, BitrateController, PairingCode, SenderConfig, VideoSender};
 
     use crate::limite::FpsLimiter;
 
@@ -317,8 +338,16 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         simulated_bandwidth_bps: (o.simular_banda * 1e6).round() as u64,
         simulated_delay: Duration::from_secs_f64(o.simular_atraso.max(0.0) / 1000.0),
         simulated_jitter: Duration::from_secs_f64(o.simular_jitter.max(0.0) / 1000.0),
+        // Já conferido em parse_opts; `None` só com --sem-cifra.
+        pairing_code: o.codigo.as_deref().and_then(|c| PairingCode::parse(c).ok()),
+        // Tempo para abrir o cliente e digitar o código, se preciso.
+        pairing_timeout: Duration::from_secs(30),
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
+    match &net_cfg.pairing_code {
+        Some(c) => println!("Pareando com {} (código {c})…", o.destino),
+        None => println!("TESTE: sem pareamento nem cifra (--sem-cifra)"),
+    }
     // Bitrate adaptativo: o controlador decide, o encoder e o pacing seguem
     // (o pacing só se não foi fixado à mão).
     let max_kbps = (bitrate_bps / 1000) as u32;
@@ -354,6 +383,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             false => String::new(),
         }
     );
+    if tx.stats().encrypted {
+        println!("  pareado: só esse cliente recebe, tudo cifrado (ChaCha20-Poly1305)");
+    }
     match &abr {
         Some(c) => println!(
             "  bitrate adaptativo: entre {:.1} e {:.1} Mbps, fila máxima {} ms",

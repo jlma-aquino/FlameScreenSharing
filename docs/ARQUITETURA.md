@@ -36,13 +36,15 @@ thread da janela só processa mensagens — arrastar a janela não para a imagem
 | `fluxo-proto` | Formato de pacote, fragmentação, remontagem, sequência | Nenhum I/O | Qualquer |
 | `fluxo-capture` | Captura frames da tela como textura D3D11 | Encode, rede | Windows (stub nos outros) |
 | `fluxo-encode` | Textura → H.264 via GPU (NVENC ou Media Foundation) | Captura | Windows (tipos em qualquer) |
-| `fluxo-net` | Sockets UDP, pacing, RTT (NAT traversal na fase 5) | Formato dos bytes | Qualquer |
+| `fluxo-crypto` | Código de pareamento, handshake SPAKE2, cifra ChaCha20-Poly1305 por pacote | I/O | Qualquer |
+| `fluxo-net` | Sockets UDP, pacing, RTT, pareamento e cifra no socket (NAT traversal na fase 5) | Formato dos bytes, algoritmos de cripto | Qualquer |
 | `fluxo-decode` | H.264 → textura NV12 via GPU (Media Foundation + DXVA) | Rede, tela | Windows (erro em qualquer) |
 | `apps/fluxo-host` | Captura → encode → rede | Decode, tela | Windows |
 | `apps/fluxo-client` | Rede → decode → janela (swapchain flip model) | Captura | Windows |
 
 **Regra de dependência:** crates de baixo nível nunca dependem de crates de
-alto nível. `fluxo-proto` não depende de nada; `apps/*` dependem de tudo.
+alto nível. `fluxo-proto` e `fluxo-crypto` não dependem de outros crates do
+Fluxo; `apps/*` dependem de tudo.
 
 ## 3. Por que a imagem nunca sai da GPU
 
@@ -98,12 +100,14 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
    frames inteiros, contra 68% sem FEC.
 4. ✅ Bitrate adaptativo: o cliente relata perda e atraso de fila (pacote
    `Feedback`); o host baixa o bitrate rápido e sobe devagar (AIMD).
-5. ⏳ Criptografia e travessia de NAT (STUN + *hole punching*, relay de
+5. ✅ Pareamento por código (SPAKE2) e cifra de todo pacote (ChaCha20-Poly1305),
+   protocolo v8 (ADR-008).
+6. ⏳ Travessia de NAT (STUN + *hole punching*, relay de
    fallback).
 
 ## 6. Tratamento de erros
 
-- Cada crate tem seu enum de erro (`ProtoError`, `CaptureError`, `EncodeError`, `NetError`) com
+- Cada crate tem seu enum de erro (`ProtoError`, `CaptureError`, `EncodeError`, `NetError`, `CryptoError`) com
   mensagens em português e `impl std::error::Error`.
 - Erros **esperados** em operação normal não são falhas: tela parada
   (`Ok(None)`), acesso perdido na troca de resolução (`AccessLost`, recriado
@@ -116,4 +120,4 @@ frame quebrado e seguir. Usamos UDP com nosso protocolo
   `Send` de propósito.
 - Todo `unsafe` fica dentro de `fluxo-capture` e `fluxo-encode` (e
   futuramente decode), em blocos pequenos, com comentário explicando a
-  invariante. `fluxo-proto` e `fluxo-net` não têm nenhum `unsafe`.
+  invariante. `fluxo-proto`, `fluxo-crypto` e `fluxo-net` não têm nenhum `unsafe`.

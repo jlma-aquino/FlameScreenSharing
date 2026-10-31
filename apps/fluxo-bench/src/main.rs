@@ -50,6 +50,10 @@ struct Opts {
     destino: Option<String>,
     /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
     fec: u8,
+    /// Código de pareamento do `receber` (padrão: sorteado) e do `enviar`.
+    codigo: Option<String>,
+    /// `receber`/`enviar` sem pareamento nem cifra.
+    sem_cifra: bool,
     /// Intra-refresh em ondas de N frames (0 = desligado).
     refresh: u32,
     /// No encode com `--verificar`, descarta um frame a cada S segundos
@@ -71,6 +75,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         porta: 9000,
         destino: None,
         fec: 10,
+        codigo: None,
+        sem_cifra: false,
         refresh: 0,
         perder_a_cada: 0.0,
     };
@@ -86,6 +92,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--porta" => o.porta = valor()?.parse().map_err(|_| "porta inválida")?,
             "--destino" => o.destino = Some(valor()?.clone()),
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
+            "--codigo" => o.codigo = Some(valor()?.clone()),
+            "--sem-cifra" => o.sem_cifra = true,
             "--encoder" => o.encoder = valor()?.parse()?,
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
             "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
@@ -132,6 +140,9 @@ Opções:
   --porta P             porta UDP do receber (padrão 9000)
   --destino IP:PORTA    destino do enviar (o PC que roda o receber)
   --fec K               no enviar: 1 paridade a cada K pacotes (padrão 10; 0 = sem)
+  --codigo XXXX-XXXX    código de pareamento: o receber mostra um sorteado (ou usa
+                        este); o enviar precisa do código do receber
+  --sem-cifra           receber/enviar sem pareamento nem cifra (os dois lados)
   --refresh N           no encode, liga o intra-refresh em ondas de N frames (NVENC)
   --perder-a-cada S     no encode com --verificar, descarta um frame a cada S
                         segundos (o decoder não o recebe) e pede a recuperação:

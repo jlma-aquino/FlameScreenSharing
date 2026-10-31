@@ -1,6 +1,6 @@
 # fluxo-net
 
-**Caminho:** `crates/fluxo-net` · **Dependências:** `fluxo-proto` · **Plataforma:** qualquer
+**Caminho:** `crates/fluxo-net` · **Dependências:** `fluxo-proto`, `fluxo-crypto` · **Plataforma:** qualquer
 
 Transporte UDP: faz o I/O que o `fluxo-proto` deliberadamente não faz. Só
 biblioteca padrão — roda e é testado em qualquer sistema.
@@ -189,14 +189,36 @@ Medido (link simulado de 8 Mbps, host querendo 20, 15 s):
   20 ms; quando o extra cai, os pacotes segurados saem juntos (rajada, como
   no Wi-Fi). Os pacotes nunca se ultrapassam.
 
-## Host único e reinício
+## Pareamento e cifra
 
-O receptor aprende o endereço do host pelo primeiro pacote válido e ignora
-os outros. Se o host ficar 2 s sem mandar nada
-(`ReceiverConfig::peer_timeout`), um endereço novo é aceito e a remontagem
-recomeça do zero — a numeração de frames do host novo recomeça e, sem isso,
-pareceria "atrasada". Isso é provisório: a fase 5 traz handshake e ID de
-sessão.
+Com `SenderConfig`/`ReceiverConfig::pairing_code` (o padrão nos apps), o
+`fluxo-crypto` entra em cena:
+
+- **Host** (`VideoSender::connect`): antes de criar as threads, manda
+  `PairInit` a cada 250 ms até chegar o `PairReply` (prazo
+  `pairing_timeout`; os apps usam 30 s). Código errado: erro na hora
+  (`NetError::Pairing`, "o código de pareamento não confere"). Depois, todo
+  pacote passa pela `Saida`, que cifra por último — com `send_us` já
+  gravado, o cabeçalho inteiro é autenticado. A chave de envio é uma só para
+  as duas threads (o `seq` também).
+- **Cliente** (`VideoReceiver`): responde a cada `PairInit` (o mesmo de
+  novo recebe a mesma resposta) com uma sessão **candidata**, que vira a
+  ativa no primeiro pacote que ela decifrar; até lá, a sessão antiga segue
+  valendo. Só aceita o que decifrar; o endereço do host passa a ser o do
+  último pacote autenticado (o NAT pode mudar a porta). Tudo o que manda
+  (pings, pongs, relatórios, pedidos) vai cifrado pela mesma chave.
+- Estatísticas: `encrypted` nos dois lados, `pairings` e
+  `invalid_packets` no cliente, `rejected_packets` no host.
+- Medido no Wi-Fi (Windows → notebook Linux, 30 Mbps sintéticos, 20 s):
+  latência p50 13,7 ms cifrado contra 13,2 ms em claro; nenhuma perda.
+
+## Host único e reinício (sem cifra)
+
+Com `--sem-cifra` (teste), o receptor aprende o endereço do host pelo
+primeiro pacote válido e ignora os outros. Se o host ficar 2 s sem mandar
+nada (`ReceiverConfig::peer_timeout`), um endereço novo é aceito e a
+remontagem recomeça do zero — a numeração de frames do host novo recomeça e,
+sem isso, pareceria "atrasada". Com cifra, o host novo é o que parear.
 
 ## Relógio e latência
 

@@ -34,15 +34,16 @@ pub mod seq;
 pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
 pub use packet::{
-    stamp_send_time, PacketHeader, PacketKind, ProtoError, FLAG_KEYFRAME, FLAG_REFRESH_END,
-    FLAG_REFRESH_START, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION,
+    prepare_seal, stamp_send_time, PacketHeader, PacketKind, ProtoError, FLAG_ENCRYPTED, FLAG_KEYFRAME,
+    FLAG_REFRESH_END, FLAG_REFRESH_START, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION,
 };
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};
 
 /// Tamanho máximo padrão do *payload* de cada pacote, em bytes.
 ///
-/// 1200 bytes de payload + 20 de cabeçalho Fluxo + 8 de UDP + 20/40 de IP
-/// fica abaixo de 1280 (o MTU mínimo garantido pelo IPv6) e bem abaixo dos
-/// 1500 típicos de Ethernet. Assim evitamos fragmentação de IP, que na
-/// internet aumenta muito a chance de perda. Ver ADR-005 em `docs/DECISOES.md`.
-pub const DEFAULT_MAX_PAYLOAD: usize = 1200;
+/// 1180 bytes de payload + 28 de cabeçalho Fluxo + 16 da tag da cifra + 8 de
+/// UDP + 20/40 de IP = 1252/1272 bytes: abaixo de 1280 (o MTU mínimo
+/// garantido pelo IPv6) e bem abaixo dos 1500 típicos de Ethernet. Assim
+/// evitamos fragmentação de IP, que na internet aumenta muito a chance de
+/// perda. Ver ADR-005 em `docs/DECISOES.md`.
+pub const DEFAULT_MAX_PAYLOAD: usize = 1180;

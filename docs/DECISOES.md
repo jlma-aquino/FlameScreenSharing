@@ -88,7 +88,7 @@ primeiro e é testado mais a fundo.
 
 ---
 
-## ADR-005 — Payload máximo de 1200 bytes
+## ADR-005 — Payload máximo de 1200 bytes (1180 desde o protocolo v8)
 
 **Status:** Aceito (2026-10-29)
 
@@ -96,9 +96,10 @@ primeiro e é testado mais a fundo.
 qualquer fragmento IP se perde, o pacote inteiro some, e alguns roteadores
 descartam fragmentos.
 
-**Decisão.** 1200 bytes de payload (1252–1272 com cabeçalhos; o nosso tem
-24 bytes desde o protocolo v6), abaixo do
-mínimo de 1280 do IPv6. Mesma escolha do QUIC.
+**Decisão.** 1200 bytes de payload, abaixo do mínimo de 1280 do IPv6 com os
+cabeçalhos. Mesma escolha do QUIC. **Atualização (protocolo v8):** 1180
+bytes, porque o cabeçalho passou a 28 bytes e a cifra acrescenta 16 de tag:
+1180 + 28 + 16 + 8 (UDP) + 40 (IPv6) = 1272.
 
 **Consequências.**
 - ➕ Funciona em praticamente qualquer rede, inclusive VPNs e túneis.
@@ -170,6 +171,43 @@ barras pretas) direto no back buffer de uma swapchain *flip model* com
 - ➖ Fila interna do MFT é opaca; se ela segurar frames, medimos e reavaliamos.
 - 🔁 Se a latência de decode passar de ~5 ms, avaliar `ID3D11VideoDecoder`
   direto com um parser mínimo (só os perfis que o nosso encoder gera).
+
+---
+
+## ADR-008 — Segurança: código de pareamento com SPAKE2 e ChaCha20-Poly1305
+
+**Status:** Aceito (2026-10-31)
+
+**Contexto.** Até a fase 4 o cliente aceitava o primeiro endereço que
+mandasse vídeo, e tudo trafegava em claro. Para sair da rede local é preciso
+saber **com quem** se fala e impedir que outros leiam ou injetem pacotes.
+Opções:
+
+| Opção | Prós | Contras |
+|---|---|---|
+| DTLS/QUIC prontos | Padrões | Certificados/PKI, handshake de vários RTTs, dependências grandes, controle fino de pacotes perdido |
+| Troca de chaves (X25519) + confirmação visual do código | Simples | Quem está no meio, na hora do pareamento, engana quem não confere com atenção |
+| **PAKE (SPAKE2) com código curto** + AEAD por pacote | Código de 8 caracteres basta; um palpite por tentativa, sem ataque offline | Precisa de uma biblioteca de PAKE |
+
+**Decisão.** O cliente mostra um código de 8 caracteres (31 símbolos sem
+ambíguos, ~40 bits); quem compartilha digita no host. SPAKE2 (Ed25519)
+transforma o código numa chave de sessão em 1 RTT (PairInit/PairReply), com
+confirmação explícita do cliente. HKDF-SHA256 deriva uma chave por sentido;
+cada pacote vai cifrado com ChaCha20-Poly1305, `seq` do cabeçalho como nonce
+e o cabeçalho como dado autenticado, com janela anti-replay de 64. Só crates
+do RustCrypto (`spake2`, `chacha20poly1305`, `hkdf`, `sha2`, `getrandom`),
+isoladas no `fluxo-crypto`; nenhum algoritmo escrito à mão.
+
+**Consequências.**
+- ➕ Só o cliente com o código recebe; intruso sem ele não lê, não injeta e
+  não derruba a sessão (a sessão nova só vale quando um pacote decifra).
+- ➕ Medido: no Wi-Fi, a 30 Mbps, latência p50 13,7 ms cifrado contra 13,2 ms
+  em claro; um notebook antigo decifra sem esforço.
+- ➖ 16 bytes de tag por pacote; payload máximo cai de 1200 para 1180.
+- ➖ Cabeçalho visível (tamanhos e tempos de frame vazam), como em qualquer
+  protocolo de vídeo cifrado por pacote.
+- 🔁 Reavaliar ao chegar a sinalização pela internet: o código também vai
+  servir para achar o outro lado no servidor, que não deve conseguir lê-lo.
 
 ---
 

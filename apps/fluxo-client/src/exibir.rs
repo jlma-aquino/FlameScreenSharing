@@ -41,6 +41,9 @@ pub struct Config {
     pub vsync: bool,
     /// Fecha sozinho depois disso, contado do primeiro frame (0 = não).
     pub segundos: f64,
+    /// Texto do painel até chegarem estatísticas (código de pareamento e
+    /// endereço para o host).
+    pub espera: String,
 }
 
 /// Durações em ms, com percentis.
@@ -108,7 +111,7 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
     let (mut recebidos, mut mostrados, mut pulados, mut erros_decode) = (0u64, 0u64, 0u64, 0u64);
 
     // Painel sobre a imagem: o texto muda 1×/s; F2 liga e desliga.
-    let mut texto_painel = "Fluxo\naguardando estatísticas…".to_string();
+    let mut texto_painel = cfg.espera.clone();
     let mut painel_ligado = false;
 
     while !c.fechar.load(Ordering::Relaxed) {
@@ -214,12 +217,15 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
             };
             let mbps = bytes_seg as f64 * 8.0 / 1e6;
             *c.titulo.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
-                "Fluxo — {frames_seg} fps · {mbps:.1} Mbps · {latencia} · RTT {:.1} ms · perdidos {}",
-                s.rtt.smoothed_ms, s.reassembly.frames_lost,
+                "Fluxo — {frames_seg} fps · {mbps:.1} Mbps · {latencia} · RTT {:.1} ms · perdidos {}{}",
+                s.rtt.smoothed_ms,
+                s.reassembly.frames_lost,
+                if s.encrypted { " · cifrado" } else { "" },
             ));
             texto_painel = format!(
-                "{frames_seg} fps · {mbps:.1} Mbps\n{latencia}\nRTT {:.1} ms · fila {:.0} ms\nperdidos {} · FEC {}\nF2 esconde",
+                "{frames_seg} fps · {mbps:.1} Mbps\n{latencia}\nRTT {:.1} ms · fila {:.0} ms\nperdidos {} · FEC {}\n{}F2 esconde",
                 s.rtt.smoothed_ms, s.queue_delay_ms, s.reassembly.frames_lost, s.reassembly.fec_recovered,
+                if s.encrypted { "cifrado · " } else { "SEM CIFRA · " },
             );
             if painel_ligado {
                 tela.set_overlay(Some(&texto_painel))?;

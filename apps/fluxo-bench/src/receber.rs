@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::{Duration, Instant};
 
-use fluxo_net::{FrameAction, ReceiverConfig, Recovery, RecoveryRequest, VideoReceiver};
+use fluxo_net::{FrameAction, PairingCode, ReceiverConfig, Recovery, RecoveryRequest, VideoReceiver};
 
 #[cfg(windows)]
 use crate::verificar::Decoder;
@@ -48,13 +48,31 @@ fn abrir_decoder() -> Result<Option<Decoder>, Box<dyn Error>> {
 }
 
 pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
-    let rx = VideoReceiver::bind(("0.0.0.0", o.porta), ReceiverConfig::default())?;
+    let codigo = match (&o.codigo, o.sem_cifra) {
+        (_, true) => None,
+        (Some(c), false) => Some(PairingCode::parse(c)?),
+        (None, false) => Some(PairingCode::generate()?),
+    };
+    let rx = VideoReceiver::bind(
+        ("0.0.0.0", o.porta),
+        ReceiverConfig {
+            pairing_code: codigo.clone(),
+            ..ReceiverConfig::default()
+        },
+    )?;
     let saida = o.saida.clone().unwrap_or_else(|| "recebido.h264".into());
-    println!(
-        "Escutando em {}. Inicie o fluxo-host com --destino <IP deste PC>:{}",
-        rx.local_addr(),
-        o.porta
-    );
+    match &codigo {
+        Some(c) => println!(
+            "Escutando em {}, código de pareamento {c}. No host: --destino <IP deste PC>:{} --codigo {c}",
+            rx.local_addr(),
+            o.porta
+        ),
+        None => println!(
+            "Escutando em {} SEM cifra. No host: --destino <IP deste PC>:{} --sem-cifra",
+            rx.local_addr(),
+            o.porta
+        ),
+    }
     if o.segundos > 0.0 {
         println!(
             "(mede {} s a partir do primeiro frame; Ctrl+C encerra antes)",

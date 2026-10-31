@@ -10,6 +10,7 @@ members = [
     "crates/fluxo-proto",
     "crates/fluxo-capture",
     "crates/fluxo-encode",
+    "crates/fluxo-crypto",
     "crates/fluxo-net",
     "crates/fluxo-decode",
     "apps/fluxo-bench",
@@ -28,6 +29,7 @@ license = "MIT"
 fluxo-proto = { path = "crates/fluxo-proto" }
 fluxo-capture = { path = "crates/fluxo-capture" }
 fluxo-encode = { path = "crates/fluxo-encode" }
+fluxo-crypto = { path = "crates/fluxo-crypto" }
 fluxo-net = { path = "crates/fluxo-net" }
 fluxo-decode = { path = "crates/fluxo-decode" }
 

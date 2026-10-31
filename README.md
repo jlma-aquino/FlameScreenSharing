@@ -66,15 +66,18 @@ cargo test --workspace
 ```
 
 Transmitir — no PC que assiste, depois no que compartilha (no mesmo PC, use
-`127.0.0.1`):
+`127.0.0.1`). O cliente mostra um código de pareamento (ex.: `K7M4-QX9P`) e
+o comando pronto para o host; só quem digita esse código consegue
+transmitir, e tudo vai cifrado:
 
 ```powershell
 .\target\release\fluxo-client.exe --porta 9000
-.\target\release\fluxo-host.exe --destino <IP de quem assiste>:9000
+.\target\release\fluxo-host.exe --destino <IP de quem assiste>:9000 --codigo <código do cliente>
 ```
 
 Sem janela, só medindo e gravando o que chega: troque o cliente por
-`fluxo-bench receber --porta 9000 --segundos 30 --verificar`.
+`fluxo-bench receber --porta 9000 --segundos 30 --verificar` (que também
+mostra um código).
 
 ## Documentação de código
 
