@@ -802,6 +802,7 @@ fn codigo_de_conexao_host_aprende_o_endereco_pelo_furo() {
             SenderConfig {
                 pairing_code: Some(codigo("K7M4-QX9P")),
                 on_pairing: Some(observar_host),
+                punch_ttl: Some(fluxo_net::PUNCH_TTL),
                 pairing_timeout: Duration::from_secs(4),
                 ..SenderConfig::for_bitrate(20_000_000)
             },

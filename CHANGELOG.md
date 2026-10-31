@@ -13,6 +13,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   cliente cola no terminal. Os dois furam os NATs como na sinalização. Aviso
   quando o STUN detecta NAT simétrico. Também no `fluxo-bench receber
   --internet` / `enviar --conexao`. Sem mudança no protocolo (v9).
+- **Primeira conexão entre redes sem servidor:** casa (CGNAT) → notebook na
+  rede do celular, 0% de perda, RTT ~48 ms. O host manda os pedidos de
+  pareamento com TTL 8 até o furo do cliente chegar (`SenderConfig::punch_ttl`):
+  antes, eles chegavam ao NAT do celular antes do furo e o empurravam para
+  outra porta, e nada passava.
 - **Diagnóstico de conexão:** `fluxo-bench nat` mostra a porta que três
   servidores STUN veem pelo mesmo socket (NAT simétrico ou não); no modo de
   código de conexão, host e cliente mostram linhas `[conexão]` com o que

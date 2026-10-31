@@ -99,8 +99,9 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       no notebook, nos dois sentidos (tela real a 20 Mbps: p50 18,1 ms, 0 perdas)
 - [x] Conexão sem servidor próprio (ADR-010): STUN público + código de conexão e código de resposta pelo
       chat (`fluxo-client --internet`, `fluxo-host --conexao`)
-- [ ] Teste atrás de NATs de verdade (notebook no roteador do celular, com os códigos de conexão; o
-      `fluxo-sinal` precisaria de uma VPS)
+- [x] Teste atrás de NATs de verdade: casa (CGNAT) → notebook no roteador do celular, com os códigos de
+      conexão: 0% de perda, RTT ~48 ms, depois de mandar os pedidos com TTL baixo até o furo chegar
+- [ ] Teste no sentido inverso (o notebook transmite) e com a tela real
 - [ ] UPnP (um código só, quando o roteador do cliente deixar) e IPv6 nos códigos
 - [ ] Relay de fallback para CGNAT (exige alguém hospedando um servidor; opcional)
 

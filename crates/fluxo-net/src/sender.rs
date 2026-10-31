@@ -62,6 +62,12 @@ pub struct SenderConfig {
     /// Recebe o que chega e um resumo do que sai enquanto o cliente não
     /// responde ao pareamento (diagnóstico de furo de NAT).
     pub on_pairing: Option<PairingObserver>,
+    /// TTL dos pedidos de pareamento até chegar o primeiro furo do cliente
+    /// (`None`: normal). Baixo o bastante para morrer antes do NAT do
+    /// cliente: um pedido que chega lá antes do furo dele pode ocupar a porta
+    /// (NATs Linux, como o do celular roteando), e o furo sai por outra. Ver
+    /// [`PUNCH_TTL`].
+    pub punch_ttl: Option<u32>,
 }
 
 /// Tamanho da "fila do roteador" da banda simulada, em frames (~66 ms a 60 fps).
@@ -85,9 +91,16 @@ impl SenderConfig {
             pairing_code: None,
             pairing_timeout: Duration::from_secs(10),
             on_pairing: None,
+            punch_ttl: None,
         }
     }
 }
+
+/// TTL sugerido para [`SenderConfig::punch_ttl`]: passa pelo roteador e pelo
+/// CGNAT da própria operadora (medido: o IP público aparece no 7º salto, numa
+/// rede de casa com CGNAT) e morre bem antes do outro lado na internet
+/// (o celular de teste estava a mais de 11 saltos).
+pub const PUNCH_TTL: u32 = 8;
 
 /// Intervalo entre reenvios do `PairInit` enquanto o cliente não responde.
 const REENVIO_PAREAMENTO: Duration = Duration::from_millis(250);
@@ -141,6 +154,7 @@ fn parear(
     prazo: Duration,
     rota: &Rota,
     observar: Option<&PairingObserver>,
+    mut ttl_normal: Option<u32>,
 ) -> Result<(Session, SocketAddr), NetError> {
     let mut t = Tentativa::nova(codigo)?;
     let (mut candidatos, servidor) = match *rota {
@@ -214,7 +228,14 @@ fn parear(
                         }
                     }
                 }
-                PacketKind::Punch => novo_candidato(&mut candidatos, &recusados, de),
+                PacketKind::Punch => {
+                    novo_candidato(&mut candidatos, &recusados, de);
+                    // O furo do cliente chegou: o caminho está aberto dos dois
+                    // lados, e os pedidos já podem ir até ele.
+                    if let Some(n) = ttl_normal.take() {
+                        let _ = socket.set_ttl(n);
+                    }
+                }
                 // Só de um candidato: quem não sabe por onde o cliente anda
                 // não derruba o pareamento com uma resposta falsa.
                 PacketKind::PairReply if h.frame_id == t.id && candidatos.contains(&de) => {
@@ -426,13 +447,28 @@ impl VideoSender {
         // respondeu.
         let (cifra, opener, peer) = match (&cfg.pairing_code, &rota) {
             (Some(codigo), _) => {
-                let (s, peer) = parear(
+                // TTL baixo até o furo do cliente; o normal volta depois, dê
+                // certo ou não.
+                let ttl_normal = match cfg.punch_ttl {
+                    Some(baixo) => {
+                        let normal = socket.ttl().map_err(NetError::io("ler TTL"))?;
+                        socket.set_ttl(baixo).map_err(NetError::io("configurar TTL"))?;
+                        Some(normal)
+                    }
+                    None => None,
+                };
+                let pareado = parear(
                     &socket,
                     codigo,
                     cfg.pairing_timeout,
                     &rota,
                     cfg.on_pairing.as_ref(),
-                )?;
+                    ttl_normal,
+                );
+                if let Some(normal) = ttl_normal {
+                    socket.set_ttl(normal).map_err(NetError::io("configurar TTL"))?;
+                }
+                let (s, peer) = pareado?;
                 (Some(Arc::new(Mutex::new(s.sealer))), Some(s.opener), peer)
             }
             (None, Rota::Direta(peer)) => (None, None, *peer),

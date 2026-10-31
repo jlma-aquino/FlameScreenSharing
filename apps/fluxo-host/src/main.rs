@@ -420,6 +420,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             println!("  NAT: {}", publico.summary());
             let net_cfg = SenderConfig {
                 on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
+                punch_ttl: Some(fluxo_net::PUNCH_TTL),
                 ..net_cfg
             };
             VideoSender::connect_with_socket(socket, std::net::SocketAddr::V4(c.addr), net_cfg)?

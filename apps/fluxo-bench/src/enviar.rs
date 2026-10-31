@@ -65,6 +65,7 @@ pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
             println!("  NAT: {}", publico.summary());
             let cfg = SenderConfig {
                 on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
+                punch_ttl: Some(fluxo_net::PUNCH_TTL),
                 ..cfg
             };
             VideoSender::connect_with_socket(socket, SocketAddr::V4(cc.addr), cfg)?

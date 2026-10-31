@@ -292,6 +292,22 @@ mandou pedidos ao endereço do código de conexão por minutos e nada voltou;
 o NAT de casa deu a mesma porta para três servidores STUN. Sem o
 diagnóstico acima, não dava para saber em qual lado os pacotes paravam.
 
+**TTL baixo até o furo (`SenderConfig::punch_ttl`, `PUNCH_TTL` = 8).** Com
+os avisos, o segundo teste mostrou os dois lados mandando e nada chegando,
+com os dois NATs mantendo a porta. Causa: os pedidos do host chegavam ao
+celular (NAT Linux, roteando para o notebook) **antes** do furo; cada pedido
+recusado deixa uma entrada no rastreamento de conexões, e o furo do
+notebook, que usaria a mesma dupla de endereços, sai por outra porta — que o
+NAT de casa recusa. Os pedidos a cada 250 ms mantinham isso para sempre.
+Agora o host manda os pedidos com TTL 8 até o primeiro furo chegar: passam
+pelo roteador e pelo CGNAT de casa (no traceroute, o IP público aparece no
+7º salto) e morrem longe do celular (mais de 11 saltos). Chegando o furo, o
+TTL volta ao normal.
+
+Resultado (casa → notebook na rede do celular, `enviar` 5 Mbps, 25 s): o
+furo chegou pela mesma porta do código, pareou na hora, **0% de perda**,
+RTT 45–51 ms (mínimo 39 ms).
+
 ## Host único e reinício (sem cifra)
 
 Com `--sem-cifra` (teste), o receptor aprende o endereço do host pelo

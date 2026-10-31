@@ -72,7 +72,7 @@ pub use observar::{PairingEvent, PairingObserver};
 pub use receiver::{Puncher, ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
-pub use sender::{SenderConfig, SenderStats, VideoSender};
+pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL};
 pub use signal::{SignalEvent, SignalServer, ROOM_TTL};
 pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
