@@ -26,6 +26,7 @@ fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
                        [--saida arquivo.h264] [--verificar] [--refresh N] [--perder-a-cada S]
 fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
 fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
+fluxo-bench enviar     --destino IP:PORTA [--mbps M] [--fps F] [--segundos S] [--fec K]
 ```
 
 ## Lendo o resultado do `bench`
@@ -118,6 +119,25 @@ compilar: seção "Receptor em Linux" de [COMPILAR.md](../COMPILAR.md).
 | descartados na fila | O próprio receptor não leu a tempo | 0 |
 | RTT | Ida e volta medida por ping | LAN cabeada < 1 ms |
 | decodificados (com `--verificar`) | Frames aceitos pelo decoder H.264 do Windows | todos |
+| grupos de FEC que falharam | Nos frames perdidos: grupos com 2 pacotes faltando (Reed-Solomon de 2 paridades salvaria) e com 3+ (rajada) | — |
+
+## `enviar`
+
+Manda frames sintéticos ao `receber`, a um bitrate fixo, sem captura nem
+encode: mede a rede com carga controlada (com a tela parada o host real
+quase não gera tráfego). Usa o mesmo `VideoSender` do host (pacing a 2,5× o
+bitrate, FEC `--fec`), sem bitrate adaptativo. Todo frame vai marcado como
+keyframe, para o receptor nunca pular frames. Também roda em Linux.
+
+```powershell
+# No PC que recebe (Linux: --saida /dev/null)
+fluxo-bench receber --porta 9000 --segundos 20
+# No PC que envia
+fluxo-bench enviar --destino <IP>:9000 --mbps 40 --segundos 21
+```
+
+Foi assim que se mediu que o Wi-Fi de teste não perde nada até ~40 Mbps e
+que, acima da capacidade, perde em rajadas (ver `fluxo-net.md`, FEC).
 
 ## `decode`
 

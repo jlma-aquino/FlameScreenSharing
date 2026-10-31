@@ -161,8 +161,9 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 
 ## 5. Planejado para próximas versões
 
-- **FEC mais forte** (Reed-Solomon) se a perda em rajada se mostrar comum:
-  o XOR atual só recupera uma perda por grupo.
+- ~~**FEC mais forte** (Reed-Solomon)~~ — medido e descartado: no Wi-Fi de
+  teste as perdas são rajadas longas de fila cheia (ver `modulos/fluxo-net.md`),
+  que 2 paridades por grupo não salvam; quem resolve é o bitrate adaptativo.
 - **Criptografia**: chave por sessão trocada no handshake; payload cifrado
   com AEAD (ChaCha20-Poly1305), cabeçalho como dado autenticado.
 - **Handshake/sessão**: identificador de sessão no cabeçalho para ignorar

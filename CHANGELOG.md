@@ -6,6 +6,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **`fluxo-bench enviar`**: frames sintéticos a bitrate fixo para o
+  `receber`, sem captura nem encode — mede a rede com carga controlada.
+- `ReassemblerStats::fec_groups_failed_2` / `fec_groups_failed_3plus` /
+  `frames_abandoned_without_parity`: nos frames perdidos, quantos pacotes
+  faltaram em cada grupo de FEC (perda espalhada ou em rajada).
 - **Painel de estatísticas sobre a imagem** no `fluxo-client` (Direct2D +
   DirectWrite): fps, Mbps, captura→tela, RTT, fila, perdidos e FEC; F2
   mostra/esconde, `--sem-painel` começa escondido. Custa ~0,13 ms de CPU por
@@ -145,6 +150,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   necessária para `IDXGIOutput::GetDesc`.
 
 ### Medido
+- Perdas no Wi-Fi (Windows → notebook Linux, carga sintética, 20 s por
+  carga): nenhum pacote perdido de 10 a 40 Mbps; acima da capacidade
+  (~45 Mbps), perdas em rajada — a 60 Mbps, 3.348 grupos de FEC falharam
+  com 3+ pacotes faltando contra 309 com 2. Reed-Solomon descartado. Sem
+  perda, picos de atraso de até ~870 ms (a 10 Mbps) aparecem mesmo assim.
 - Intra-refresh vs. keyframe (mesma máquina, NVENC): as ondas deixam a
   imagem idêntica a um decoder sem perda (48 de 48), mas com 3% de perda de
   pacotes sem FEC a imagem ficou congelada em média 231 ms (ondas de 4)

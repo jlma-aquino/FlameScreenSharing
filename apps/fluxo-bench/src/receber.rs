@@ -198,6 +198,12 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         "  frames perdidos na rede:  {} ({} fragmentos reconstruídos pelo FEC; pedidos: {} de limpeza, {} de keyframe)",
         r.frames_lost, r.fec_recovered, s.refresh_requests, s.keyframe_requests
     );
+    if r.frames_lost > 0 {
+        println!(
+            "  grupos de FEC que falharam: {} com 2 pacotes faltando, {} com 3 ou mais; {} frames sem paridade nenhuma",
+            r.fec_groups_failed_2, r.fec_groups_failed_3plus, r.frames_abandoned_without_parity
+        );
+    }
     if !congelados.is_empty() {
         println!(
             "  recuperações:             {} ({} frames com estrago até limpar), média {:.1} ms, máx {:.1} ms",

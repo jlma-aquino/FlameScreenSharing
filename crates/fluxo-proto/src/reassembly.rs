@@ -84,6 +84,15 @@ pub struct ReassemblerStats {
     pub frames_evicted: u64,
     /// Fragmentos perdidos que o FEC reconstruiu.
     pub fec_recovered: u64,
+    /// Grupos de FEC que **não** se recuperaram, nos frames abandonados, por
+    /// quantos pacotes do grupo (dados + paridade) faltaram: 2, ou 3 ou mais.
+    /// O XOR só salva 1 perda por grupo; um código com 2 paridades por grupo
+    /// (Reed-Solomon) salvaria os de 2. Mede se as perdas vêm em rajada.
+    pub fec_groups_failed_2: u64,
+    pub fec_groups_failed_3plus: u64,
+    /// Frames abandonados sem nenhuma paridade recebida (grupo desconhecido:
+    /// o frame inteiro, ou quase, sumiu — rajada longa, ou FEC desligado).
+    pub frames_abandoned_without_parity: u64,
 }
 
 /// Frame ainda incompleto.
@@ -294,7 +303,17 @@ impl Reassembler {
                 .unwrap_or(0),
         };
         self.stats.frames_lost += gap as u64;
-        self.pending.retain(|&other, _| is_newer(other, id));
+        let abandonados: Vec<u32> = self
+            .pending
+            .keys()
+            .copied()
+            .filter(|&o| !is_newer(o, id))
+            .collect();
+        for o in abandonados {
+            if let Some(p) = self.pending.remove(&o) {
+                self.contar_abandono(&p);
+            }
+        }
 
         self.last_delivered = Some(id);
         self.stats.frames_completed += 1;
@@ -317,8 +336,34 @@ impl Reassembler {
             .copied()
             .reduce(|a, b| if is_newer(a, b) { b } else { a });
         if let Some(id) = oldest {
-            self.pending.remove(&id);
+            if let Some(p) = self.pending.remove(&id) {
+                self.contar_abandono(&p);
+            }
             self.stats.frames_evicted += 1;
+        }
+    }
+
+    /// Conta, num frame que não vai mais se completar, os grupos de FEC que
+    /// falharam e quantos pacotes faltaram em cada um.
+    fn contar_abandono(&mut self, p: &PartialFrame) {
+        if p.fec_group == 0 {
+            self.stats.frames_abandoned_without_parity += 1;
+            return;
+        }
+        let total = p.fragments.len() as u16;
+        for g in 0..crate::fec::group_count(total, p.fec_group) {
+            let dados = crate::fec::group_range(g, p.fec_group, total)
+                .filter(|&i| p.fragments[i as usize].is_none())
+                .count();
+            if dados == 0 {
+                continue;
+            }
+            let paridade_faltou = !matches!(p.parity.get(g as usize), Some(Some(_)));
+            match dados + paridade_faltou as usize {
+                0 | 1 => {}
+                2 => self.stats.fec_groups_failed_2 += 1,
+                _ => self.stats.fec_groups_failed_3plus += 1,
+            }
         }
     }
 }
@@ -550,6 +595,41 @@ mod tests {
         let (frame, s) = entregar(pacotes);
         assert_eq!(frame.unwrap().data, dados);
         assert_eq!((s.fec_recovered, s.late_packets, s.invalid_packets), (0, 0, 0));
+    }
+
+    #[test]
+    fn grupos_que_falharam_sao_contados_por_tamanho_da_rajada() {
+        let mut f = Fragmenter::new(100).with_fec_group(10);
+        let mut r = Reassembler::default();
+        let mut entregar = |pacotes: Vec<Vec<u8>>| {
+            for p in pacotes {
+                let (h, pl) = PacketHeader::decode(&p).unwrap();
+                r.push(&h, pl);
+            }
+        };
+        // Ordem de envio com 25 fragmentos: d0..d9 P0 | d10..d19 P1 | d20..d24 P2
+        // (posições 0–10, 11–21, 22–27). Perde: grupo 0 com 2 dados; grupo 1
+        // com 3 dados; grupo 2 com 1 dado e a própria paridade.
+        let (_, a) = f.fragment(&[1u8; 2_500], false, 0).unwrap();
+        let perdidos = [0, 1, 11, 12, 13, 22, 27];
+        entregar(
+            a.into_iter()
+                .enumerate()
+                .filter(|(i, _)| !perdidos.contains(i))
+                .map(|(_, p)| p)
+                .collect(),
+        );
+        // Outro frame sem paridade nenhuma (e com um dado a menos).
+        let (_, b) = f.fragment(&[2u8; 2_500], false, 0).unwrap();
+        entregar(b.into_iter().skip(1).filter(|p| !eh_paridade(p)).collect());
+        // Um frame inteiro depois: os dois anteriores são abandonados.
+        let (_, c) = f.fragment(&[3u8; 300], false, 0).unwrap();
+        entregar(c);
+
+        let s = r.stats();
+        assert_eq!((s.fec_groups_failed_2, s.fec_groups_failed_3plus), (2, 1));
+        assert_eq!(s.frames_abandoned_without_parity, 1);
+        assert_eq!(s.frames_lost, 2);
     }
 
     #[test]

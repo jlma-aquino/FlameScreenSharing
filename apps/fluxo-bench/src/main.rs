@@ -13,6 +13,7 @@
 //!                        [--verificar] [--refresh N] [--perder-a-cada S]
 //! fluxo-bench decode    [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
 //! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar]
+//! fluxo-bench enviar     --destino IP:PORTA [--mbps M] [--fps F] [--segundos S] [--fec K]
 //! ```
 //!
 //! Detalhes e como interpretar os números: `docs/modulos/fluxo-bench.md`.
@@ -20,6 +21,7 @@
 mod bmp;
 #[cfg(windows)]
 mod encode;
+mod enviar;
 mod receber;
 #[cfg(windows)]
 mod verificar;
@@ -44,6 +46,10 @@ struct Opts {
     keyframe_a_cada: f64,
     verificar: bool,
     porta: u16,
+    /// Destino do `enviar` (IP:PORTA).
+    destino: Option<String>,
+    /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
+    fec: u8,
     /// Intra-refresh em ondas de N frames (0 = desligado).
     refresh: u32,
     /// No encode com `--verificar`, descarta um frame a cada S segundos
@@ -63,6 +69,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         keyframe_a_cada: 5.0,
         verificar: false,
         porta: 9000,
+        destino: None,
+        fec: 10,
         refresh: 0,
         perder_a_cada: 0.0,
     };
@@ -76,6 +84,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--copiar-cpu" => o.copiar_cpu = true,
             "--verificar" => o.verificar = true,
             "--porta" => o.porta = valor()?.parse().map_err(|_| "porta inválida")?,
+            "--destino" => o.destino = Some(valor()?.clone()),
+            "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--encoder" => o.encoder = valor()?.parse()?,
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
             "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
@@ -101,6 +111,7 @@ Comandos:
   encode     [opções]         captura + encode: mede tempos e grava um .h264
   decode     [opções]         captura + encode + decode: mede o decoder do cliente
   receber    [opções]         recebe o vídeo do fluxo-host, mede e grava um .h264
+  enviar     [opções]         manda frames sintéticos ao receber (carga fixa, sem captura)
 
 Opções:
   --monitor N           índice do monitor (padrão 0; veja 'listar')
@@ -119,6 +130,8 @@ Opções:
                         Windows, mede o PSNR e salva o último frame em BMP;
                         no receber, confere que todo frame decodifica
   --porta P             porta UDP do receber (padrão 9000)
+  --destino IP:PORTA    destino do enviar (o PC que roda o receber)
+  --fec K               no enviar: 1 paridade a cada K pacotes (padrão 10; 0 = sem)
   --refresh N           no encode, liga o intra-refresh em ondas de N frames (NVENC)
   --perder-a-cada S     no encode com --verificar, descarta um frame a cada S
                         segundos (o decoder não o recebe) e pede a recuperação:
@@ -155,6 +168,7 @@ fn main() -> ExitCode {
         #[cfg(windows)]
         "decode" => encode::cmd_decode(&opts),
         "receber" => receber::cmd_receber(&opts),
+        "enviar" => enviar::cmd_enviar(&opts),
         "ajuda" | "--help" | "-h" => {
             println!("{AJUDA}");
             Ok(())

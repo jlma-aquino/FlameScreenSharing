@@ -66,6 +66,21 @@ Medido com o exemplo `loopback` (300 frames, 20 Mbps):
 | 1% | 68% dos frames inteiros | 98,7% | — |
 | 3% | 35% | 85% | 91% |
 
+Medido no Wi-Fi (Windows → notebook Linux, `fluxo-bench enviar`, 20 s por
+carga, FEC de 10): até 40 Mbps, **nenhum pacote perdido**. Acima da
+capacidade (~45 Mbps) as perdas vêm em rajada:
+
+| Carga | Frames perdidos | Grupos falhos com 2 faltando | com 3 ou mais |
+|---|---|---|---|
+| 50 Mbps | 551 | 208 | 1.783 |
+| 60 Mbps | 894 | 309 | 3.348 |
+| 80 Mbps | 562 | 432 | 7.745 |
+
+Um código com 2 paridades por grupo (Reed-Solomon) salvaria só a minoria de
+2; o frame cairia pelos outros grupos. Perda por fila cheia se resolve
+baixando o bitrate (adaptativo), não com mais FEC. `ReassemblerStats`
+conta os grupos que falharam (`fec_groups_failed_2`, `_3plus`).
+
 ## Bitrate adaptativo
 
 - **Cliente** (`VideoReceiver`, automático): a cada 250 ms manda um
