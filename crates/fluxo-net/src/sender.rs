@@ -199,7 +199,10 @@ fn parear(
         if let Some(o) = observar.filter(|_| Instant::now() >= proximo_resumo) {
             o.notify(&PairingEvent::Waiting {
                 elapsed: inicio.elapsed(),
-                what: "pedidos de pareamento",
+                what: match ttl_normal {
+                    Some(_) => "pedidos de pareamento com TTL baixo",
+                    None => "pedidos de pareamento",
+                },
                 sent: enviados,
                 to: candidatos.clone(),
             });
