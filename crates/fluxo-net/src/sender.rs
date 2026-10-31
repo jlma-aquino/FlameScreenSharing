@@ -96,11 +96,13 @@ impl SenderConfig {
     }
 }
 
-/// TTL sugerido para [`SenderConfig::punch_ttl`]: passa pelo roteador e pelo
-/// CGNAT da própria operadora (medido: o IP público aparece no 7º salto, numa
-/// rede de casa com CGNAT) e morre bem antes do outro lado na internet
-/// (o celular de teste estava a mais de 11 saltos).
-pub const PUNCH_TTL: u32 = 8;
+/// TTL sugerido para [`SenderConfig::punch_ttl`]: tem que passar pelos NATs
+/// de quem transmite e morrer antes do NAT de quem recebe. Medido entre uma
+/// rede de casa com CGNAT (IP público no 7º salto) e uma de celular com
+/// 464XLAT (o tradutor NAT64 fica escondido na rede IPv6): 8 basta de casa,
+/// mas não do celular; 12 funciona nos dois sentidos (o caminho todo tem mais
+/// de 12 saltos).
+pub const PUNCH_TTL: u32 = 12;
 
 /// Intervalo entre reenvios do `PairInit` enquanto o cliente não responde.
 const REENVIO_PAREAMENTO: Duration = Duration::from_millis(250);

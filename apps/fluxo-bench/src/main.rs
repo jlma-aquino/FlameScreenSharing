@@ -164,7 +164,7 @@ Opções:
                         conexão e pede no terminal o código de resposta do enviar
   --conexao C           no enviar: o código de conexão do receber --internet
   --ttl-furo N          no enviar --conexao: TTL dos pedidos até o furo do receber chegar
-                        (padrão 8; 0 = TTL normal). Alto o bastante para passar o NAT
+                        (padrão 12; 0 = TTL normal). Alto o bastante para passar o NAT
                         daqui, baixo o bastante para morrer antes do NAT de lá
   --fec K               no enviar: 1 paridade a cada K pacotes (padrão 10; 0 = sem)
   --codigo XXXX-XXXX    código de pareamento: o receber mostra um sorteado (ou usa

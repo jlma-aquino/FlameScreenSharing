@@ -292,21 +292,35 @@ mandou pedidos ao endereço do código de conexão por minutos e nada voltou;
 o NAT de casa deu a mesma porta para três servidores STUN. Sem o
 diagnóstico acima, não dava para saber em qual lado os pacotes paravam.
 
-**TTL baixo até o furo (`SenderConfig::punch_ttl`, `PUNCH_TTL` = 8).** Com
+**TTL baixo até o furo (`SenderConfig::punch_ttl`, `PUNCH_TTL` = 12).** Com
 os avisos, o segundo teste mostrou os dois lados mandando e nada chegando,
 com os dois NATs mantendo a porta. Causa: os pedidos do host chegavam ao
 celular (NAT Linux, roteando para o notebook) **antes** do furo; cada pedido
 recusado deixa uma entrada no rastreamento de conexões, e o furo do
 notebook, que usaria a mesma dupla de endereços, sai por outra porta — que o
 NAT de casa recusa. Os pedidos a cada 250 ms mantinham isso para sempre.
-Agora o host manda os pedidos com TTL 8 até o primeiro furo chegar: passam
-pelo roteador e pelo CGNAT de casa (no traceroute, o IP público aparece no
-7º salto) e morrem longe do celular (mais de 11 saltos). Chegando o furo, o
-TTL volta ao normal.
+Agora o host manda os pedidos com TTL baixo até o primeiro furo chegar:
+passam pelos NATs dele e morrem antes do NAT do cliente. Chegando o furo, o
+TTL volta ao normal. A mesma coisa acontece no sentido inverso (o NAT de
+casa também é Linux): quem transmite é quem precisa do TTL baixo.
 
-Resultado (casa → notebook na rede do celular, `enviar` 5 Mbps, 25 s): o
-furo chegou pela mesma porta do código, pareou na hora, **0% de perda**,
-RTT 45–51 ms (mínimo 39 ms).
+O valor tem uma janela. De casa, o IP público aparece no 7º salto (CGNAT da
+operadora), então 8 basta. Do celular não: a operadora usa **464XLAT** (o
+`tracepath` mostra `192.0.0.1` no 2º salto e nada depois), e o tradutor
+NAT64 fica num ponto da rede IPv6 que não aparece; com 8, os pedidos do
+notebook morriam antes dele e nada passava. Com **12** funcionou nos dois
+sentidos, e virou o padrão; `--ttl-furo N` no host e no `enviar` muda.
+
+| Teste (sem servidor, 5 Mbps, 20–25 s) | TTL | Resultado |
+|---|---|---|
+| Casa → notebook no celular | 8 | 0 perdidos, latência p50 27 ms, RTT 48 ms |
+| Notebook no celular → casa | 8 | não pareou |
+| Notebook no celular → casa | 12 | 0 perdidos, p50 38 ms (p99 73), RTT 52 ms |
+| Casa → notebook no celular | 12 | 0 perdidos, ~30 ms, RTT ~50 ms |
+
+A latência entre as duas redes tem erro de ±21 ms (a sincronização dos
+relógios pelos pings é menos precisa pela internet do celular); o RTT não
+depende disso.
 
 ## Host único e reinício (sem cifra)
 

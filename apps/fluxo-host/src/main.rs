@@ -37,7 +37,7 @@ Opções:
                         diferentes, sem servidor): já traz o código de pareamento; o
                         host mostra um código de resposta para mandar de volta
   --ttl-furo N          com --conexao: TTL dos pedidos até o furo do cliente chegar
-                        (padrão 8; 0 = TTL normal)
+                        (padrão 12; 0 = TTL normal)
   --codigo XXXX-XXXX    código de pareamento mostrado pelo fluxo-client (obrigatório):
                         só o cliente com esse código recebe, e tudo vai cifrado
   --sem-cifra           TESTE: sem pareamento nem cifra (o cliente também)

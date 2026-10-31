@@ -114,7 +114,7 @@ pub(crate) fn kind_of(datagrama: &[u8]) -> &'static str {
             PacketKind::PairInit => "pedido de pareamento",
             PacketKind::PairReply => "resposta de pareamento",
             PacketKind::Signal => "sinalização",
-            _ if h.is_encrypted() => "pacote cifrado do Fluxo (de outra sessão?)",
+            _ if h.is_encrypted() => "pacote cifrado do Fluxo",
             _ => "pacote do Fluxo em claro",
         },
         Err(ProtoError::UnsupportedVersion(_)) => "pacote do Fluxo de outra versão",
