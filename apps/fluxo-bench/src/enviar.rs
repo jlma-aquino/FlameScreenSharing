@@ -63,9 +63,15 @@ pub fn cmd_enviar(o: &Opts) -> Result<(), Box<dyn Error>> {
                 println!("  {aviso}");
             }
             println!("  NAT: {}", publico.summary());
+            if o.ttl_furo > 0 {
+                println!(
+                    "  Pedidos com TTL {} até o furo do outro lado chegar (--ttl-furo)",
+                    o.ttl_furo
+                );
+            }
             let cfg = SenderConfig {
                 on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
-                punch_ttl: Some(fluxo_net::PUNCH_TTL),
+                punch_ttl: (o.ttl_furo > 0).then_some(o.ttl_furo),
                 ..cfg
             };
             VideoSender::connect_with_socket(socket, SocketAddr::V4(cc.addr), cfg)?

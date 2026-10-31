@@ -54,6 +54,8 @@ struct Opts {
     sinal: Option<String>,
     /// Código de conexão do `receber --internet` (o `enviar` conecta sem servidor).
     conexao: Option<String>,
+    /// TTL dos pedidos do `enviar --conexao` até o furo do receber chegar (0 = normal).
+    ttl_furo: u32,
     /// `receber` sem servidor: mostra um código de conexão (STUN público).
     internet: bool,
     /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
@@ -84,6 +86,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         destino: None,
         sinal: None,
         conexao: None,
+        ttl_furo: fluxo_net::PUNCH_TTL,
         internet: false,
         fec: 10,
         codigo: None,
@@ -104,6 +107,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--destino" => o.destino = Some(valor()?.clone()),
             "--sinal" => o.sinal = Some(valor()?.clone()),
             "--conexao" => o.conexao = Some(valor()?.clone()),
+            "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--internet" => o.internet = true,
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--codigo" => o.codigo = Some(valor()?.clone()),
@@ -159,6 +163,9 @@ Opções:
   --internet            no receber: redes diferentes sem servidor; mostra um código de
                         conexão e pede no terminal o código de resposta do enviar
   --conexao C           no enviar: o código de conexão do receber --internet
+  --ttl-furo N          no enviar --conexao: TTL dos pedidos até o furo do receber chegar
+                        (padrão 8; 0 = TTL normal). Alto o bastante para passar o NAT
+                        daqui, baixo o bastante para morrer antes do NAT de lá
   --fec K               no enviar: 1 paridade a cada K pacotes (padrão 10; 0 = sem)
   --codigo XXXX-XXXX    código de pareamento: o receber mostra um sorteado (ou usa
                         este); o enviar precisa do código do receber

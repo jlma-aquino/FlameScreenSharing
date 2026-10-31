@@ -36,6 +36,8 @@ Opções:
   --conexao C           código de conexão mostrado pelo fluxo-client --internet (redes
                         diferentes, sem servidor): já traz o código de pareamento; o
                         host mostra um código de resposta para mandar de volta
+  --ttl-furo N          com --conexao: TTL dos pedidos até o furo do cliente chegar
+                        (padrão 8; 0 = TTL normal)
   --codigo XXXX-XXXX    código de pareamento mostrado pelo fluxo-client (obrigatório):
                         só o cliente com esse código recebe, e tudo vai cifrado
   --sem-cifra           TESTE: sem pareamento nem cifra (o cliente também)
@@ -78,6 +80,8 @@ struct Opts {
     sinal: Option<String>,
     /// Código de conexão do cliente (sem servidor): pareamento + endereço dele.
     conexao: Option<fluxo_net::ConnectionCode>,
+    /// TTL dos pedidos até o furo do cliente chegar (0 = normal).
+    ttl_furo: u32,
     monitor: usize,
     encoder: fluxo_encode::BackendChoice,
     mbps: f64,
@@ -104,6 +108,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         destino: String::new(),
         sinal: None,
         conexao: None,
+        ttl_furo: fluxo_net::PUNCH_TTL,
         monitor: 0,
         encoder: Default::default(),
         mbps: 20.0,
@@ -130,6 +135,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         match a.as_str() {
             "--destino" => o.destino = valor()?.clone(),
             "--sinal" => o.sinal = Some(valor()?.clone()),
+            "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--conexao" => {
                 o.conexao =
                     Some(fluxo_net::ConnectionCode::parse(valor()?).map_err(|e| format!("--conexao: {e}"))?)
@@ -418,9 +424,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("  Esperando até 5 min…\n");
             println!("  NAT: {}", publico.summary());
+            if o.ttl_furo > 0 {
+                println!(
+                    "  Pedidos com TTL {} até o furo do outro lado chegar (--ttl-furo)",
+                    o.ttl_furo
+                );
+            }
             let net_cfg = SenderConfig {
                 on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
-                punch_ttl: Some(fluxo_net::PUNCH_TTL),
+                punch_ttl: (o.ttl_furo > 0).then_some(o.ttl_furo),
                 ..net_cfg
             };
             VideoSender::connect_with_socket(socket, std::net::SocketAddr::V4(c.addr), net_cfg)?
