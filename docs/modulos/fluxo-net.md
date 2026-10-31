@@ -152,6 +152,11 @@ Medido (link simulado de 8 Mbps, host querendo 20, 15 s):
 - Medido na mesma máquina, 3% de perda de pacotes sem FEC: congelamento
   médio de 31 ms com keyframe, 231 ms com ondas de 4 frames (a onda precisa
   de 4 frames seguidos sem perda). Ver `PROTOCOLO.md`.
+- No Wi-Fi (Windows → notebook Linux, 2% de perda simulada sem FEC, 20 s):
+  keyframe limpou a imagem em média em 22 ms (máx 135 ms, 70 recuperações);
+  ondas de 4 em 152 ms (máx 470 ms; 78 ondas, só 33 terminaram sem outra
+  perda no meio). A latência máxima foi menor com ondas (24 contra 165 ms),
+  mas o conteúdo da tela variou entre as rodadas.
 
 ## Largada e perda simulada
 

@@ -139,7 +139,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   pacotes sem FEC a imagem ficou congelada em média 231 ms (ondas de 4)
   contra 31 ms (keyframe), e 10 contra 32 fps mostrados. Os keyframes do
   NVENC têm ~38 KB contra ~31 KB de um P-frame (VBV de 1 frame).
-  Keyframe continua o padrão.
+  Keyframe continua o padrão. No Wi-Fi (até o notebook Linux, 2% de perda
+  sem FEC) o protocolo v7 funcionou de ponta a ponta: keyframe limpou a
+  imagem em média em 22 ms, ondas de 4 em 152 ms.
 - Latência de ida real entre dois PCs (host Windows → notebook Linux no
   Wi-Fi, vídeo, 30 s, relógios sincronizados pelos pings a +837,4 ms ±
   0,5 ms): p50 5,1 ms, p99 29,9 ms, máx 85 ms; 1803 frames, 0 perdidos.
