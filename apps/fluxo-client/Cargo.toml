@@ -11,6 +11,14 @@ fluxo-net = { workspace = true }
 fluxo-decode = { workspace = true }
 fluxo-audio = { workspace = true }
 
+# O cliente portátil (Linux). Opcional: no Windows não pesa no executável normal,
+# e no Linux o `fluxo-bench` segue compilando sem C++.
+openh264 = { version = "0.9", optional = true }
+eframe = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"], optional = true }
+
+[features]
+portatil = ["dep:openh264", "dep:eframe"]
+
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 # Tipo da posição do texto no Direct2D (`DrawTextLayout`); já vem com o `windows`.

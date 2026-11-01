@@ -30,6 +30,18 @@ cargo build --release
 A primeira vez baixa as dependências e demora alguns minutos. Os executáveis
 ficam em `target\release\`.
 
+### No Linux (para assistir)
+
+Precisa de Rust e `g++`; o `nasm` é opcional e deixa o decode bem mais rápido.
+
+```bash
+cargo build --release -p fluxo-client --features portatil
+cargo build --release -p fluxo
+```
+
+Ou `sh pacote/gerar_pacote_linux.sh`, que gera o pacote. Para rodar, deixe
+`fluxo-client` na mesma pasta de `fluxo`. Compartilhar a tela ainda só no Windows.
+
 ## 3. Rodar os testes
 
 ```powershell

@@ -1,0 +1,33 @@
+FlameScreenSharing (FSS) para Linux - versão de teste
+=====================================================
+
+No Linux dá para ASSISTIR à tela de alguém. Compartilhar a sua ainda só funciona
+no Windows.
+
+
+COMO USAR
+---------
+1. Extraia o pacote e abra um terminal na pasta. Depois rode:
+     ./FlameScreenSharing
+2. Clique em Assistir > Começar.
+3. Copie o código de conexão e mande para quem vai compartilhar. Uma janela de
+   vídeo abre e fica esperando; pode deixar aberta.
+4. Se a pessoa mandar um código de resposta de volta, cole no campo da janela e
+   clique em Enviar.
+
+Na janela de vídeo: F11 alterna tela cheia, F2 mostra ou esconde as estatísticas.
+
+
+O QUE PRECISA TER
+-----------------
+- Sessão gráfica (X11 ou Wayland) com OpenGL 3.1 ou mais novo.
+- Para o som: pacat, pw-cat ou aplay. Quase toda distribuição já tem um deles.
+- O vídeo vem em H.264 e é decodificado na CPU. Em PC fraco, peça para quem
+  compartilha baixar a resolução para 720p.
+
+
+PARA AJUDAR NO TESTE
+--------------------
+Mande para quem pediu o teste o que aconteceu e o texto de "Detalhes" (abra
+Detalhes > Copiar detalhes). Ele traz endereços de IP da conexão: mande só para
+essa pessoa.

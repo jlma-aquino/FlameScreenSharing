@@ -427,6 +427,34 @@ códigos. Quem fica 15 s calado sai da lista.
 
 ---
 
+## ADR-015 — Assistir no Linux: OpenH264, OpenGL e tocador por pipe
+
+**Status:** Aceito (2026-11-01)
+
+**Contexto.** O cliente depende de Media Foundation, Direct3D 11 e WASAPI. Levar
+também o lado de compartilhar (captura no Wayland, encoders) é bem mais trabalho,
+e só assistir já permite que alguém no Linux participe.
+
+**Decisão.** Um cliente portátil em `apps/fluxo-client/src/portatil/`, atrás da
+opção de compilação `portatil`, com a mesma rede, os mesmos códigos e a mesma saída
+no terminal. Decode com OpenH264 na CPU (só H.264); imagem numa janela egui, com
+os planos I420 em texturas e a conversão de cor num shader; som por pipe para o
+primeiro tocador que funcionar (`pacat`, `pw-cat`, `aplay`). Sem biblioteca nova
+para o som, e o protocolo não muda.
+
+**Consequências.**
+- ➕ O cliente do Windows não engorda, e o `fluxo-bench` no Linux segue sem C++.
+- ➕ Compila no Windows (`--portatil`), então quase tudo se testa lá também.
+- ➖ CPU fraca não acompanha 1080p: no notebook de teste (2 núcleos, sem NASM), 42–58
+  ms por frame. Em 720p30 fica utilizável (captura→tela p50 ~23 ms). Atrasado, o
+  vídeo acumula segundos de fila até descartar.
+- ➖ Um espectador no Linux leva todos os outros da transmissão para H.264.
+- ➖ O OpenH264 não esconde erros: depois de uma perda não recuperada pelo FEC, a
+  imagem espera um keyframe.
+- 🔁 Mais velocidade: NASM no build; depois, decode na GPU (VAAPI).
+
+---
+
 ## Modelo
 
 ```markdown

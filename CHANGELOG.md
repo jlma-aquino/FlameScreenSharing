@@ -6,6 +6,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Assistir no Linux** (ADR-015): `cargo build --release -p fluxo-client --features
+  portatil`, com OpenH264, OpenGL e `pacat`/`pw-cat`/`aplay`. A janela FlameScreenSharing
+  também compila lá, sem o botão de compartilhar. `pacote/gerar_pacote_linux.sh`.
 - **Vários espectadores** (ADR-014): até 4 na mesma transmissão, com um encoder
   só e sem mudar o protocolo. Na janela, "Adicionar espectador"; no terminal do
   host, `conexao CÓDIGO` ou `destino IP:PORTA CÓDIGO`. O bitrate e o codec seguem
@@ -254,6 +257,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Cursor fora do lugar com `--resolucao`: ia em pixels da tela para um cliente que
+  desenha em pixels do vídeo. Agora o host converte a posição e a forma.
+- Cliente: com a CPU decodificando mais devagar do que os frames chegam, a imagem
+  quase não atualizava; o lote de decode agora tem limite de tempo.
 - Sockets UDP com buffers de 4 MB: a 100 Mbps e 120 fps, 5 de 600 frames se
   perdiam no buffer de recepção padrão do Windows (64 KB); agora 0.
 - Cursor: a forma nova saía sem o cabeçalho do pacote, e o cliente só a  recebia depois de pedir de novo (~100–200 ms a mais a cada troca de  cursor); a posição repetida com os pings também podia anunciar a forma  antes de ela sair. O teste agora confere que a forma chega sem pedido.- `fluxo-client`: ao fechar, o áudio terminava com "a thread de rede foi  encerrada" em vez do resumo.

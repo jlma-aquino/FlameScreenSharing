@@ -3,12 +3,14 @@
 //! aberta (é por ela que o cliente recebe o código de resposta).
 
 use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
+#[cfg(windows)]
 /// `CREATE_NO_WINDOW`: sem janela de console. A janela de vídeo do cliente
 /// não depende disso.
 const SEM_CONSOLE: u32 = 0x0800_0000;
@@ -30,7 +32,7 @@ pub fn caminho_do_programa(nome: &str) -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "pasta do programa"))?;
     ["FSS", "fluxo"]
         .iter()
-        .map(|prefixo| pasta.join(format!("{prefixo}-{nome}.exe")))
+        .map(|prefixo| pasta.join(format!("{prefixo}-{nome}{}", std::env::consts::EXE_SUFFIX)))
         .find(|caminho| caminho.exists())
         .ok_or_else(|| {
             let falta = format!("falta FSS-{nome}.exe nesta pasta. Extraia o zip inteiro antes de abrir");
@@ -46,13 +48,15 @@ impl Processo {
         args: &[String],
         avisar: Arc<dyn Fn() + Send + Sync>,
     ) -> io::Result<Self> {
-        let mut filho = Command::new(programa)
+        let mut comando = Command::new(programa);
+        comando
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .creation_flags(SEM_CONSOLE)
-            .spawn()?;
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        comando.creation_flags(SEM_CONSOLE);
+        let mut filho = comando.spawn()?;
         let entrada = filho.stdin.take();
         let (tx, linhas) = channel();
         if let Some(saida) = filho.stdout.take() {
@@ -117,7 +121,8 @@ fn ler_em_thread(saida: impl Read + Send + 'static, tx: Sender<String>, avisar: 
     });
 }
 
-#[cfg(test)]
+// Os testes usam o PowerShell como programa de eco.
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};

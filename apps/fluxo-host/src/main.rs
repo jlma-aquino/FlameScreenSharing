@@ -811,16 +811,21 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         // cliente desenha por cima do vídeo. A forma antes da posição.
         if let Some(f) = frame.as_mut() {
             if let Some(s) = f.take_pointer_shape() {
-                tx.set_cursor_shape(CursorShape {
-                    width: s.width as u16,
-                    height: s.height as u16,
-                    hot_x: s.hot_x as u16,
-                    hot_y: s.hot_y as u16,
-                    bgra: s.bgra,
-                });
+                tx.set_cursor_shape(espectadores::forma_no_video(
+                    CursorShape {
+                        width: s.width as u16,
+                        height: s.height as u16,
+                        hot_x: s.hot_x as u16,
+                        hot_y: s.hot_y as u16,
+                        bgra: s.bgra,
+                    },
+                    captura,
+                    tamanho(captura.0, captura.1),
+                ));
             }
             if let Some(p) = f.info().pointer {
-                tx.send_cursor_position(p.x, p.y, p.visible);
+                let (x, y) = espectadores::ponto_no_video((p.x, p.y), captura, tamanho(captura.0, captura.1));
+                tx.send_cursor_position(x, y, p.visible);
             }
         }
 

@@ -15,10 +15,15 @@
 //!
 //! Detalhes e como ler os números: `docs/modulos/fluxo-client.md`.
 
+// No Linux, sem a opção `portatil`, só avisa como compilar.
+#![cfg_attr(not(any(windows, feature = "portatil")), allow(dead_code))]
+
 #[cfg(windows)]
 mod exibir;
 #[cfg(windows)]
 mod overlay;
+#[cfg(feature = "portatil")]
+mod portatil;
 #[cfg(windows)]
 mod present;
 #[cfg(windows)]
@@ -75,6 +80,8 @@ struct Opts {
     /// Saída de som onde tocar (`None`: a padrão do Windows).
     saida_som: Option<usize>,
     sem_painel: bool,
+    /// TESTE no Windows: usa o cliente do Linux (`--features portatil`).
+    portatil: bool,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -94,6 +101,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         volume: 100.0,
         saida_som: None,
         sem_painel: false,
+        portatil: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -114,6 +122,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--volume" => o.volume = valor()?.parse().map_err(|_| "volume inválido (0 a 100)")?,
             "--saida-som" => o.saida_som = Some(valor()?.parse().map_err(|_| "saida-som inválida")?),
             "--sem-painel" => o.sem_painel = true,
+            "--portatil" => o.portatil = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
@@ -149,24 +158,40 @@ fn main() -> ExitCode {
     }
 }
 
-#[cfg(not(windows))]
-fn run(_: &Opts) -> Result<(), Box<dyn std::error::Error>> {
-    Err("o fluxo-client só roda no Windows".into())
+#[cfg(all(not(windows), feature = "portatil"))]
+fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
+    let p = preparar(o)?;
+    portatil::run(o, p.rx, p.titulo, p.espera)
 }
 
-/// Thread da janela: só processa mensagens e repassa comandos; rede, decode
-/// e apresentação rodam na thread de exibição ([`exibir`]), que continua
-/// mostrando frames enquanto a janela é arrastada.
-#[cfg(windows)]
-fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::atomic::Ordering;
-    use std::sync::Arc;
-    use std::time::Duration;
+#[cfg(not(any(windows, feature = "portatil")))]
+fn run(_: &Opts) -> Result<(), Box<dyn std::error::Error>> {
+    Err("fora do Windows, compile com: cargo build --release -p fluxo-client --features portatil".into())
+}
 
+/// O que o cliente abre antes da janela, igual em todo sistema.
+struct Preparado {
+    rx: fluxo_net::VideoReceiver,
+    /// Título da janela até chegar vídeo.
+    titulo: String,
+    /// Texto na janela até chegar vídeo (código e endereço para o host).
+    espera: String,
+}
+
+/// Codecs que este cliente decodifica: o que o Windows tiver; o portátil, só H.264.
+fn codecs_aqui(o: &Opts) -> u8 {
+    #[cfg(windows)]
+    if !o.portatil {
+        return fluxo_decode::decodable_codecs();
+    }
+    let _ = o;
+    fluxo_net::VideoCodec::H264.bit()
+}
+
+/// Rede e códigos: abre os sockets, mostra no terminal o que mandar ao host e
+/// fica ouvindo os códigos de resposta.
+fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
     use fluxo_net::{PairingCode, ReceiverConfig, VideoReceiver};
-
-    use crate::exibir::{exibir, Compartilhado, Config};
-    use crate::window::Window;
 
     // Código de pareamento: o host digita este, junto com o nosso endereço.
     let codigo = match (&o.codigo, o.sem_cifra) {
@@ -204,8 +229,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             on_pairing: internet
                 .as_ref()
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
-            // O host escolhe o codec entre os que este Windows decodifica.
-            codecs: fluxo_decode::decodable_codecs(),
+            // O host escolhe o codec entre os que este PC decodifica.
+            codecs: codecs_aqui(o),
             ..ReceiverConfig::default()
         },
     )?;
@@ -220,7 +245,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         (None, Some(ip)) => format!("--destino {ip}:{}", o.porta),
         (None, None) => format!("--destino <IP deste PC>:{}", o.porta),
     };
-    let espera = match (&codigo, &conexao) {
+    let titulo = match (&codigo, &conexao) {
         (_, Some(cc)) => {
             println!("Código de conexão: {cc}");
             for linha in internet.iter().flat_map(|i| i.summary()) {
@@ -244,7 +269,37 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             format!("FSS — aguardando o host ({endereco}, sem cifra)")
         }
     };
-    let mut janela = Window::new(&espera, o.largura, o.altura, o.no_topo)?;
+    let espera = match (&codigo, &conexao) {
+        (_, Some(cc)) => format!("código de conexão\n{cc}\ncole a resposta\ndo host"),
+        (Some(c), None) => format!("código {c}\nhost: {endereco}\n--codigo {c}"),
+        (None, None) => format!("aguardando o host\n{endereco} (sem cifra)"),
+    };
+    Ok(Preparado { rx, titulo, espera })
+}
+
+/// Thread da janela: só processa mensagens e repassa comandos; rede, decode
+/// e apresentação rodam na thread de exibição ([`exibir`]), que continua
+/// mostrando frames enquanto a janela é arrastada.
+#[cfg(windows)]
+fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::exibir::{exibir, Compartilhado, Config};
+    use crate::window::Window;
+
+    #[cfg(feature = "portatil")]
+    if o.portatil {
+        let p = preparar(o)?;
+        return portatil::run(o, p.rx, p.titulo, p.espera);
+    }
+    #[cfg(not(feature = "portatil"))]
+    if o.portatil {
+        return Err("compile com --features portatil".into());
+    }
+    let Preparado { rx, titulo, espera } = preparar(o)?;
+    let mut janela = Window::new(&titulo, o.largura, o.altura, o.no_topo)?;
     let comp = Arc::new(Compartilhado::default());
     comp.painel.store(!o.sem_painel, Ordering::Relaxed);
     let cfg = Config {
@@ -252,11 +307,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         tamanho: janela.client_size(),
         vsync: o.vsync,
         segundos: o.segundos,
-        espera: match (&codigo, &conexao) {
-            (_, Some(cc)) => format!("código de conexão\n{cc}\ncole a resposta\ndo host"),
-            (Some(c), None) => format!("código {c}\nhost: {endereco}\n--codigo {c}"),
-            (None, None) => format!("aguardando o host\n{endereco} (sem cifra)"),
-        },
+        espera,
     };
     // Áudio numa thread própria: toca no ritmo da placa, sem esperar o vídeo.
     let audio = match (o.sem_audio, rx.take_audio()) {
@@ -309,7 +360,6 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Lê do terminal os códigos de resposta do host (numa thread: a janela e o
 /// vídeo seguem) e fura o NAT na direção de cada um.
-#[cfg(windows)]
 fn ler_respostas(furos: fluxo_net::Puncher) {
     std::thread::spawn(move || {
         for linha in std::io::stdin().lines() {

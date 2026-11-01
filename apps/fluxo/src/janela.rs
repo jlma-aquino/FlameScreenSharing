@@ -172,13 +172,17 @@ impl Janela {
             ui.label("Compartilhe a tela direto entre dois PCs, sem servidor.");
             ui.add_space(24.0);
             let tamanho = egui::vec2(280.0, 56.0);
-            if ui
-                .add_sized(
+            // Compartilhar precisa da captura e do encoder, que só existem no Windows.
+            let botao = ui.add_enabled_ui(cfg!(windows), |ui| {
+                ui.add_sized(
                     tamanho,
                     egui::Button::new(RichText::new("Compartilhar minha tela").size(18.0)),
                 )
-                .clicked()
-            {
+            });
+            if !cfg!(windows) {
+                ui.small("Compartilhar ainda só funciona no Windows; assistir funciona aqui.");
+            }
+            if botao.inner.clicked() {
                 self.tela = Tela::Compartilhar;
             }
             ui.add_space(8.0);

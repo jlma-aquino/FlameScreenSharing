@@ -168,7 +168,9 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
         inicio.get_or_insert_with(Instant::now);
 
         // Decodifica tudo o que chegou (cada P-frame depende do anterior),
-        // mas só mostra o mais novo: se o cliente atrasou, ele alcança.
+        // mas só mostra o mais novo: se o cliente atrasou, ele alcança. Com
+        // limite de tempo: se a fila nunca esvazia, a tela ainda atualiza.
+        let lote = Instant::now();
         let mut chegou = Some(primeiro);
         let mut para_mostrar = None;
         while let Some(f) = chegou.take() {
@@ -217,7 +219,9 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
                 }
                 ja_mostrou = true;
             }
-            chegou = rx.recv_frame(Duration::ZERO)?;
+            if lote.elapsed() < Duration::from_millis(33) {
+                chegou = rx.recv_frame(Duration::ZERO)?;
+            }
         }
 
         if let Some((d, capturado_us)) = para_mostrar {

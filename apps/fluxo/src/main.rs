@@ -6,20 +6,15 @@
 
 // Sem janela de console ao abrir com dois cliques.
 #![cfg_attr(windows, windows_subsystem = "windows")]
-// A janela só existe no Windows; a lógica é testada em qualquer sistema.
-#![cfg_attr(not(windows), allow(dead_code))]
 
 mod comandos;
-#[cfg(windows)]
 mod janela;
-#[cfg(windows)]
 mod processo;
 mod saida;
 
 /// O nome que aparece para quem usa. Por dentro (crates, comandos) continua Fluxo.
 pub const NOME: &str = "FlameScreenSharing";
 
-#[cfg(windows)]
 fn main() -> eframe::Result {
     let opcoes = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -29,9 +24,4 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(NOME, opcoes, Box::new(|_| Ok(Box::new(janela::Janela::new()))))
-}
-
-#[cfg(not(windows))]
-fn main() {
-    eprintln!("a janela do Fluxo só roda no Windows; use o fluxo-bench receber");
 }

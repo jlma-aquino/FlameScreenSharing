@@ -128,6 +128,9 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       em área de trabalho
 - [x] Encoder por software (OpenH264, ADR-013): `--encoder software` e último recurso no automático; só
       H.264, frame 1080p em ~8 ms (8 fatias em paralelo, modo câmera), padrões de 30 fps e até 1080p
+- [x] Assistir no Linux (ADR-015): cliente portátil com OpenH264, OpenGL e tocador por pipe. Testado em Linux Mint
+      com X11: 720p30 com captura→tela p50 ~23 ms; 1080p não acompanha numa CPU fraca sem NASM. Compartilhar do
+      Linux e Wayland ainda não
 - [x] Vários espectadores (ADR-014): até 4, um encoder só, sem mudar o protocolo. Com 4 na mesma máquina: 0
       perdidos, todos os frames decodificados, troca de codec no meio; adicionar pela janela ainda sem teste na tela
 - [x] Interface gráfica: `fluxo.exe` (egui) roda o host e o cliente por baixo e mostra os códigos com botão de

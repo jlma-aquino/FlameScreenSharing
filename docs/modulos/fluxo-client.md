@@ -52,6 +52,22 @@ sai da tela cheia; **F2** mostra/esconde o painel de estatísticas sobre a
 imagem (`--sem-painel` começa escondido). Teste na mesma máquina (`--destino 127.0.0.1:9000`)
 funciona, mas a janela aparece dentro da própria imagem ("espelho infinito").
 
+## No Linux
+
+Com `--features portatil`, `src/portatil/` substitui o caminho do Windows (ADR-015):
+`video.rs` (rede → OpenH264), `tela.rs` (janela egui, shader I420 → RGB, cursor e
+painel) e `som.rs` (buffer de jitter e Opus, com o PCM indo por pipe ao tocador).
+Mesmas opções, teclas e saída no terminal. No Windows, `--portatil` usa este caminho,
+para teste.
+
+| Teste (host RTX 5050, Wi-Fi) | Mostrados | Decode (média) | Captura→tela p50 |
+|---|---|---|---|
+| Windows, 16 núcleos, 1080p60 | 52 fps | 4,6 ms | 11,2 ms |
+| Notebook Linux, 2 núcleos, sem NASM, 720p30 | 24,5 fps | 18,9 ms | 22,9 ms |
+| Notebook Linux, 2 núcleos, sem NASM, 1080p30 | 17 fps | 58,6 ms | ~3,7 s: não acompanha |
+
+A primeira linha foi na mesma máquina, sem Wi-Fi.
+
 ## Arquivos
 
 | Arquivo | Conteúdo |

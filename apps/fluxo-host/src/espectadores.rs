@@ -230,6 +230,40 @@ fn pior_perda(a: Option<f64>, b: Option<f64>) -> Option<f64> {
     }
 }
 
+/// Um ponto em pixels da tela, em pixels do vídeo: com `--resolucao`, os dois
+/// são diferentes, e o cliente desenha o cursor em pixels do vídeo.
+pub fn ponto_no_video(p: (i32, i32), tela: (u32, u32), video: (u32, u32)) -> (i32, i32) {
+    let conv = |v: i32, de: u32, para: u32| (v as i64 * para as i64 / de.max(1) as i64) as i32;
+    (conv(p.0, tela.0, video.0), conv(p.1, tela.1, video.1))
+}
+
+/// A forma do cursor na escala do vídeo (o pixel mais próximo, que é o que
+/// mantém um cursor nítido e a ponta no lugar).
+pub fn forma_no_video(f: CursorShape, tela: (u32, u32), video: (u32, u32)) -> CursorShape {
+    if tela == video {
+        return f;
+    }
+    let (w, h) = (f.width as usize, f.height as usize);
+    let (nw, _) = ponto_no_video((f.width as i32, f.height as i32), tela, video);
+    let (_, nh) = ponto_no_video((f.width as i32, f.height as i32), tela, video);
+    let (nw, nh) = (nw.max(1) as usize, nh.max(1) as usize);
+    let mut bgra = Vec::with_capacity(nw * nh * 4);
+    for y in 0..nh {
+        for x in 0..nw {
+            let origem = (y * h / nh) * w + x * w / nw;
+            bgra.extend_from_slice(&f.bgra[origem * 4..origem * 4 + 4]);
+        }
+    }
+    let (hx, hy) = ponto_no_video((f.hot_x as i32, f.hot_y as i32), tela, video);
+    CursorShape {
+        width: nw as u16,
+        height: nh as u16,
+        hot_x: hx as u16,
+        hot_y: hy as u16,
+        bgra,
+    }
+}
+
 /// O que chega pela entrada padrão para pôr mais alguém na transmissão.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pedido {
@@ -420,6 +454,31 @@ mod tests {
         assert_eq!(esp.codecs_comuns(0b011), 0b001, "H.264 sobra sempre");
         esp.desligar_adaptativo();
         assert_eq!(esp.alvo_kbps(), None);
+    }
+
+    #[test]
+    fn cursor_acompanha_a_resolucao_do_video() {
+        let (tela, video) = ((1920, 1080), (1280, 720));
+        assert_eq!(ponto_no_video((960, 540), tela, video), (640, 360));
+        assert_eq!(ponto_no_video((960, 540), tela, tela), (960, 540));
+        // 4×4, com o pixel de cima à esquerda marcado.
+        let mut bgra = vec![0u8; 4 * 4 * 4];
+        bgra[0] = 9;
+        let f = CursorShape {
+            width: 4,
+            height: 4,
+            hot_x: 3,
+            hot_y: 3,
+            bgra,
+        };
+        let menor = forma_no_video(f.clone(), (4, 4), (2, 2));
+        assert_eq!(
+            (menor.width, menor.height, menor.hot_x, menor.hot_y),
+            (2, 2, 1, 1)
+        );
+        assert_eq!(menor.bgra.len(), 2 * 2 * 4);
+        assert_eq!(menor.bgra[0], 9);
+        assert_eq!(forma_no_video(f.clone(), tela, tela), f);
     }
 
     #[test]
