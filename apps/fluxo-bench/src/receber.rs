@@ -150,6 +150,9 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let (mut frames_seg, mut bytes_seg) = (0u64, 0u64);
     let mut latencias_seg: Vec<i32> = Vec::new();
     let mut avisou_registro = false;
+    let mut audio = o.audio.as_deref().map(GravadorAudio::new).transpose()?;
+    // --tocar V: toca o áudio como o fluxo-client (V = 0 testa em silêncio).
+    let mut tocador = abrir_tocador(o.tocar)?;
 
     loop {
         if let (Some(t0), Some(d)) = (inicio, duracao) {
@@ -179,7 +182,23 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                 );
             }
         }
-        let recebido = rx.recv_frame(Duration::from_millis(20))?;
+        // Áudio: tudo o que chegou vai para o tocador (--tocar) e para o WAV
+        // (--audio, decodificado sem tocar); quadros que
+        // faltaram viram som inventado pelo Opus, como no cliente.
+        while let Some(a) = rx.recv_audio(Duration::ZERO)? {
+            if let Some(t) = tocador.as_mut() {
+                t.push(a.seq, a.data.clone());
+            }
+            if let Some(au) = audio.as_mut() {
+                au.receber(&a)?;
+            }
+        }
+        if let Some(t) = tocador.as_mut() {
+            t.pump(Instant::now())?;
+        }
+        // Tocando, o laço precisa voltar logo para alimentar a placa.
+        let espera = if tocador.is_some() { 5 } else { 20 };
+        let recebido = rx.recv_frame(Duration::from_millis(espera))?;
 
         if let Some(f) = recebido {
             if inicio.is_none() {
@@ -323,6 +342,16 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         println!("  decodificados:            {decodificados} de {frames} ({w}x{h})");
     }
     println!("  gravado em {saida}");
+    if let Some(t) = &tocador {
+        let s = t.stats();
+        println!(
+            "  áudio tocado: {} quadros, {} perdidos ({} refeitos pelo FEC), {} vezes sem som para tocar, buffer {} quadros + {:.0} ms na placa",
+            s.jitter.played, s.jitter.lost, s.fec, s.jitter.underruns, s.jitter.target, s.device_ms
+        );
+    }
+    if let Some(au) = audio {
+        au.resumo()?;
+    }
     Ok(())
 }
 
@@ -348,4 +377,116 @@ fn ler_respostas(furos: Puncher) {
             }
         }
     });
+}
+
+/// `--audio x.wav`: decodifica os quadros de áudio que chegam (sem tocar) e
+/// grava, contando perdas e latência.
+struct GravadorAudio {
+    caminho: String,
+    dec: fluxo_audio::Decoder,
+    wav: crate::wav::WavWriter,
+    proximo: Option<u32>,
+    recebidos: u64,
+    perdidos: u64,
+    atrasados: u64,
+    latencias: Vec<i32>,
+}
+
+impl GravadorAudio {
+    fn new(caminho: &str) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            caminho: caminho.to_string(),
+            dec: fluxo_audio::Decoder::new()?,
+            wav: crate::wav::WavWriter::create(
+                caminho,
+                fluxo_audio::SAMPLE_RATE,
+                fluxo_audio::CHANNELS as u16,
+            )?,
+            proximo: None,
+            recebidos: 0,
+            perdidos: 0,
+            atrasados: 0,
+            latencias: Vec::new(),
+        })
+    }
+
+    fn receber(&mut self, a: &fluxo_net::AudioPacket) -> Result<(), Box<dyn Error>> {
+        self.recebidos += 1;
+        if let Some(l) = a.latency_us {
+            self.latencias.push(l);
+        }
+        let esperado = self.proximo.unwrap_or(a.seq);
+        let falta = a.seq.wrapping_sub(esperado);
+        if falta > u32::MAX / 2 {
+            self.atrasados += 1; // chegou depois do seguinte: já foi inventado
+            return Ok(());
+        }
+        // Quadros que faltaram: o Opus inventa (o último, a partir do FEC deste).
+        for i in 0..falta.min(50) {
+            let pcm = match i + 1 == falta {
+                true => self.dec.decode_fec(&a.data)?,
+                false => self.dec.decode(None)?,
+            };
+            self.wav.write(&pcm)?;
+        }
+        self.perdidos += falta as u64;
+        self.wav.write(&self.dec.decode(Some(&a.data))?)?;
+        self.proximo = Some(a.seq.wrapping_add(1));
+        Ok(())
+    }
+
+    fn resumo(mut self) -> Result<(), Box<dyn Error>> {
+        self.latencias.sort_unstable();
+        let p50 = self
+            .latencias
+            .get(self.latencias.len() / 2)
+            .map(|&us| format!(", latência captura→chegada p50 {:.1} ms", us as f64 / 1000.0))
+            .unwrap_or_default();
+        let s = self.wav.seconds(fluxo_audio::SAMPLE_RATE);
+        println!(
+            "  áudio: {} quadros recebidos, {} perdidos (inventados/FEC), {} atrasados{p50}",
+            self.recebidos, self.perdidos, self.atrasados
+        );
+        self.wav.finish()?;
+        println!("  áudio gravado em {} ({s:.1} s)", self.caminho);
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+type Tocador = fluxo_audio::AudioPlayer;
+
+/// Sem saída de som fora do Windows: `--tocar` dá erro.
+#[cfg(not(windows))]
+enum Tocador {}
+
+#[cfg(not(windows))]
+impl Tocador {
+    fn push(&mut self, _: u32, _: Vec<u8>) {
+        match *self {}
+    }
+    fn pump(&mut self, _: Instant) -> Result<(), fluxo_audio::AudioError> {
+        match *self {}
+    }
+    fn stats(&self) -> TocadorStats {
+        match *self {}
+    }
+}
+
+#[cfg(not(windows))]
+struct TocadorStats {
+    jitter: fluxo_audio::JitterStats,
+    fec: u64,
+    device_ms: f64,
+}
+
+/// `--tocar V`: abre a saída de som com volume V (0 a 100).
+fn abrir_tocador(volume: Option<f32>) -> Result<Option<Tocador>, Box<dyn Error>> {
+    match volume {
+        None => Ok(None),
+        #[cfg(windows)]
+        Some(v) => Ok(Some(fluxo_audio::AudioPlayer::new(v / 100.0)?)),
+        #[cfg(not(windows))]
+        Some(_) => Err("--tocar só existe no Windows (use --audio para gravar)".into()),
+    }
 }

@@ -42,6 +42,9 @@ Opções:
                         só o cliente com esse código recebe, e tudo vai cifrado
   --sem-cifra           TESTE: sem pareamento nem cifra (o cliente também)
   --monitor N           monitor a transmitir (padrão 0)
+  --sem-audio           não transmite o som do PC (por padrão vai junto, em Opus)
+  --audio-dispositivo N captura o som da saída N (padrão: a saída padrão do Windows;
+                        a lista aparece em fluxo-bench audio)
   --encoder E           auto, nvenc ou mf (padrão auto)
   --mbps M              bitrate máximo do vídeo (padrão 20). O bitrate adaptativo
                         começa em até 20 Mbps, sobe até este valor se a rede
@@ -80,6 +83,9 @@ struct Opts {
     sinal: Option<String>,
     /// Código de conexão do cliente (sem servidor): pareamento + endereço dele.
     conexao: Option<fluxo_net::ConnectionCode>,
+    /// Sem áudio, e de qual saída de som capturar (`None`: a padrão).
+    sem_audio: bool,
+    audio_dispositivo: Option<usize>,
     /// TTL dos pedidos até o furo do cliente chegar (0 = normal).
     ttl_furo: u32,
     monitor: usize,
@@ -109,6 +115,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         sinal: None,
         conexao: None,
         ttl_furo: fluxo_net::PUNCH_TTL,
+        sem_audio: false,
+        audio_dispositivo: None,
         monitor: 0,
         encoder: Default::default(),
         mbps: 20.0,
@@ -136,6 +144,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--destino" => o.destino = valor()?.clone(),
             "--sinal" => o.sinal = Some(valor()?.clone()),
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
+            "--sem-audio" => o.sem_audio = true,
+            "--audio-dispositivo" => {
+                o.audio_dispositivo = Some(valor()?.parse().map_err(|_| "audio-dispositivo inválido")?)
+            }
             "--conexao" => {
                 o.conexao =
                     Some(fluxo_net::ConnectionCode::parse(valor()?).map_err(|e| format!("--conexao: {e}"))?)
@@ -293,6 +305,54 @@ fn codificar(
     Ok(None)
 }
 
+/// Thread de áudio: captura o que o PC toca, codifica em Opus (quadros de
+/// 10 ms) e manda pelo mesmo `VideoSender`, até `parar`. Devolve o resumo.
+#[cfg(windows)]
+fn transmitir_audio(
+    tx: &fluxo_net::VideoSender,
+    dispositivo: Option<usize>,
+    parar: &std::sync::atomic::AtomicBool,
+) -> Result<String, fluxo_audio::AudioError> {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    use fluxo_audio::{output_devices, Encoder, LoopbackCapture, DEFAULT_BITRATE};
+
+    let nome = output_devices()
+        .ok()
+        .and_then(|l| {
+            l.into_iter()
+                .find(|d| dispositivo.map_or(d.default, |i| d.index == i))
+        })
+        .map(|d| d.name)
+        .unwrap_or_default();
+    let mut cap = LoopbackCapture::new(dispositivo)?;
+    // FEC para ~5% de perda: um quadro perdido é refeito pelo seguinte.
+    let mut enc = Encoder::new(DEFAULT_BITRATE, 5)?;
+    println!(
+        "  áudio: {nome} (Opus {} kbps, quadros de 10 ms)",
+        DEFAULT_BITRATE / 1000
+    );
+    let (mut seq, mut bytes) = (0u32, 0u64);
+    let inicio = Instant::now();
+    while !parar.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(5));
+        for q in cap.read_frames()? {
+            let pacote = enc.encode(&q)?;
+            bytes += pacote.len() as u64;
+            // A captura deste quadro terminou agora; a primeira amostra, 10 ms antes.
+            tx.send_audio(seq, fluxo_net::clock_us().wrapping_sub(10_000), &pacote);
+            seq = seq.wrapping_add(1);
+        }
+    }
+    let t = inicio.elapsed().as_secs_f64();
+    Ok(format!(
+        "áudio: {seq} quadros, {:.0} kbps médio, {:.1} s vieram da placa (o resto foi silêncio)",
+        bytes as f64 * 8.0 / t.max(0.001) / 1000.0,
+        cap.device_seconds()
+    ))
+}
+
 /// Copia `origem` (textura da captura, que só vale enquanto o frame existir)
 /// para `destino`, recriando-a se o tamanho mudou. Cópia na GPU: microssegundos.
 #[cfg(windows)]
@@ -444,6 +504,20 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             VideoSender::connect_with_sockets(internet.v4, internet.v6, c.candidates(), net_cfg)?
         }
         (None, None) => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,
+    };
+    // Áudio numa thread própria, pelo mesmo VideoSender (pacotes à parte).
+    let tx = std::sync::Arc::new(tx);
+    let parar_audio = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let audio = match o.sem_audio {
+        true => None,
+        false => {
+            let (tx, parar, disp) = (tx.clone(), parar_audio.clone(), o.audio_dispositivo);
+            Some(
+                std::thread::Builder::new()
+                    .name("fluxo-audio".into())
+                    .spawn(move || transmitir_audio(&tx, disp, &parar))?,
+            )
+        }
     };
 
     println!(
@@ -699,6 +773,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     alvo_min = alvo_min.min(enc.bitrate_kbps());
     let alvo_final = enc.bitrate_kbps();
     drop(enc);
+    parar_audio.store(true, std::sync::atomic::Ordering::Relaxed);
+    let resumo_audio = match audio.map(|t| t.join()) {
+        Some(Ok(Ok(r))) => r,
+        Some(Ok(Err(e))) => format!("áudio desligado: {e}"),
+        Some(Err(_)) => "áudio: a thread terminou com pânico".to_string(),
+        None => "áudio desligado (--sem-audio)".to_string(),
+    };
     let s = tx.stats();
     drop(tx); // espera a fila de envio esvaziar
     let t = inicio.elapsed().as_secs_f64();
@@ -739,5 +820,6 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         "  RTT: {:.2} ms suavizado, {:.2} ms mínimo ({} medições)",
         s.rtt.smoothed_ms, s.rtt.min_ms, s.rtt.samples
     );
+    println!("  {resumo_audio}");
     Ok(())
 }

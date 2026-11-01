@@ -126,6 +126,14 @@ apresentação, perdas, erros). **Espera no cliente** é quanto cada frame
 esperou entre chegar pela rede e ser processado: perto de zero no normal;
 um valor alto aponta travamento do cliente, não da rede.
 
+## Áudio
+
+O som do host toca numa thread própria ([fluxo-audio](fluxo-audio.md),
+`AudioPlayer`): buffer de jitter de ~30 ms, Opus, saída de som padrão, no
+ritmo da placa (sem esperar o vídeo). `--volume V` (0 a 100) muda só o
+volume do Fluxo; `--sem-audio` não toca. O resumo ao fechar mostra quadros
+tocados, perdidos (e quantos o FEC refez) e quantas vezes faltou som.
+
 ## Cursor
 
 O ponteiro do host é desenhado por cima do vídeo (Direct2D, antes do
@@ -155,4 +163,5 @@ roadmap.
 
 - A janela não toma o foco se for aberta por outro programa em segundo
   plano: clique nela na barra de tarefas ou use `--no-topo`.
-- Sem áudio, mouse ou teclado remotos (fase 6).
+- Sem mouse ou teclado remotos (fase 6, opcional; o tipo de pacote já está
+  reservado).

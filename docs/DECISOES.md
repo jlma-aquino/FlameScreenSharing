@@ -295,6 +295,42 @@ hospedar um e pular os códigos.
 
 ---
 
+## ADR-011 — Áudio: Opus pela libopus traduzida para Rust
+
+**Status:** Aceito (2026-10-31)
+
+**Contexto.** O som do host precisa chegar com pouco atraso e pouca banda.
+Opções de codec:
+
+| Opção | Prós | Contras |
+|---|---|---|
+| PCM sem compressão | Zero dependências, menor atraso | ~1,5 Mbps a mais (pesa na internet do celular) |
+| AAC do Windows (Media Foundation) | Sem download | ~40–60 ms a mais de atraso; ruim para tempo real |
+| **Opus** | Feito para tempo real: quadros de 10 ms, ~128 kbps, FEC e ocultação de perda | Precisa da libopus |
+
+Para a libopus: os bindings comuns (`opus`, `opus-head-sys`) compilam o
+código C com CMake, que aqui só existe dentro do Visual Studio (fora do
+PATH) e no notebook nem existe. O `unsafe-libopus` é a mesma libopus de
+referência traduzida automaticamente para Rust (c2rust): compila em qualquer
+lugar sem ferramentas extras.
+
+**Decisão.** Opus 48 kHz estéreo, quadros de 10 ms, 128 kbps, FEC para ~5%
+de perda, via `unsafe-libopus`, isolado em `fluxo-audio/src/opus.rs` (o
+único lugar com `unsafe`). Um quadro por pacote (tipo Audio, protocolo v11),
+fora da fila do vídeo. No cliente, buffer de jitter adaptativo (30 ms no
+começo) e a fila da placa em 20 ms.
+
+**Consequências.**
+- ➕ Sem CMake nem compilador C; igual no Windows e no Linux.
+- ➕ Medido: 129 kbps, encode ~0,3 ms por quadro, 0 perdas no Wi-Fi.
+- ➖ Código traduzido é `unsafe` e um pouco mais lento que o C original (sem
+  importância a 100 quadros por segundo).
+- ➖ O som sai ~40–50 ms atrás da imagem (jitter + fila da placa).
+- 🔁 Se o atraso incomodar, reduzir o alvo inicial do jitter ou atrasar a
+  imagem para casar com o som.
+
+---
+
 ## Modelo
 
 ```markdown

@@ -921,11 +921,19 @@ fn cursor_chega_e_forma_perdida_e_pedida_de_novo() {
         hot_y: 2,
         bgra: (0..32 * 40 * 4).map(|i| (i % 251) as u8).collect(),
     };
-    // A forma sai antes de existir cliente na porta: se perde.
-    let porta = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    // A forma sai antes de existir cliente lendo: os pacotes dela são
+    // jogados fora (como se perdidos na rede). O socket fica aberto o tempo
+    // todo, para outro teste não pegar a porta no meio.
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let porta = socket.local_addr().unwrap();
     let tx = VideoSender::connect("127.0.0.1:0", porta, SenderConfig::for_bitrate(20_000_000)).unwrap();
     tx.set_cursor_shape(forma.clone());
-    let rx = VideoReceiver::bind(porta, ReceiverConfig::default()).unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    socket.set_nonblocking(true).unwrap();
+    let mut lixo = [0u8; 2048];
+    while socket.recv(&mut lixo).is_ok() {}
+    socket.set_nonblocking(false).unwrap();
+    let rx = VideoReceiver::with_socket(socket, ReceiverConfig::default()).unwrap();
     // A posição diz qual forma usar; o cliente não tem e pede.
     tx.send_cursor_position(100, -5, true);
     let limite = Instant::now() + Duration::from_secs(2);
@@ -950,4 +958,27 @@ fn cursor_chega_e_forma_perdida_e_pedida_de_novo() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(rx.cursor().unwrap().x, 101);
+}
+
+#[test]
+fn audio_chega_cifrado_em_ordem_e_sem_atrapalhar_o_video() {
+    let (rx, tx) = par_cifrado("K7M4-QX9P", Some("K7M4-QX9P"));
+    let tx = tx.expect("pareamento");
+    for seq in 0..50u32 {
+        tx.send_audio(seq, clock_us(), &[seq as u8; 160]);
+    }
+    tx.send_frame(frame(0, 20_000), true, clock_us()).unwrap();
+    let mut recebidos = Vec::new();
+    while let Some(a) = rx.recv_audio(Duration::from_millis(300)).unwrap() {
+        recebidos.push((a.seq, a.data));
+    }
+    assert_eq!(recebidos.len(), 50);
+    assert!(recebidos
+        .iter()
+        .enumerate()
+        .all(|(i, (s, d))| *s == i as u32 && d == &vec![i as u8; 160]));
+    let f = rx.recv_frame(Duration::from_secs(1)).unwrap().expect("frame");
+    assert_eq!(f.frame.data, frame(0, 20_000));
+    let (c, h) = (rx.stats(), tx.stats());
+    assert_eq!((c.audio_packets, c.audio_dropped, h.audio_packets), (50, 0, 50));
 }

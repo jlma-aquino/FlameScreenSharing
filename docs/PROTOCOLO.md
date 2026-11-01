@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 10
+# Protocolo de rede — versão 11
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -12,8 +12,8 @@ CHANGELOG.
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `10`. Versões diferentes são descartadas (histórico na seção 6). |
-| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply, `9` = Signal, `10` = Punch, `11` = Cursor (`12` reservado: Input). |
+| 2 | 1 | `version` | `11`. Versões diferentes são descartadas (histórico na seção 6). |
+| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply, `9` = Signal, `10` = Punch, `11` = Cursor, `13` = Audio (`12` reservado: Input). |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
@@ -304,6 +304,22 @@ cliente o desenha por cima do vídeo. Cifrado como os outros pacotes.
   embaixo, o que não dá para fazer desenhando por cima; o host os converte
   em preto com contorno branco.
 
+## 2.5. Áudio (`kind = 13`)
+
+O som que o PC do host toca (todos os programas, capturado por WASAPI
+loopback), em Opus 48 kHz estéreo, **um quadro de 10 ms por pacote**,
+cifrado como os outros. Sai na hora, fora da fila do vídeo (não espera
+pacing nem frames grandes).
+
+- `frame_id` = número do quadro (sobe de 1 em 1; o cliente ordena e vê
+  perdas); `timestamp_us` = captura da primeira amostra, no relógio do host.
+- Payload = o pacote Opus (VBR, ~160 bytes a 128 kbps; com FEC dentro: um
+  quadro perdido pode ser refeito a partir do seguinte).
+- Nada tocando no host: quadros de silêncio no mesmo ritmo (poucos bytes).
+- Cliente: buffer de jitter (começa em 3 quadros, cresce se esvaziar e
+  diminui depois de 10 s estável), FEC do Opus para o perdido quando o
+  seguinte já chegou, ocultação de perda (o Opus inventa) quando não.
+
 ### Reservado: Input (`kind = 12`)
 
 Para o controle remoto (mouse e teclado do cliente no host, fase 6,
@@ -378,3 +394,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 8 | Cabeçalho de 28 bytes (+ `seq`), PairInit e PairReply (pareamento SPAKE2), payload cifrado com ChaCha20-Poly1305 (bit 3 de `flags`) e anti-replay; payload máximo 1180. Versões anteriores recusadas. |
 | 9 | + Signal (`kind = 9`, servidor de sinalização) e Punch (`kind = 10`, furo de NAT); um PairInit repetido é reconhecido pelo conteúdo, venha de onde vier. Versões anteriores recusadas. |
 | 10 | + Cursor (`kind = 11`): posição e forma do ponteiro à parte do vídeo, pedido de forma perdida. `kind = 12` reservado para o controle remoto. Versões anteriores recusadas. |
+| 11 | + Audio (`kind = 13`): o som do host em Opus, um quadro de 10 ms por pacote. Versões anteriores recusadas. |

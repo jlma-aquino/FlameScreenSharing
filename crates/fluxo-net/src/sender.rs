@@ -339,6 +339,9 @@ pub struct SenderStats {
     pub rejected_packets: u64,
     /// Pacotes de cursor enviados (posição e partes de forma).
     pub cursor_packets: u64,
+    /// Quadros de áudio enviados, e os bytes de Opus neles.
+    pub audio_packets: u64,
+    pub audio_bytes: u64,
 }
 
 struct Job {
@@ -398,7 +401,7 @@ pub struct VideoSender {
     shared: Arc<Shared>,
     send_thread: Option<JoinHandle<()>>,
     recv_thread: Option<JoinHandle<()>>,
-    /// Por onde sai o cursor (da thread de quem chama).
+    /// Por onde saem o cursor e o áudio (da thread de quem chama).
     saida_cursor: Saida,
     /// Thread da linha de atraso simulada, se houver.
     delay_thread: Option<JoinHandle<()>>,
@@ -681,6 +684,23 @@ impl VideoSender {
         if let Some(p) = pacote {
             enviar_cursor(&self.saida_cursor, &self.shared, &p);
         }
+    }
+
+    /// Um quadro de áudio Opus: `seq` sobe de 1 em 1 a cada quadro (o
+    /// cliente percebe perdas e ordena), `timestamp_us` é o [`clock_us`] da
+    /// captura. Sai na hora, sem passar pela fila do vídeo.
+    pub fn send_audio(&self, seq: u32, timestamp_us: u32, opus: &[u8]) {
+        let ok = PacketKind::Audio
+            .control(seq, timestamp_us)
+            .encode_with_payload(opus)
+            .is_ok_and(|p| self.saida_cursor.send(&p).is_ok());
+        self.shared.with_stats(|s| match ok {
+            true => {
+                s.audio_packets += 1;
+                s.audio_bytes += opus.len() as u64;
+            }
+            false => s.send_errors += 1,
+        });
     }
 
     /// Forma nova do cursor: ganha um número e sai na hora, em partes. O
@@ -1088,7 +1108,8 @@ fn on_packet(
         | PacketKind::PairInit
         | PacketKind::PairReply
         | PacketKind::Signal
-        | PacketKind::Punch => {}
+        | PacketKind::Punch
+        | PacketKind::Audio => {}
     }
 }
 

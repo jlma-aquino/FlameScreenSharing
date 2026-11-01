@@ -15,10 +15,12 @@
 //! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--sinal SERVIDOR | --internet]
 //! fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR | --conexao C) [--mbps M] [--fps F] [--segundos S] [--fec K]
 //! fluxo-bench nat
+//! fluxo-bench audio      [--segundos S] [--saida x.wav] [--volume V]
 //! ```
 //!
 //! Detalhes e como interpretar os números: `docs/modulos/fluxo-bench.md`.
 
+mod audio;
 mod bmp;
 #[cfg(windows)]
 mod encode;
@@ -27,6 +29,7 @@ mod nat;
 mod receber;
 #[cfg(windows)]
 mod verificar;
+mod wav;
 
 use std::error::Error;
 use std::process::ExitCode;
@@ -60,6 +63,14 @@ struct Opts {
     internet: bool,
     /// `receber --internet` sem tentar abrir a porta no roteador por UPnP.
     sem_upnp: bool,
+    /// `audio`: toca o resultado neste volume (0 a 100).
+    volume: Option<f32>,
+    /// `audio` (e o host): de qual saída de som capturar (`None`: a padrão).
+    dispositivo: Option<usize>,
+    /// `receber`: grava o áudio recebido neste WAV (sem tocar).
+    audio: Option<String>,
+    /// `receber`: toca o áudio recebido neste volume (0 a 100).
+    tocar: Option<f32>,
     /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
     fec: u8,
     /// Código de pareamento do `receber` (padrão: sorteado) e do `enviar`.
@@ -91,6 +102,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         ttl_furo: fluxo_net::PUNCH_TTL,
         internet: false,
         sem_upnp: false,
+        volume: None,
+        dispositivo: None,
+        audio: None,
+        tocar: None,
         fec: 10,
         codigo: None,
         sem_cifra: false,
@@ -113,6 +128,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--internet" => o.internet = true,
             "--sem-upnp" => o.sem_upnp = true,
+            "--volume" => o.volume = Some(valor()?.parse().map_err(|_| "volume inválido (0 a 100)")?),
+            "--dispositivo" => o.dispositivo = Some(valor()?.parse().map_err(|_| "dispositivo inválido")?),
+            "--audio" => o.audio = Some(valor()?.clone()),
+            "--tocar" => o.tocar = Some(valor()?.parse().map_err(|_| "tocar: volume inválido (0 a 100)")?),
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--codigo" => o.codigo = Some(valor()?.clone()),
             "--sem-cifra" => o.sem_cifra = true,
@@ -143,6 +162,9 @@ Comandos:
   receber    [opções]         recebe o vídeo do fluxo-host, mede e grava um .h264
   enviar     [opções]         manda frames sintéticos ao receber (carga fixa, sem captura)
   nat                         mostra como o NAT desta rede trata UDP (furo de NAT passa?)
+  audio      [opções]         captura o que o PC toca, Opus de ida e volta (sem rede);
+                              --saida x.wav grava, --volume V toca (0 = em silêncio),
+                              --dispositivo N captura da saída N (lista no começo)
 
 Opções:
   --monitor N           índice do monitor (padrão 0; veja 'listar')
@@ -167,6 +189,9 @@ Opções:
   --internet            no receber: redes diferentes sem servidor; mostra um código de
                         conexão e pede no terminal o código de resposta do enviar
   --sem-upnp            no receber --internet: não abre a porta no roteador por UPnP
+  --audio x.wav         no receber: decodifica o áudio que chega e grava (sem tocar)
+  --tocar V             no receber: toca o áudio como o fluxo-client, volume V de 0 a
+                        100 (0 = testa a reprodução em silêncio)
   --conexao C           no enviar: o código de conexão do receber --internet
   --ttl-furo N          no enviar --conexao: TTL dos pedidos até o furo do receber chegar
                         (padrão 12; 0 = TTL normal). Alto o bastante para passar o NAT
@@ -213,6 +238,7 @@ fn main() -> ExitCode {
         "receber" => receber::cmd_receber(&opts),
         "enviar" => enviar::cmd_enviar(&opts),
         "nat" => nat::cmd_nat(&opts),
+        "audio" => audio::cmd_audio(&opts),
         "ajuda" | "--help" | "-h" => {
             println!("{AJUDA}");
             Ok(())

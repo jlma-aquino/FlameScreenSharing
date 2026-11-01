@@ -344,6 +344,14 @@ ele. O TTL baixo vale só no IPv4.
 O celular deixa o IPv6 entrar no notebook sem furo; o IPv4 ainda precisa
 do código de resposta e do TTL baixo (testes acima).
 
+## Áudio
+
+`VideoSender::send_audio(seq, timestamp_us, opus)` manda um quadro na hora,
+pela mesma saída do cursor (fora da fila e do pacing do vídeo). No cliente,
+os quadros vão para uma fila própria (`recv_audio`, ou `take_audio` para
+tocar em outra thread); fila cheia (ninguém tocando) descarta e conta
+(`ReceiverStats::audio_dropped`). Formato: PROTOCOLO.md, seção 2.5.
+
 ## Cursor
 
 O host manda posição e forma do ponteiro à parte do vídeo (PROTOCOLO.md,

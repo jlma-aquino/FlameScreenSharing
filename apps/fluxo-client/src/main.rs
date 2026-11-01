@@ -5,6 +5,7 @@
 //! ```text
 //! fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
 //!              [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet]
+//!              [--sem-audio] [--volume V]
 //! ```
 //!
 //! Escuta numa porta UDP, decodifica com o `fluxo-decode` e mostra numa
@@ -46,6 +47,8 @@ Opções:
                   mandar a quem compartilha (fluxo-host --conexao ...) e pede no
                   terminal o código de resposta que ele mandar de volta
   --sem-upnp      com --internet: não abre a porta no roteador por UPnP
+  --sem-audio     não toca o som do host
+  --volume V      volume do som do host, 0 a 100 (padrão 100; só do Fluxo)
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
 
 Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
@@ -65,6 +68,9 @@ struct Opts {
     sinal: Option<String>,
     internet: bool,
     sem_upnp: bool,
+    sem_audio: bool,
+    /// Volume do som do host, 0 a 100 (só do Fluxo, não o do sistema).
+    volume: f32,
     sem_painel: bool,
 }
 
@@ -81,6 +87,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         sinal: None,
         internet: false,
         sem_upnp: false,
+        sem_audio: false,
+        volume: 100.0,
         sem_painel: false,
     };
     let mut it = args.iter();
@@ -98,6 +106,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--sinal" => o.sinal = Some(valor()?.clone()),
             "--internet" => o.internet = true,
             "--sem-upnp" => o.sem_upnp = true,
+            "--sem-audio" => o.sem_audio = true,
+            "--volume" => o.volume = valor()?.parse().map_err(|_| "volume inválido (0 a 100)")?,
             "--sem-painel" => o.sem_painel = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
@@ -241,6 +251,18 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             (None, None) => format!("aguardando o host\n{endereco} (sem cifra)"),
         },
     };
+    // Áudio numa thread própria: toca no ritmo da placa, sem esperar o vídeo.
+    let audio = match (o.sem_audio, rx.take_audio()) {
+        (false, Some(fila)) => {
+            let (c, volume) = (comp.clone(), o.volume / 100.0);
+            Some(
+                std::thread::Builder::new()
+                    .name("fluxo-audio".into())
+                    .spawn(move || tocar_audio(fila, volume, &c))?,
+            )
+        }
+        _ => None,
+    };
     let c = comp.clone();
     let exibicao = std::thread::Builder::new()
         .name("fluxo-exibicao".into())
@@ -268,6 +290,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     exibicao
         .join()
         .map_err(|_| "a thread de exibição terminou com pânico")??;
+    comp.fechar.store(true, Ordering::Relaxed);
+    match audio.map(|t| t.join()) {
+        Some(Ok(Ok(resumo))) => println!("  {resumo}"),
+        Some(Ok(Err(e))) => println!("  áudio desligado: {e}"),
+        Some(Err(_)) => println!("  áudio: a thread terminou com pânico"),
+        None => {}
+    }
     Ok(())
 }
 
@@ -294,4 +323,34 @@ fn ler_respostas(furos: fluxo_net::Puncher) {
             }
         }
     });
+}
+
+/// Thread de áudio: tira os quadros da fila da rede e toca no ritmo da placa
+/// (buffer de jitter, Opus, saída padrão), até a janela fechar.
+#[cfg(windows)]
+fn tocar_audio(
+    fila: fluxo_net::AudioStream,
+    volume: f32,
+    c: &exibir::Compartilhado,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    let mut tocador = fluxo_audio::AudioPlayer::new(volume)?;
+    while !c.fechar.load(Ordering::Relaxed) {
+        // Espera curta: a placa precisa ser alimentada a cada poucos ms.
+        if let Some(a) = fila.recv(Duration::from_millis(3))? {
+            tocador.push(a.seq, a.data);
+            while let Some(a) = fila.recv(Duration::ZERO)? {
+                tocador.push(a.seq, a.data);
+            }
+        }
+        tocador.pump(Instant::now())?;
+    }
+    let s = tocador.stats();
+    Ok(format!(
+        "áudio: {} quadros tocados, {} perdidos ({} refeitos pelo FEC), {} vezes sem som para tocar, \
+         buffer final {} quadros de 10 ms",
+        s.jitter.played, s.jitter.lost, s.fec, s.jitter.underruns, s.jitter.target
+    ))
 }

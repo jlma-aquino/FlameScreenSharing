@@ -107,6 +107,40 @@ pub struct ReceivedFrame {
     pub latency_us: Option<i32>,
 }
 
+/// Um quadro de áudio Opus do host ([`VideoReceiver::recv_audio`]).
+#[derive(Debug, Clone)]
+pub struct AudioPacket {
+    /// Número do quadro (sobe de 1 em 1 no host).
+    pub seq: u32,
+    /// Captura no host, no relógio dele.
+    pub timestamp_us: u32,
+    /// [`clock_us`] na chegada.
+    pub received_us: u32,
+    /// Captura → chegada, com a diferença dos relógios descontada.
+    pub latency_us: Option<i32>,
+    /// O pacote Opus.
+    pub data: Vec<u8>,
+}
+
+/// Fila de áudio de um [`VideoReceiver`], para tocar em outra thread
+/// ([`VideoReceiver::take_audio`]).
+pub struct AudioStream(mpsc::Receiver<AudioPacket>);
+
+impl AudioStream {
+    /// Espera até `timeout` pelo próximo quadro. `Ok(None)` se nada chegou.
+    pub fn recv(&self, timeout: Duration) -> Result<Option<AudioPacket>, NetError> {
+        match self.0.recv_timeout(timeout) {
+            Ok(a) => Ok(Some(a)),
+            Err(RecvTimeoutError::Timeout) => Ok(None),
+            Err(RecvTimeoutError::Disconnected) => Err(NetError::Closed),
+        }
+    }
+}
+
+/// Quadros de áudio esperando quem os toque (1 s): mais que isso, ninguém
+/// está tocando, e os novos se perdem.
+const FILA_AUDIO: usize = 100;
+
 /// Estatísticas acumuladas do [`VideoReceiver`].
 #[derive(Debug, Clone, Default)]
 pub struct ReceiverStats {
@@ -157,6 +191,10 @@ pub struct ReceiverStats {
     pub cursor_packets: u64,
     /// Formas de cursor pedidas de novo ao host (alguma parte se perdeu).
     pub cursor_requests: u64,
+    /// Quadros de áudio recebidos, e os perdidos porque ninguém os tirou da
+    /// fila a tempo (sem consumidor de áudio).
+    pub audio_packets: u64,
+    pub audio_dropped: u64,
 }
 
 struct Shared {
@@ -209,6 +247,8 @@ impl Shared {
 /// notícias do atual.
 pub struct VideoReceiver {
     frames: mpsc::Receiver<ReceivedFrame>,
+    /// Fila de áudio (`None` depois de [`VideoReceiver::take_audio`]).
+    audio: Mutex<Option<mpsc::Receiver<AudioPacket>>>,
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
     local: SocketAddr,
@@ -275,14 +315,16 @@ impl VideoReceiver {
             cursor: Mutex::new(CursorClient::default()),
         });
         let (tx, frames) = mpsc::sync_channel(cfg.queue_frames.max(1));
+        let (atx, audio) = mpsc::sync_channel(FILA_AUDIO);
         let s = shared.clone();
         let copia = socket.try_clone().map_err(NetError::io("duplicar socket"))?;
         let thread = thread::Builder::new()
             .name("fluxo-net-recepcao".into())
-            .spawn(move || recv_loop(socket, cfg, tx, s))
+            .spawn(move || recv_loop(socket, cfg, tx, atx, s))
             .map_err(NetError::io("criar thread de recepção"))?;
         Ok(Self {
             frames,
+            audio: Mutex::new(Some(audio)),
             shared,
             thread: Some(thread),
             local,
@@ -351,6 +393,28 @@ impl VideoReceiver {
             });
         }
         ok
+    }
+
+    /// Espera até `timeout` pelo próximo quadro de áudio. `Ok(None)` se nada
+    /// chegou no prazo (ou se a fila já foi entregue a [`take_audio`](Self::take_audio)).
+    /// Quem não toca áudio pode ignorar: a fila só descarta.
+    pub fn recv_audio(&self, timeout: Duration) -> Result<Option<AudioPacket>, NetError> {
+        let fila = self.audio.lock().unwrap_or_else(|e| e.into_inner());
+        match fila.as_ref().map(|f| f.recv_timeout(timeout)) {
+            Some(Ok(a)) => Ok(Some(a)),
+            Some(Err(RecvTimeoutError::Timeout)) | None => Ok(None),
+            Some(Err(RecvTimeoutError::Disconnected)) => Err(NetError::Closed),
+        }
+    }
+
+    /// Entrega a fila de áudio para outra thread (a que toca o som); depois
+    /// disso, [`recv_audio`](Self::recv_audio) não recebe mais nada. Uma vez só.
+    pub fn take_audio(&self) -> Option<AudioStream> {
+        self.audio
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .map(AudioStream)
     }
 
     /// Espera até `timeout` pelo próximo frame completo. `Ok(None)` se nada
@@ -495,6 +559,7 @@ fn recv_loop(
     mut socket: Portas,
     cfg: ReceiverConfig,
     frames: mpsc::SyncSender<ReceivedFrame>,
+    audio: mpsc::SyncSender<AudioPacket>,
     shared: Arc<Shared>,
 ) {
     let mut reasm = Reassembler::new(cfg.reassembler);
@@ -729,6 +794,23 @@ fn recv_loop(
             | PacketKind::Signal
             | PacketKind::Punch => {}
             PacketKind::Cursor => on_cursor(payload, &socket, from, &shared),
+            PacketKind::Audio => {
+                let received_us = clock_us();
+                let transit_us = clock_diff_us(received_us, h.timestamp_us);
+                let pacote = AudioPacket {
+                    seq: h.frame_id,
+                    timestamp_us: h.timestamp_us,
+                    received_us,
+                    latency_us: relogio.offset_us().map(|o| transit_us.wrapping_add(o)),
+                    data: payload.to_vec(),
+                };
+                // Fila cheia: ninguém está tocando o áudio; o pacote se perde.
+                let cheio = matches!(audio.try_send(pacote), Err(TrySendError::Full(_)));
+                shared.with_stats(|s| {
+                    s.audio_packets += 1;
+                    s.audio_dropped += cheio as u64;
+                });
+            }
             PacketKind::Ping => {
                 if pong_for(&h).is_some_and(|p| shared.enviar(&socket, p, from)) {
                     shared.with_stats(|s| s.pings_answered += 1);

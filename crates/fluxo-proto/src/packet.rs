@@ -46,7 +46,8 @@ pub const MAGIC: u16 = 0x464C;
 ///   PairReply) e payload cifrado ([`FLAG_ENCRYPTED`]).
 /// - 9: sinalização pela internet (Signal) e furo de NAT (Punch).
 /// - 10: cursor do mouse à parte (Cursor).
-pub const PROTOCOL_VERSION: u8 = 10;
+/// - 11: áudio (Audio): um quadro Opus de 10 ms por pacote.
+pub const PROTOCOL_VERSION: u8 = 11;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 /// Num [`PacketKind::KeyframeRequest`]: o cliente **precisa** de um keyframe
@@ -106,6 +107,11 @@ pub enum PacketKind {
     /// Cursor do mouse: posição e forma (host → cliente) e pedido de forma
     /// (cliente → host). Payload: [`crate::cursor::CursorMessage`]. Cifrado.
     Cursor = 11,
+    // 12 reservado: Input (controle remoto; ver docs/PROTOCOLO.md).
+    /// Host → cliente: um quadro de áudio Opus (10 ms, 48 kHz estéreo).
+    /// `frame_id` = número do quadro (sobe de 1 em 1), `timestamp_us` =
+    /// captura da primeira amostra. Cifrado.
+    Audio = 13,
 }
 
 impl PacketKind {
@@ -122,6 +128,7 @@ impl PacketKind {
             9 => Some(Self::Signal),
             10 => Some(Self::Punch),
             11 => Some(Self::Cursor),
+            13 => Some(Self::Audio),
             _ => None,
         }
     }

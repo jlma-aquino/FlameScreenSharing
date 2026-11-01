@@ -98,6 +98,11 @@ Medido (cliente na tela capturada, monitor de 165 Hz): 59,8 fps médio,
 
 ## Decisões provisórias
 
+- **Áudio** (padrão ligado): uma thread captura o que o PC toca (WASAPI
+  loopback da saída padrão, ou `--audio-dispositivo N`) e manda em Opus,
+  128 kbps, um quadro de 10 ms por pacote, pelo mesmo `VideoSender`
+  ([fluxo-audio](fluxo-audio.md)). `--sem-audio` desliga. O resumo mostra
+  quantos segundos vieram da placa (o resto é silêncio completado).
 - **Destino manual ou pela sinalização.** `--destino` serve na mesma rede;
   em redes diferentes, `--sinal SERVIDOR` acha o cliente pelo
   [fluxo-sinal](fluxo-sinal.md) e fura os NATs (ver [fluxo-net](fluxo-net.md)).

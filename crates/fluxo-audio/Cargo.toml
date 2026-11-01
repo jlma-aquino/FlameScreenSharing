@@ -1,0 +1,17 @@
+[package]
+name = "fluxo-audio"
+description = "Áudio do Fluxo: Opus (48 kHz estéreo, quadros de 10 ms), buffer de jitter e WASAPI (captura do que o PC toca e reprodução)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Opus: a libopus de referência traduzida para Rust (c2rust) — sem compilador
+# C nem CMake, compila igual no Windows e no Linux. Só a API C crua, então o
+# `unsafe` fica todo em `opus.rs`.
+[dependencies]
+unsafe-libopus = "0.2"
+
+# WASAPI: captura (loopback) e reprodução.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

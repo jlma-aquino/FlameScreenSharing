@@ -161,6 +161,19 @@ fluxo-bench receber --segundos 20 --internet          # mostra K7M4-QX9P-ABCD-EF
 fluxo-bench enviar --conexao K7M4-QX9P-ABCD-EFGH-JK   # mostra ABCD-EFGH-JKM → cole no receber
 ```
 
+## `audio`
+
+Captura o que o PC toca, passa pelo Opus de ida e volta e mostra formato da
+placa, quadros por segundo, quanto veio da placa (o resto é silêncio
+completado), nível e bitrate — sem rede. Lista antes as saídas de som com o
+nível de cada uma agora (mostra onde o som está saindo; `--dispositivo N`
+captura de outra). `--saida x.wav` grava; `--volume V` também toca (0 =
+testa a reprodução sem som).
+
+No `receber`, `--audio x.wav` decodifica o áudio que chega e grava (sem
+tocar), e `--tocar V` toca como o `fluxo-client` (buffer de jitter e placa;
+com 0, em silêncio).
+
 ## `nat`
 
 Mostra como o NAT desta rede trata um socket UDP: pergunta a três

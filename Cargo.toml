@@ -13,6 +13,7 @@ members = [
     "crates/fluxo-crypto",
     "crates/fluxo-net",
     "crates/fluxo-decode",
+    "crates/fluxo-audio",
     "apps/fluxo-bench",
     "apps/fluxo-host",
     "apps/fluxo-client",
@@ -33,6 +34,7 @@ fluxo-encode = { path = "crates/fluxo-encode" }
 fluxo-crypto = { path = "crates/fluxo-crypto" }
 fluxo-net = { path = "crates/fluxo-net" }
 fluxo-decode = { path = "crates/fluxo-decode" }
+fluxo-audio = { path = "crates/fluxo-audio" }
 
 windows = { version = "0.61", features = [
     "Win32_Foundation",
@@ -49,6 +51,11 @@ windows = { version = "0.61", features = [
     "Win32_System_Ole",
     "Win32_System_Variant",
     "Win32_UI_HiDpi",
+    # fluxo-audio: WASAPI (captura do que o PC toca e reprodução).
+    "Win32_Media_Audio",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_UI_Shell_PropertiesSystem",
     # fluxo-client: painel de estatísticas (Direct2D + DirectWrite).
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct2D_Common",

@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 fluxo-net = { workspace = true }
 fluxo-decode = { workspace = true }
+fluxo-audio = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

@@ -6,6 +6,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Áudio** (protocolo v11, fase 6, ADR-011): o host captura o que o PC toca
+  (WASAPI loopback) e manda em Opus 48 kHz estéreo, 128 kbps, um quadro de
+  10 ms por pacote, cifrado, fora da fila do vídeo; o cliente toca com buffer
+  de jitter adaptativo (30 ms no começo), FEC e ocultação de perda do Opus, e
+  volume próprio (`--volume`). Novo crate `fluxo-audio` (Opus pela
+  `unsafe-libopus`, sem CMake). `--sem-audio` e `--audio-dispositivo` no host;
+  `fluxo-bench audio` (lista as saídas de som com o nível e testa captura e
+  Opus) e `receber --audio x.wav` / `--tocar V`. Pelo Wi-Fi: 0 perdas,
+  captura→chegada ~11 ms.
 - **Cursor do mouse no cliente** (protocolo v10, fase 6): o Desktop
   Duplication não desenha o ponteiro na imagem, e até aqui quem assistia não
   o via. Agora o host manda posição e forma à parte (pacote Cursor, cifrado):

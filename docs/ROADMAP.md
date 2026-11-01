@@ -111,7 +111,8 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 
 - [ ] Mouse e teclado remotos (opcional, com permissão do host) — fora do foco por enquanto; preparado: tipo
       de pacote 12 reservado, e o cursor já usa as coordenadas do vídeo que o mouse remoto vai usar
-- [ ] Áudio (WASAPI loopback + Opus)
+- [x] Áudio (WASAPI loopback + Opus, protocolo v11, ADR-011): 128 kbps, um quadro de 10 ms por pacote, buffer
+      de jitter adaptativo no cliente; pelo Wi-Fi, 0 perdas e captura→chegada ~11 ms
 - [x] Cursor desenhado no cliente (protocolo v10): posição e forma à parte do vídeo, redesenho sem esperar
       frame novo; forma perdida é pedida de novo. Antes o ponteiro nem aparecia (o Desktop Duplication não o
       desenha na imagem)

@@ -39,7 +39,8 @@ fluxo/
 │   ├── fluxo-encode/       encoder H.264 por hardware: NVENC ou Media Foundation
 │   ├── fluxo-crypto/       código de pareamento, handshake SPAKE2, cifra dos pacotes
 │   ├── fluxo-net/          transporte UDP: pacing, remontagem, RTT, sinalização
-│   └── fluxo-decode/       decoder H.264 na GPU (Media Foundation + DXVA)
+│   ├── fluxo-decode/       decoder H.264 na GPU (Media Foundation + DXVA)
+│   └── fluxo-audio/        som do host: WASAPI, Opus, buffer de jitter
 ├── apps/                   executáveis
 │   ├── fluxo-host/         transmite a tela (captura → encode → rede)
 │   ├── fluxo-client/       mostra a tela recebida (rede → decode → janela)

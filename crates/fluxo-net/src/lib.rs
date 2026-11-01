@@ -73,7 +73,10 @@ pub use clock::{clock_diff_us, clock_us};
 pub use conexao::{CodeError, ConnectionCode, ReplyCode};
 pub use internet::Internet;
 pub use observar::{PairingEvent, PairingObserver};
-pub use receiver::{CursorView, Puncher, ReceivedFrame, ReceiverConfig, ReceiverStats, VideoReceiver};
+pub use receiver::{
+    AudioPacket, AudioStream, CursorView, Puncher, ReceivedFrame, ReceiverConfig, ReceiverStats,
+    VideoReceiver,
+};
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL};
