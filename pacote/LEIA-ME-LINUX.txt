@@ -22,8 +22,9 @@ O QUE PRECISA TER
 -----------------
 - Sessão gráfica (X11 ou Wayland) com OpenGL 3.1 ou mais novo.
 - Para o som: pacat, pw-cat ou aplay. Quase toda distribuição já tem um deles.
-- O vídeo vem em H.264 e é decodificado na CPU. Em PC fraco, peça para quem
-  compartilha baixar a resolução para 720p.
+- O vídeo vem em H.264 e é decodificado na CPU. Em PC fraco, o programa baixa a
+  qualidade sozinho para não atrasar; peça para quem compartilha usar 720p, que
+  fica com imagem melhor.
 
 
 PARA AJUDAR NO TESTE

@@ -6,6 +6,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **O host se ajusta à CPU de quem assiste no Linux**: o cliente portátil mede a carga
+  do decode e informa no relatório de rede, e o bitrate cai ou para de subir, sem
+  mudar o protocolo. Com mais de 300 ms de atraso, descarta a fila e pede keyframe.
+  1080p60 no notebook de teste: de ~1,5 s para 22,5 ms (p50). `VideoReceiver::set_processing_delay`.
 - **Assistir no Linux** (ADR-015): `cargo build --release -p fluxo-client --features
   portatil`, com OpenH264, OpenGL e `pacat`/`pw-cat`/`aplay`. A janela FlameScreenSharing
   também compila lá, sem o botão de compartilhar. `pacote/gerar_pacote_linux.sh`.

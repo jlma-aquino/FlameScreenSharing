@@ -360,6 +360,12 @@ os quadros vão para uma fila própria (`recv_audio`, ou `take_audio` para
 tocar em outra thread); fila cheia (ninguém tocando) descarta e conta
 (`ReceiverStats::audio_dropped`). Formato: PROTOCOLO.md, seção 2.5.
 
+## Atraso de processamento
+
+`VideoReceiver::set_processing_delay` soma ao atraso de fila dos relatórios o que
+o processamento do cliente está segurando: para o host, a reação é a mesma (baixar
+o bitrate). O formato do `Feedback` não muda. Usado pelo cliente portátil (ADR-015).
+
 ## Codec (Caps)
 
 `ReceiverConfig::codecs` (máscara de `VideoCodec::bit`, padrão só H.264) vai

@@ -446,14 +446,16 @@ para o som, e o protocolo não muda.
 - ➕ O cliente do Windows não engorda, e o `fluxo-bench` no Linux segue sem C++.
 - ➕ Compila no Windows (`--portatil`), então quase tudo se testa lá também.
 - ➖ CPU fraca não acompanha 1080p: no notebook de teste (2 núcleos), 26–45 ms por
-  frame com NASM. O custo segue o bitrate: em 720p a ~5 Mbps, 16–19 ms e captura→
-  tela p50 de 21–29 ms. Atrasado, o vídeo acumula segundos de fila até descartar, e
-  o bitrate adaptativo não percebe, porque a rede está bem.
+  frame com NASM, a ~6–16 Mbps. O custo segue o bitrate. Para a rede estar bem e o
+  vídeo atrasar sem o host saber, o cliente mede a carga do decode e informa no
+  campo de atraso de fila do relatório, sem mudar o protocolo: acima de 95% o bitrate
+  cai, de 75% a 95% fica parado. Acima de 300 ms atrasado, descarta a fila e pede um
+  keyframe. Medido: 1080p60 de ~1,5 s para 22,5 ms (p50), mas a 2,5 Mbps, o piso.
 - ➖ Um espectador no Linux leva todos os outros da transmissão para H.264.
 - ➖ O OpenH264 não esconde erros: depois de uma perda não recuperada pelo FEC, a
   imagem espera um keyframe.
-- 🔁 Host ajustar o bitrate quando o decode de quem assiste não acompanha; decode
-  na GPU (VAAPI).
+- ➖ Um espectador em PC fraco baixa o bitrate de todos.
+- 🔁 Decode na GPU (VAAPI), para não precisar baixar tanto a qualidade.
 
 ---
 

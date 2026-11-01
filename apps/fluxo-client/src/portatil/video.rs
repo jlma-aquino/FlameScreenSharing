@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use fluxo_net::{FrameAction, Recovery, RecoveryRequest, VideoCodec, VideoReceiver};
+use fluxo_net::{clock_diff_us, clock_us, FrameAction, Recovery, RecoveryRequest, VideoCodec, VideoReceiver};
 use openh264::decoder::{DecodedYUV, Decoder};
 use openh264::formats::YUVSource;
 
@@ -25,6 +25,50 @@ impl Serie {
         }
         self.0.sort_by(f64::total_cmp);
         self.0[((self.0.len() - 1) as f64 * p).round() as usize]
+    }
+}
+
+/// Vídeo atrasado além disto: descarta a fila e recomeça num keyframe. Melhor
+/// um salto do que assistir com segundos de atraso.
+const ATRASO_MAXIMO_MS: f64 = 300.0;
+/// Intervalo mínimo entre descartes: o keyframe também custa para decodificar.
+const ENTRE_DESCARTES: Duration = Duration::from_secs(2);
+
+/// Fração do intervalo entre frames gasta no decode, com média móvel.
+#[derive(Default)]
+struct Carga {
+    decode_ms: f64,
+    intervalo_ms: f64,
+    ultimo_us: Option<u32>,
+}
+
+impl Carga {
+    /// Mais um frame: `capturado_us` no relógio do host, e o decode dele.
+    fn frame(&mut self, capturado_us: u32, decode_ms: f64) {
+        const PESO: f64 = 0.1;
+        if let Some(antes) = self.ultimo_us {
+            let dif = fluxo_net::clock_diff_us(capturado_us, antes) as f64 / 1000.0;
+            // Tela parada: um intervalo enorme não diz nada sobre a capacidade.
+            let dif = dif.clamp(0.0, 100.0);
+            self.intervalo_ms += (dif - self.intervalo_ms) * PESO;
+        }
+        self.decode_ms += (decode_ms - self.decode_ms) * PESO;
+        self.ultimo_us = Some(capturado_us);
+    }
+
+    /// O atraso a informar ao host, em ms. O controlador dele (limite padrão de
+    /// 15 ms) só sobe abaixo de 6: 8 ms segura o bitrate onde está, e 20 ms o
+    /// faz cair. Assim ele para antes de a CPU engasgar, em vez de subir até
+    /// travar e cair de novo.
+    fn atraso_ms(&self) -> f64 {
+        if self.intervalo_ms <= 0.0 {
+            return 0.0;
+        }
+        match self.decode_ms / self.intervalo_ms {
+            c if c >= 0.95 => 20.0,
+            c if c >= 0.75 => 8.0,
+            _ => 0.0,
+        }
     }
 }
 
@@ -69,6 +113,11 @@ pub fn laco(
     let (mut recebidos, mut mostrados, mut pulados, mut erros) = (0u64, 0u64, 0u64, 0u64);
     let mut decodes = Serie::default();
     let mut latencias = Serie::default();
+    let mut carga = Carga::default();
+    // Atraso da fila aqui dentro, em média móvel.
+    let mut atraso_fila_ms = 0.0f64;
+    let mut ultimo_descarte: Option<Instant> = None;
+    let (mut descartes, mut frames_descartados) = (0u64, 0u64);
 
     while !c.fechar.load(Ordering::Relaxed) {
         if inicio.zip(duracao).is_some_and(|(t, d)| t.elapsed() >= d) {
@@ -105,6 +154,23 @@ pub fn laco(
         while let Some(f) = chegou.take() {
             recebidos += 1;
             bytes_seg += f.frame.data.len() as u64;
+            // Esperando desde que chegou pela rede: passou do limite, alcança.
+            let espera_ms = clock_diff_us(clock_us(), f.received_us) as f64 / 1000.0;
+            atraso_fila_ms += (espera_ms - atraso_fila_ms) * 0.1;
+            let pode_descartar = ultimo_descarte.is_none_or(|t| t.elapsed() >= ENTRE_DESCARTES);
+            if espera_ms > ATRASO_MAXIMO_MS && pode_descartar {
+                while rx.recv_frame(Duration::ZERO)?.is_some() {
+                    frames_descartados += 1;
+                }
+                frames_descartados += 1;
+                descartes += 1;
+                ultimo_descarte = Some(Instant::now());
+                atraso_fila_ms = 0.0;
+                decoder = Decoder::new().map_err(erro_decode)?;
+                recuperacao.on_decode_error(Instant::now());
+                para_mostrar = None;
+                continue;
+            }
             let codec = f.frame.codec.unwrap_or_default();
             if codec != VideoCodec::H264 {
                 // Só acontece se o host forçou o codec com --codec.
@@ -139,7 +205,12 @@ pub fn laco(
                             recuperacao.on_decode_error(Instant::now());
                         }
                     }
-                    decodes.0.push(t.elapsed().as_secs_f64() * 1000.0);
+                    let decode_ms = t.elapsed().as_secs_f64() * 1000.0;
+                    decodes.0.push(decode_ms);
+                    carga.frame(f.frame.timestamp_us, decode_ms);
+                    // A fila já formada pesa mais do que a previsão.
+                    let atraso = carga.atraso_ms().max(atraso_fila_ms);
+                    rx.set_processing_delay(Duration::from_secs_f64(atraso / 1000.0));
                 }
             }
             if lote.elapsed() < Duration::from_millis(33) {
@@ -201,6 +272,7 @@ pub fn laco(
         "  perdidos na rede: {} | reconstruídos pelo FEC: {} fragmentos | erros de decode: {erros} | descartados na fila: {}",
         s.reassembly.frames_lost, s.reassembly.fec_recovered, s.frames_dropped
     );
+    println!("  decode atrasado:  {descartes} descartes de fila, {frames_descartados} frames");
     println!(
         "  decode (CPU):     média {:.2} ms, p99 {:.2} ms",
         decodes.media(),
@@ -220,4 +292,56 @@ pub fn laco(
     c.fechar.store(true, Ordering::Relaxed);
     ctx.request_repaint();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn com_decode(ms: f64) -> Carga {
+        let mut c = Carga::default();
+        for i in 0..200u32 {
+            c.frame(i * 33_333, ms);
+        }
+        c
+    }
+
+    #[test]
+    fn carga_decide_entre_livre_segurar_e_baixar() {
+        assert_eq!(com_decode(10.0).atraso_ms(), 0.0, "folgado");
+        assert_eq!(com_decode(28.0).atraso_ms(), 8.0, "segura");
+        assert_eq!(com_decode(40.0).atraso_ms(), 20.0, "baixa");
+    }
+
+    #[test]
+    fn os_valores_batem_com_o_controlador_do_host() {
+        let agora = Instant::now();
+        let relatorio = |ms| fluxo_net::NetworkReport {
+            loss: Some(0.0),
+            queue_delay_ms: ms,
+            sent_kbps: None,
+        };
+        let novo = || {
+            let mut c = fluxo_net::BitrateController::new(1000, 20_000, agora);
+            c.on_report(&relatorio(100.0), agora); // sai do máximo
+            c
+        };
+        let depois = agora + Duration::from_secs(10);
+        let segura = novo().on_report(&relatorio(8.0), depois);
+        assert_eq!(segura, None, "8 ms não sobe nem desce");
+        let baixa = novo().on_report(&relatorio(20.0), depois);
+        assert_eq!(baixa.map(|(_, m)| m), Some(fluxo_net::BitrateChange::DownDelay));
+        assert_eq!(
+            novo().on_report(&relatorio(0.0), depois).map(|(_, m)| m),
+            Some(fluxo_net::BitrateChange::Up)
+        );
+    }
+
+    #[test]
+    fn tela_parada_nao_vira_folga_falsa() {
+        let mut c = com_decode(40.0);
+        // Um intervalo longo só pesa até 100 ms.
+        c.frame(33_333 * 200 + 60_000_000, 40.0);
+        assert!(c.intervalo_ms < 40.0);
+    }
 }

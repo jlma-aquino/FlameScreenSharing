@@ -1023,3 +1023,26 @@ fn host_fica_sabendo_os_codecs_do_cliente() {
     tx.send_frame(frame(0, 1000), true, clock_us()).unwrap();
     assert_eq!(tx.wait_client_codecs(Duration::from_secs(2)), Some(0b101));
 }
+
+#[test]
+fn atraso_do_cliente_vai_no_relatorio_ao_host() {
+    let rx = VideoReceiver::bind(("127.0.0.1", 0), ReceiverConfig::default()).unwrap();
+    let tx = VideoSender::connect(
+        ("127.0.0.1", 0),
+        rx.local_addr(),
+        SenderConfig::for_bitrate(20_000_000),
+    )
+    .unwrap();
+    // O cliente só relata depois de saber quem é o host: um frame basta.
+    tx.send_frame(vec![1; 100], true, clock_us()).unwrap();
+    assert!(rx.recv_frame(Duration::from_secs(5)).unwrap().is_some());
+    rx.set_processing_delay(Duration::from_millis(40));
+    let limite = Instant::now() + Duration::from_secs(5);
+    loop {
+        if tx.take_report().is_some_and(|r| r.queue_delay_ms >= 40.0) {
+            break;
+        }
+        assert!(Instant::now() < limite, "o atraso não chegou ao host");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}

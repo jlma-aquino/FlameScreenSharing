@@ -71,6 +71,12 @@ no host:
 | 1080p30, ~6 Mbps | 24,4 fps | 34,7 ms | ~0,8 s: não acompanha |
 | 1080p60, ~12 Mbps | 20,4 fps | 25,7 ms | ~1,5 s: não acompanha |
 
+Essa tabela é com bitrate escolhido à mão. No uso normal, o cliente mede a carga do
+decode e o host se ajusta (ADR-015): 1080p60 com vídeo em tela cheia, 35 s, chegou a
+33 fps mostrados, decode de 15 ms e captura→tela p50 de 22,5 ms (p99 292 ms), a 2,5
+Mbps, com 1 descarte de fila. A imagem acompanha, mas em bitrate baixo; nesse PC,
+720p dá imagem melhor.
+
 O custo do decode segue o bitrate. Sem NASM, 1080p custou 42–59 ms por frame, e com
 ele 26–45 ms (25–40% a menos, em conteúdo parecido).
 

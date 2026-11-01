@@ -1,7 +1,7 @@
 //! Lado do cliente: [`VideoReceiver`].
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -206,6 +206,8 @@ struct Shared {
     stats: Mutex<ReceiverStats>,
     rtt: Mutex<RttEstimator>,
     stop: AtomicBool,
+    /// Ver [`VideoReceiver::set_processing_delay`].
+    atraso_processamento_us: AtomicU32,
     /// Com código de pareamento: tudo o que sai vai cifrado.
     cifrado: bool,
     /// Chave do sentido cliente → host, depois do pareamento.
@@ -283,6 +285,15 @@ const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(50);
 const LEITURA: Duration = Duration::from_millis(50);
 
 impl VideoReceiver {
+    /// Quanto o processamento aqui (ex.: decode lento na CPU) está segurando o
+    /// vídeo. Vai ao host somado à conta do atraso de fila, nos próximos
+    /// relatórios: acima do limite dele, o bitrate cai. Zero quando acompanha.
+    pub fn set_processing_delay(&self, atraso: Duration) {
+        self.shared
+            .atraso_processamento_us
+            .store(atraso.as_micros().min(u32::MAX as u128) as u32, Ordering::Relaxed);
+    }
+
     /// Escuta em `bind` (ex.: `"0.0.0.0:9000"`).
     pub fn bind(bind: impl ToSocketAddrs, cfg: ReceiverConfig) -> Result<Self, NetError> {
         let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
@@ -311,6 +322,7 @@ impl VideoReceiver {
             .map_err(NetError::io("configurar socket"))?;
         let local = socket.local_addr().map_err(NetError::io("endereço local"))?;
         let shared = Arc::new(Shared {
+            atraso_processamento_us: AtomicU32::new(0),
             stats: Mutex::new(ReceiverStats::default()),
             rtt: Mutex::new(RttEstimator::default()),
             stop: AtomicBool::new(false),
@@ -645,7 +657,11 @@ fn recv_loop(
                 let r = reasm.stats();
                 let f = Feedback {
                     packets_received: pacotes_video,
-                    queue_delay_us: fila.current_us(),
+                    // O que atrasa o vídeo aqui dentro conta como fila: para o
+                    // host, a saída é a mesma (baixar o bitrate).
+                    queue_delay_us: fila
+                        .current_us()
+                        .max(shared.atraso_processamento_us.load(Ordering::Relaxed)),
                     frames_lost: r.frames_lost as u32,
                     fec_recovered: r.fec_recovered as u32,
                 };
