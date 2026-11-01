@@ -209,6 +209,7 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Cursor: a forma nova saía sem o cabeçalho do pacote, e o cliente só a  recebia depois de pedir de novo (~100–200 ms a mais a cada troca de  cursor); a posição repetida com os pings também podia anunciar a forma  antes de ela sair. O teste agora confere que a forma chega sem pedido.- `fluxo-client`: ao fechar, o áudio terminava com "a thread de rede foi  encerrada" em vez do resumo.
 - Conferência dos códigos de conexão: o peso da 31ª posição era 31 (zero em
   módulo 31), e um erro de digitação ali passava nos códigos longos (IPv6).
   Pesos agora em ciclo de 1 a 30.

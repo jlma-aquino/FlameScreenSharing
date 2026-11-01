@@ -32,10 +32,11 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
-    /// Abre a saída de som padrão com `volume` (0.0 a 1.0, só do Fluxo).
-    pub fn new(volume: f32) -> Result<Self, AudioError> {
+    /// Abre a saída de som `dispositivo` (`None`: a padrão) com `volume`
+    /// (0.0 a 1.0, só do Fluxo).
+    pub fn new(volume: f32, dispositivo: Option<usize>) -> Result<Self, AudioError> {
         Ok(Self {
-            saida: AudioOutput::new(volume)?,
+            saida: AudioOutput::new(volume, dispositivo)?,
             jitter: JitterBuffer::default(),
             dec: Decoder::new()?,
             fec: 0,

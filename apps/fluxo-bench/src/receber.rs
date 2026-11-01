@@ -152,7 +152,7 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     let mut avisou_registro = false;
     let mut audio = o.audio.as_deref().map(GravadorAudio::new).transpose()?;
     // --tocar V: toca o áudio como o fluxo-client (V = 0 testa em silêncio).
-    let mut tocador = abrir_tocador(o.tocar)?;
+    let mut tocador = abrir_tocador(o.tocar, o.saida_som)?;
 
     loop {
         if let (Some(t0), Some(d)) = (inicio, duracao) {
@@ -481,11 +481,12 @@ struct TocadorStats {
 }
 
 /// `--tocar V`: abre a saída de som com volume V (0 a 100).
-fn abrir_tocador(volume: Option<f32>) -> Result<Option<Tocador>, Box<dyn Error>> {
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn abrir_tocador(volume: Option<f32>, saida: Option<usize>) -> Result<Option<Tocador>, Box<dyn Error>> {
     match volume {
         None => Ok(None),
         #[cfg(windows)]
-        Some(v) => Ok(Some(fluxo_audio::AudioPlayer::new(v / 100.0)?)),
+        Some(v) => Ok(Some(fluxo_audio::AudioPlayer::new(v / 100.0, saida)?)),
         #[cfg(not(windows))]
         Some(_) => Err("--tocar só existe no Windows (use --audio para gravar)".into()),
     }

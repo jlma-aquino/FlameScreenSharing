@@ -50,7 +50,10 @@ pub fn cmd_audio(o: &Opts) -> Result<(), Box<dyn Error>> {
         .as_deref()
         .map(|s| WavWriter::create(s, SAMPLE_RATE, CHANNELS as u16))
         .transpose()?;
-    let mut saida = o.volume.map(|v| AudioOutput::new(v / 100.0)).transpose()?;
+    let mut saida = o
+        .volume
+        .map(|v| AudioOutput::new(v / 100.0, o.saida_som))
+        .transpose()?;
 
     let (mut quadros, mut silencio, mut bytes, mut pico, mut soma) = (0u64, 0u64, 0usize, 0f32, 0f64);
     let mut maior_encode = Duration::ZERO;

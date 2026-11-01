@@ -49,6 +49,7 @@ Opções:
   --sem-upnp      com --internet: não abre a porta no roteador por UPnP
   --sem-audio     não toca o som do host
   --volume V      volume do som do host, 0 a 100 (padrão 100; só do Fluxo)
+  --saida-som N   toca na saída de som N (padrão: a do Windows; lista em fluxo-bench audio)
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
 
 Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
@@ -71,6 +72,8 @@ struct Opts {
     sem_audio: bool,
     /// Volume do som do host, 0 a 100 (só do Fluxo, não o do sistema).
     volume: f32,
+    /// Saída de som onde tocar (`None`: a padrão do Windows).
+    saida_som: Option<usize>,
     sem_painel: bool,
 }
 
@@ -89,6 +92,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         sem_upnp: false,
         sem_audio: false,
         volume: 100.0,
+        saida_som: None,
         sem_painel: false,
     };
     let mut it = args.iter();
@@ -108,6 +112,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--sem-upnp" => o.sem_upnp = true,
             "--sem-audio" => o.sem_audio = true,
             "--volume" => o.volume = valor()?.parse().map_err(|_| "volume inválido (0 a 100)")?,
+            "--saida-som" => o.saida_som = Some(valor()?.parse().map_err(|_| "saida-som inválida")?),
             "--sem-painel" => o.sem_painel = true,
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
@@ -254,11 +259,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     // Áudio numa thread própria: toca no ritmo da placa, sem esperar o vídeo.
     let audio = match (o.sem_audio, rx.take_audio()) {
         (false, Some(fila)) => {
-            let (c, volume) = (comp.clone(), o.volume / 100.0);
+            let (c, volume, saida) = (comp.clone(), o.volume / 100.0, o.saida_som);
             Some(
                 std::thread::Builder::new()
                     .name("fluxo-audio".into())
-                    .spawn(move || tocar_audio(fila, volume, &c))?,
+                    .spawn(move || tocar_audio(fila, volume, saida, &c))?,
             )
         }
         _ => None,
@@ -331,19 +336,26 @@ fn ler_respostas(furos: fluxo_net::Puncher) {
 fn tocar_audio(
     fila: fluxo_net::AudioStream,
     volume: f32,
+    saida: Option<usize>,
     c: &exibir::Compartilhado,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
-    let mut tocador = fluxo_audio::AudioPlayer::new(volume)?;
-    while !c.fechar.load(Ordering::Relaxed) {
+    let mut tocador = fluxo_audio::AudioPlayer::new(volume, saida)?;
+    // Para quando a janela fecha ou quando a rede termina (a exibição soltou
+    // o VideoReceiver): os dois são o fim normal.
+    'tocar: while !c.fechar.load(Ordering::Relaxed) {
         // Espera curta: a placa precisa ser alimentada a cada poucos ms.
-        if let Some(a) = fila.recv(Duration::from_millis(3))? {
-            tocador.push(a.seq, a.data);
-            while let Some(a) = fila.recv(Duration::ZERO)? {
-                tocador.push(a.seq, a.data);
+        let mut espera = Duration::from_millis(3);
+        loop {
+            match fila.recv(espera) {
+                Ok(Some(a)) => tocador.push(a.seq, a.data),
+                Ok(None) => break,
+                Err(fluxo_net::NetError::Closed) => break 'tocar,
+                Err(e) => return Err(e.into()),
             }
+            espera = Duration::ZERO;
         }
         tocador.pump(Instant::now())?;
     }

@@ -711,10 +711,13 @@ impl VideoSender {
         c.shape_id = c.shape_id.wrapping_add(1).max(1);
         let partes = fluxo_proto::cursor::shape_parts(c.shape_id, &shape);
         c.shape = Some(Arc::new(shape));
-        let posicao = c.position_packet();
-        drop(c);
-        for p in partes.iter().chain(&posicao) {
-            enviar_cursor(&self.saida_cursor, &self.shared, p);
+        // Envia ainda com o estado travado: a posição repetida pelos pings
+        // não pode anunciar a forma nova antes de ela sair.
+        for p in partes.iter().filter_map(|p| cursor_packet(p)) {
+            enviar_cursor(&self.saida_cursor, &self.shared, &p);
+        }
+        if let Some(p) = c.position_packet() {
+            enviar_cursor(&self.saida_cursor, &self.shared, &p);
         }
     }
 

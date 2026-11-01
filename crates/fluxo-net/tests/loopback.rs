@@ -958,6 +958,23 @@ fn cursor_chega_e_forma_perdida_e_pedida_de_novo() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(rx.cursor().unwrap().x, 101);
+
+    // Forma nova com o cliente ouvindo: chega direto, sem pedir de novo.
+    let pedidos = rx.stats().cursor_requests;
+    let nova = CursorShape {
+        width: 8,
+        height: 8,
+        hot_x: 0,
+        hot_y: 0,
+        bgra: vec![7; 8 * 8 * 4],
+    };
+    tx.set_cursor_shape(nova.clone());
+    let limite = Instant::now() + Duration::from_secs(1);
+    while rx.cursor().and_then(|c| c.shape).is_none_or(|s| *s != nova) && Instant::now() < limite {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(*rx.cursor().unwrap().shape.unwrap(), nova);
+    assert_eq!(rx.stats().cursor_requests, pedidos, "chegou sem precisar pedir");
 }
 
 #[test]

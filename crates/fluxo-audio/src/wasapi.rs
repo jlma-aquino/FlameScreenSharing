@@ -353,9 +353,10 @@ pub struct AudioOutput {
 }
 
 impl AudioOutput {
-    /// Abre a saída padrão com volume `nivel` (0.0 a 1.0) só para o Fluxo.
-    pub fn new(nivel: f32) -> Result<Self, AudioError> {
-        let (cliente, formato, fmt) = abrir(None)?;
+    /// Abre a saída de som `dispositivo` (ver [`output_devices`]; `None`: a
+    /// padrão) com volume `nivel` (0.0 a 1.0) só para o Fluxo.
+    pub fn new(nivel: f32, dispositivo: Option<usize>) -> Result<Self, AudioError> {
+        let (cliente, formato, fmt) = abrir(dispositivo)?;
         if !matches!(formato.amostra, Amostra::F32 | Amostra::I16) {
             // SAFETY: liberando o formato do GetMixFormat.
             unsafe { CoTaskMemFree(Some(fmt as *const _)) };

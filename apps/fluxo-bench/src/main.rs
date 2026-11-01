@@ -71,6 +71,8 @@ struct Opts {
     audio: Option<String>,
     /// `receber`: toca o áudio recebido neste volume (0 a 100).
     tocar: Option<f32>,
+    /// `audio --volume` e `receber --tocar`: em qual saída de som tocar.
+    saida_som: Option<usize>,
     /// FEC do `enviar`: 1 paridade a cada K pacotes (0 = sem).
     fec: u8,
     /// Código de pareamento do `receber` (padrão: sorteado) e do `enviar`.
@@ -106,6 +108,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         dispositivo: None,
         audio: None,
         tocar: None,
+        saida_som: None,
         fec: 10,
         codigo: None,
         sem_cifra: false,
@@ -131,6 +134,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--volume" => o.volume = Some(valor()?.parse().map_err(|_| "volume inválido (0 a 100)")?),
             "--dispositivo" => o.dispositivo = Some(valor()?.parse().map_err(|_| "dispositivo inválido")?),
             "--audio" => o.audio = Some(valor()?.clone()),
+            "--saida-som" => o.saida_som = Some(valor()?.parse().map_err(|_| "saida-som inválida")?),
             "--tocar" => o.tocar = Some(valor()?.parse().map_err(|_| "tocar: volume inválido (0 a 100)")?),
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
             "--codigo" => o.codigo = Some(valor()?.clone()),
@@ -192,6 +196,8 @@ Opções:
   --audio x.wav         no receber: decodifica o áudio que chega e grava (sem tocar)
   --tocar V             no receber: toca o áudio como o fluxo-client, volume V de 0 a
                         100 (0 = testa a reprodução em silêncio)
+  --saida-som N         em qual saída de som tocar (--tocar, audio --volume; padrão:
+                        a padrão do Windows; a lista aparece em fluxo-bench audio)
   --conexao C           no enviar: o código de conexão do receber --internet
   --ttl-furo N          no enviar --conexao: TTL dos pedidos até o furo do receber chegar
                         (padrão 12; 0 = TTL normal). Alto o bastante para passar o NAT
