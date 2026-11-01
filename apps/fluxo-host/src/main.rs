@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf] [--codec auto|h264|hevc|av1]
-//!            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S]
+//!            [--resolucao R] [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S]
 //!            [--segundos S] [--porta-local P]
 //! ```
 //!
@@ -48,7 +48,12 @@ Opções:
   --encoder E           auto, nvenc ou mf (padrão auto)
   --codec C             auto, h264, hevc ou av1 (padrão auto: o melhor que a GPU
                         codifica e o cliente decodifica, na ordem AV1, HEVC, H.264)
-  --mbps M              bitrate máximo do vídeo (padrão 20). O bitrate adaptativo
+  --resolucao R         transmite em outra resolução: 720p, 1080p, 1440p, 4k (2160p)
+                        ou o número de linhas; a largura segue a proporção da tela
+                        (padrão nativa). O redimensionamento é na GPU, junto da
+                        conversão de cor
+  --mbps M              bitrate máximo do vídeo (padrão: 20 em 1080p60,
+                        proporcional a resolução × fps, até 100). O bitrate adaptativo
                         começa em até 20 Mbps, sobe até este valor se a rede
                         deixar e desce quando ela reclama
   --mbps-min M          piso do bitrate adaptativo (padrão mbps/8, mínimo 1)
@@ -94,7 +99,10 @@ struct Opts {
     encoder: fluxo_encode::BackendChoice,
     /// Codec pedido (`None`: o melhor que os dois lados suportam).
     codec: Option<fluxo_encode::VideoCodec>,
-    mbps: f64,
+    /// Bitrate máximo (`None`: proporcional a resolução × fps).
+    mbps: Option<f64>,
+    /// Linhas do vídeo transmitido (`None`: a resolução da tela).
+    resolucao: Option<u32>,
     fps: u32,
     pacing_mbps: Option<f64>,
     keyframe_a_cada: f64,
@@ -113,6 +121,24 @@ struct Opts {
     simular_jitter: f64,
 }
 
+/// `--resolucao`: `nativa` (None), `720p`, `1440p`, `4k`… ou o número de linhas.
+fn parse_resolucao(s: &str) -> Result<Option<u32>, String> {
+    let s = s.to_ascii_lowercase();
+    let linhas = match s.as_str() {
+        "nativa" => return Ok(None),
+        "4k" | "uhd" => 2160,
+        "2k" => 1440,
+        _ => s
+            .trim_end_matches('p')
+            .parse()
+            .map_err(|_| format!("resolução inválida: {s} (720p, 1080p, 1440p, 4k, nativa)"))?,
+    };
+    match linhas {
+        144..=4320 => Ok(Some(linhas)),
+        _ => Err(format!("resolução fora de 144p..4320p: {s}")),
+    }
+}
+
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         destino: String::new(),
@@ -124,7 +150,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         monitor: 0,
         encoder: Default::default(),
         codec: None,
-        mbps: 20.0,
+        mbps: None,
+        resolucao: None,
         fps: 60,
         pacing_mbps: None,
         keyframe_a_cada: 10.0,
@@ -165,7 +192,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
                     c => Some(c.parse()?),
                 }
             }
-            "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
+            "--mbps" => o.mbps = Some(valor()?.parse().map_err(|_| "mbps inválido")?),
+            "--resolucao" => o.resolucao = parse_resolucao(valor()?)?,
             "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
             "--pacing-mbps" => o.pacing_mbps = Some(valor()?.parse().map_err(|_| "pacing-mbps inválido")?),
             "--refresh" => o.refresh = valor()?.parse().map_err(|_| "refresh inválido")?,
@@ -471,7 +499,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, Instant};
 
     use fluxo_capture::{enable_dpi_awareness, CaptureError, DesktopCapturer};
-    use fluxo_encode::{open_encoder, EncoderConfig};
+    use fluxo_encode::{open_encoder, scaled_size, suggested_bitrate_kbps, EncoderConfig};
     use fluxo_net::{
         clock_us, BitrateChange, BitrateController, CursorShape, PairingCode, SenderConfig, VideoSender,
     };
@@ -483,16 +511,26 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     // Cópias: o frame capturado prende o capturador enquanto existe.
     let device = cap.d3d_device().clone();
     let context = cap.d3d_context().clone();
-    let bitrate_bps = (o.mbps * 1e6).round() as u64;
-    let config_para = |w: u32, h: u32, codec| EncoderConfig {
-        fps: o.fps,
-        bitrate_kbps: (bitrate_bps / 1000) as u32,
-        codec,
-        backend: o.encoder,
-        intra_refresh_frames: o.refresh,
-        ..EncoderConfig::new(w, h)
-    };
     let m = cap.monitor().clone();
+    // Tamanho do vídeo para uma captura w×h (--resolucao, ou o mesmo).
+    let tamanho = |w: u32, h: u32| o.resolucao.map_or((w, h), |alt| scaled_size((w, h), alt));
+    let (vw, vh) = tamanho(m.width, m.height);
+    let mbps = o
+        .mbps
+        .unwrap_or(suggested_bitrate_kbps(vw, vh, o.fps) as f64 / 1000.0);
+    let bitrate_bps = (mbps * 1e6).round() as u64;
+    let config_para = |w: u32, h: u32, codec| {
+        let (vw, vh) = tamanho(w, h);
+        EncoderConfig {
+            input_size: Some((w, h)),
+            fps: o.fps,
+            bitrate_kbps: (bitrate_bps / 1000) as u32,
+            codec,
+            backend: o.encoder,
+            intra_refresh_frames: o.refresh,
+            ..EncoderConfig::new(vw, vh)
+        }
+    };
 
     let net_cfg = SenderConfig {
         pacing_bps: o
@@ -597,14 +635,18 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!(
-        "Transmitindo monitor {} ({}x{}) de {} para {}\n  {}\n  {} Mbps, até {} fps, pacing {:.0} Mbps, FEC {}, keyframe de segurança a cada {} s{}",
+        "Transmitindo monitor {} ({}x{}{}) de {} para {}\n  {}\n  {:.1} Mbps, até {} fps, pacing {:.0} Mbps, FEC {}, keyframe de segurança a cada {} s{}",
         m.index,
         m.width,
         m.height,
+        match (vw, vh) == (m.width, m.height) {
+            true => String::new(),
+            false => format!(" → {vw}x{vh}"),
+        },
         tx.local_addr(),
         tx.peer_addr(),
         enc.name(),
-        o.mbps,
+        mbps,
         o.fps,
         pacing_mbps,
         match o.fec {
@@ -927,5 +969,20 @@ mod tests {
         let e = codecs_candidatos(Some(Hevc), Some(H264.bit() | Av1.bit())).unwrap_err();
         assert!(e.contains("HEVC") && e.contains("AV1, H.264"), "{e}");
         assert_eq!(codecs_candidatos(Some(Av1), Some(Av1.bit() | 1)), Ok(vec![Av1]));
+    }
+}
+
+#[cfg(test)]
+mod testes_resolucao {
+    use super::parse_resolucao;
+
+    #[test]
+    fn nomes_e_numeros() {
+        assert_eq!(parse_resolucao("nativa"), Ok(None));
+        assert_eq!(parse_resolucao("1440p"), Ok(Some(1440)));
+        assert_eq!(parse_resolucao("4K"), Ok(Some(2160)));
+        assert_eq!(parse_resolucao("900"), Ok(Some(900)));
+        assert!(parse_resolucao("8000").is_err());
+        assert!(parse_resolucao("alta").is_err());
     }
 }

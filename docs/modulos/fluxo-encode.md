@@ -17,6 +17,14 @@ ADR-006 em [DECISOES.md](../DECISOES.md).
 `open_encoder` devolve, além do encoder, a lista `skipped` com os backends
 que falharam e por quê — mostre ao usuário.
 
+## Redimensionar
+
+`EncoderConfig::input_size` = tamanho das texturas da captura, quando
+diferente de `width` × `height` (o vídeo): o Video Processor que converte
+para NV12 redimensiona na mesma passada. `scaled_size(captura, linhas)`
+calcula o tamanho com a mesma proporção; `suggested_bitrate_kbps(w, h, fps)`,
+o bitrate padrão do host (20 Mbps em 1080p60, proporcional, até 100).
+
 ## Codecs
 
 | Codec | NVENC | Media Foundation | Bitstream |

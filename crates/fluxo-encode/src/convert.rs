@@ -30,7 +30,8 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use crate::platform::win_err;
 use crate::EncodeError;
 
-/// Converte texturas BGRA de um tamanho fixo para NV12.
+/// Converte texturas BGRA de um tamanho fixo para NV12, redimensionando se a
+/// saída tiver outro tamanho.
 pub(crate) struct Nv12Converter {
     context: ID3D11DeviceContext,
     video_context: ID3D11VideoContext1,
@@ -45,7 +46,16 @@ pub(crate) struct Nv12Converter {
 }
 
 impl Nv12Converter {
-    pub fn new(device: &ID3D11Device, width: u32, height: u32, fps: u32) -> Result<Self, EncodeError> {
+    /// Converte texturas de `entrada` (tamanho da captura) para NV12 em
+    /// `saida` (tamanho do encoder). Tamanhos diferentes: o Video Processor
+    /// redimensiona na mesma passada.
+    pub fn new(
+        device: &ID3D11Device,
+        entrada: (u32, u32),
+        saida: (u32, u32),
+        fps: u32,
+    ) -> Result<Self, EncodeError> {
+        let (width, height) = entrada;
         // SAFETY: todas as chamadas abaixo são criação de objetos D3D11 com
         // descritores válidos montados aqui; nenhum ponteiro sobrevive além
         // da chamada.
@@ -70,8 +80,8 @@ impl Nv12Converter {
                 InputWidth: width,
                 InputHeight: height,
                 OutputFrameRate: rate,
-                OutputWidth: width,
-                OutputHeight: height,
+                OutputWidth: saida.0,
+                OutputHeight: saida.1,
                 Usage: D3D11_VIDEO_USAGE_OPTIMAL_SPEED,
             };
             let enumerator = video_device

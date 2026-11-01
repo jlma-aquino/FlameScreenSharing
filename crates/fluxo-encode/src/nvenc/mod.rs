@@ -172,6 +172,8 @@ pub(crate) struct NvencEncoder {
     nv12_view: ID3D11VideoProcessorOutputView,
     width: u32,
     height: u32,
+    /// Tamanho das texturas de entrada (da captura).
+    input: (u32, u32),
     fps: u32,
     bitrate_kbps: u32,
     next_index: u64,
@@ -196,7 +198,7 @@ impl NvencEncoder {
     pub fn new(device: &ID3D11Device, cfg: &EncoderConfig) -> Result<Self, EncodeError> {
         let api = Api::new()?;
         let adapter = adapter_info(device)?;
-        let converter = Nv12Converter::new(device, cfg.width, cfg.height, cfg.fps)?;
+        let converter = Nv12Converter::new(device, cfg.input(), (cfg.width, cfg.height), cfg.fps)?;
         let (nv12, nv12_view) = converter.create_output(device, cfg.width, cfg.height)?;
 
         // Montamos a struct já com os handles nulos: se qualquer passo de
@@ -211,6 +213,7 @@ impl NvencEncoder {
             nv12_view,
             width: cfg.width,
             height: cfg.height,
+            input: cfg.input(),
             fps: cfg.fps,
             bitrate_kbps: cfg.bitrate_kbps,
             next_index: 0,
@@ -519,7 +522,7 @@ impl Encoder for NvencEncoder {
         texture: &ID3D11Texture2D,
         force_keyframe: bool,
     ) -> Result<Vec<EncodedFrame>, EncodeError> {
-        check_size(texture, self.width, self.height)?;
+        check_size(texture, self.input.0, self.input.1)?;
         self.converter.convert(texture, &self.nv12_view)?;
 
         let enc = self.enc;

@@ -119,7 +119,10 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] HEVC e AV1 (protocolo v12): o host usa o melhor codec que a GPU codifica e o cliente decodifica (AV1 >
       HEVC > H.264; `--codec` força um), NVENC e Media Foundation. AV1 da RTX 5050 → AV1 Video Extension: 0
       perdas, decode ~0,4 ms, intra-refresh ok. HEVC só codificado aqui (este PC não tem o decoder HEVC)
-- [ ] 1440p/4K, 120 fps
+- [x] 1440p/4K e 120 fps: `fluxo-host --resolucao 1440p|4k` (redimensiona na GPU, junto da conversão de cor),
+      bitrate padrão proporcional a resolução × fps, buffers de socket de 4 MB. 4K60 AV1: 0 perdas, captura→
+      chegada 15,6 ms; rede a 120 fps e 100 Mbps sem perda. A tela só gerou 60 fps durante os testes:
+      120 fps de captura real ainda não medido
 - [ ] ~~H.264 4:4:4 (NVENC) para texto colorido nítido~~ — pulado por enquanto: o decoder H.264 do Windows só
       decodifica 4:2:0, então o cliente precisaria de um decoder próprio. O 4:2:0 limita o PSNR RGB a ~32 dB
       em área de trabalho

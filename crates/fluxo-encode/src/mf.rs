@@ -66,8 +66,8 @@ pub(crate) struct MfEncoder {
     need_input: u32,
     /// Frames entregues ao MFT que ainda não saíram.
     in_flight: u32,
-    width: u32,
-    height: u32,
+    /// Tamanho das texturas de entrada (da captura).
+    input: (u32, u32),
     fps: u32,
     bitrate_kbps: u32,
     next_input: u64,
@@ -181,7 +181,7 @@ impl MfEncoder {
             let events: IMFMediaEventGenerator =
                 transform.cast().map_err(win_err("IMFMediaEventGenerator"))?;
 
-            let converter = Nv12Converter::new(device, cfg.width, cfg.height, cfg.fps)?;
+            let converter = Nv12Converter::new(device, cfg.input(), (cfg.width, cfg.height), cfg.fps)?;
             let pool = (0..POOL)
                 .map(|_| converter.create_output(device, cfg.width, cfg.height))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -200,8 +200,7 @@ impl MfEncoder {
                 output_size: info.cbSize.max(1024 * 1024),
                 need_input: 0,
                 in_flight: 0,
-                width: cfg.width,
-                height: cfg.height,
+                input: cfg.input(),
                 fps: cfg.fps,
                 bitrate_kbps: cfg.bitrate_kbps,
                 next_input: 0,
@@ -348,7 +347,7 @@ impl Encoder for MfEncoder {
         texture: &ID3D11Texture2D,
         force_keyframe: bool,
     ) -> Result<Vec<EncodedFrame>, EncodeError> {
-        check_size(texture, self.width, self.height)?;
+        check_size(texture, self.input.0, self.input.1)?;
         let mut out = Vec::new();
 
         // 1. Só podemos entregar entrada depois que o MFT pedir.

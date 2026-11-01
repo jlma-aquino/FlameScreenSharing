@@ -9,7 +9,7 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 
 ```text
 fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
-           [--codec auto|h264|hevc|av1]
+           [--codec auto|h264|hevc|av1] [--resolucao R]
 fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S] [--refresh N] [--fec K]
            [--segundos S] [--porta-local P] [--sem-cifra]
@@ -75,6 +75,29 @@ escolhido (`NVENC AV1 (...)`); um codec que a GPU recusar aparece como
 `(sem AV1 nesta GPU: ...)` antes de tentar o próximo. `--codec h264` (ou
 `hevc`, `av1`) força um; se o cliente não o decodifica, o host para e diz o
 que ele decodifica.
+
+## Resolução e fps
+
+`--resolucao 720p|1080p|1440p|4k|N` transmite em outra resolução que a da
+tela, mantendo a proporção: a conversão BGRA→NV12 do encoder redimensiona
+na mesma passada da GPU (`EncoderConfig::input_size`). A linha
+"Transmitindo" mostra `1920x1080 → 3840x2160`. Sem `--mbps`, o bitrate
+máximo acompanha resolução × fps: 20 Mbps em 1080p60, 40 em 1080p120 ou
+1440p60 (35,6), 80 em 4K60, até 100. `--fps 120` só gera 120 frames por
+segundo se a tela atualizar nesse ritmo (monitor de 120 Hz+ e conteúdo
+rápido).
+
+Medido (mesma máquina, RTX 5050, `receber --verificar`, 0 perdas em todos):
+
+| | Encode por frame | Captura→chegada p50 | Decodificados |
+|---|---|---|---|
+| 1440p60 AV1 | — | 9,1 ms | 301 de 301 (2560x1440) |
+| 4K60 AV1 | 7,0 ms | 15,6 ms | 301 de 301 (3840x2160) |
+| 4K60 H.264 | 7,5 ms | 18,3 ms | 301 de 301 |
+| Rede a 120 fps (`fluxo-bench enviar`), 40 e 100 Mbps | — | 3–4 ms | 600 de 600 |
+
+Em 4K o encode (~7 ms, preset P4) quase ocupa o intervalo de um frame a
+120 fps (8,3 ms): 4K120 fica no limite desta GPU.
 
 ## Lendo a saída (a cada segundo)
 

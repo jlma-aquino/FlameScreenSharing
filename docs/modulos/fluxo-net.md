@@ -47,6 +47,14 @@ HOST (VideoSender)                              CLIENTE (VideoReceiver)
 - Os dois lados medem RTT: o host para o futuro controle de bitrate, o
   cliente para o overlay.
 
+## Buffers dos sockets
+
+Todo socket (`Portas::new`) pede 4 MB de buffer de envio e de recepção
+(`setsockopt` direto, sem dependência). Com o padrão do Windows (64 KB), a
+100 Mbps e 120 fps na mesma máquina 5 de 600 frames se perdiam no buffer de
+recepção; com 4 MB, 0 em duas rodadas. No Linux o sistema limita ao
+`net.core.rmem_max`.
+
 ## Pacing
 
 Token bucket: taxa padrão de **2,5× o bitrate** do vídeo, rajadas de até

@@ -6,6 +6,13 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **1440p/4K e 120 fps** (fase 6): `fluxo-host --resolucao 720p|1080p|1440p|4k|N`
+  transmite em outra resolução que a da tela (redimensionada na GPU, na
+  mesma passada da conversão para NV12); sem `--mbps`, o bitrate máximo
+  acompanha resolução × fps (20 Mbps em 1080p60, até 100). 4K60 AV1 na mesma
+  máquina: 301 de 301 frames, captura→chegada 15,6 ms, encode 7 ms.
+- `fluxo-encode`: `EncoderConfig::input_size`, `scaled_size`,
+  `suggested_bitrate_kbps`.
 - **HEVC e AV1** (protocolo v12, fase 6, ADR-012): o cliente diz que codecs
   decodifica (novo pacote Caps, junto com cada Ping) e o host abre o encoder
   com o melhor que a GPU dele também codifica, na ordem AV1, HEVC, H.264;
@@ -224,6 +231,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   para 59,8 fps / 15 Mbps.
 
 ### Corrigido
+- Sockets UDP com buffers de 4 MB: a 100 Mbps e 120 fps, 5 de 600 frames se
+  perdiam no buffer de recepção padrão do Windows (64 KB); agora 0.
 - Cursor: a forma nova saía sem o cabeçalho do pacote, e o cliente só a  recebia depois de pedir de novo (~100–200 ms a mais a cada troca de  cursor); a posição repetida com os pings também podia anunciar a forma  antes de ela sair. O teste agora confere que a forma chega sem pedido.- `fluxo-client`: ao fechar, o áudio terminava com "a thread de rede foi  encerrada" em vez do resumo.
 - Conferência dos códigos de conexão: o peso da 31ª posição era 31 (zero em
   módulo 31), e um erro de digitação ali passava nos códigos longos (IPv6).

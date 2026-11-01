@@ -190,10 +190,14 @@ pub fn backend_order(choice: BackendChoice, vendor: GpuVendor) -> Vec<Backend> {
 /// Parâmetros do encoder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncoderConfig {
-    /// Largura em pixels (igual à da textura capturada; par).
+    /// Largura do vídeo codificado, em pixels (par).
     pub width: u32,
-    /// Altura em pixels (igual à da textura capturada; par).
+    /// Altura do vídeo codificado, em pixels (par).
     pub height: u32,
+    /// Tamanho das texturas que [`Encoder::encode`] recebe (a captura), se
+    /// diferente de `width` × `height`: a conversão para NV12 redimensiona na
+    /// mesma passada, na GPU. `None` = o mesmo tamanho.
+    pub input_size: Option<(u32, u32)>,
     /// Quadros por segundo esperados. Usado pelo controle de bitrate.
     pub fps: u32,
     /// Bitrate alvo em kbit/s (CBR).
@@ -217,6 +221,7 @@ impl EncoderConfig {
         Self {
             width,
             height,
+            input_size: None,
             fps: 60,
             bitrate_kbps: 20_000,
             codec: VideoCodec::H264,
@@ -242,6 +247,10 @@ impl EncoderConfig {
         if self.width % 2 != 0 || self.height % 2 != 0 {
             return erro("largura e altura precisam ser pares");
         }
+        let (iw, ih) = self.input();
+        if !(1..=16384).contains(&iw) || !(1..=16384).contains(&ih) {
+            return erro("tamanho de entrada fora de 1..=16384");
+        }
         if self.fps == 0 || self.fps > 240 {
             return erro("fps fora de 1..=240");
         }
@@ -254,10 +263,49 @@ impl EncoderConfig {
         Ok(())
     }
 
+    /// Tamanho das texturas de entrada ([`input_size`](Self::input_size) ou o do vídeo).
+    pub fn input(&self) -> (u32, u32) {
+        self.input_size.unwrap_or((self.width, self.height))
+    }
+
     /// Bitrate em bit/s.
     pub fn bitrate_bps(&self) -> u32 {
         self.bitrate_kbps.saturating_mul(1000)
     }
+}
+
+/// Tamanho do vídeo com `altura` linhas e a proporção da captura `origem`
+/// (largura arredondada para par). Para o host transmitir em outra resolução.
+///
+/// ```
+/// use fluxo_encode::scaled_size;
+///
+/// assert_eq!(scaled_size((1920, 1080), 1440), (2560, 1440));
+/// assert_eq!(scaled_size((1920, 1080), 2160), (3840, 2160));
+/// assert_eq!(scaled_size((2560, 1080), 720), (1706, 720)); // ultrawide
+/// ```
+pub fn scaled_size(origem: (u32, u32), altura: u32) -> (u32, u32) {
+    let altura = altura & !1;
+    let largura = (origem.0 as u64 * altura as u64 / origem.1.max(1) as u64) as u32;
+    (largura & !1, altura)
+}
+
+/// Bitrate sugerido (kbit/s) para um tamanho e fps: 20 Mbps em 1080p60,
+/// proporcional aos pixels por segundo, entre 20 e 100 Mbps.
+///
+/// ```
+/// use fluxo_encode::suggested_bitrate_kbps;
+///
+/// assert_eq!(suggested_bitrate_kbps(1920, 1080, 60), 20_000);
+/// assert_eq!(suggested_bitrate_kbps(1920, 1080, 120), 40_000);
+/// assert_eq!(suggested_bitrate_kbps(3840, 2160, 60), 80_000);
+/// assert_eq!(suggested_bitrate_kbps(3840, 2160, 120), 100_000); // teto
+/// assert_eq!(suggested_bitrate_kbps(1280, 720, 60), 20_000); // piso
+/// ```
+pub fn suggested_bitrate_kbps(width: u32, height: u32, fps: u32) -> u32 {
+    let base = 1920u64 * 1080 * 60;
+    let pixels = width as u64 * height as u64 * fps as u64;
+    (20_000 * pixels / base).clamp(20_000, 100_000) as u32
 }
 
 /// Um frame comprimido.

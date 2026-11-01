@@ -10,6 +10,46 @@ use std::time::Duration;
 
 use crate::is_transient;
 
+/// Buffers de envio e recepção de cada socket. O padrão do Windows (64 KB)
+/// não segura a rajada de um keyframe em 4K: a 100 Mbps na mesma máquina, 5
+/// frames em 600 se perdiam no buffer de recepção.
+const BUFFER_SOCKET: i32 = 4 << 20;
+
+/// Pede [`BUFFER_SOCKET`] para envio e recepção. O sistema pode dar menos
+/// (no Linux, o teto é `net.core.rmem_max`); falha é ignorada.
+fn ampliar_buffers(s: &UdpSocket) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        #[link(name = "ws2_32")]
+        extern "system" {
+            fn setsockopt(s: usize, level: i32, name: i32, val: *const i32, len: i32) -> i32;
+        }
+        const SOL_SOCKET: i32 = 0xffff;
+        for opcao in [0x1001, 0x1002] {
+            // SO_SNDBUF, SO_RCVBUF
+            // SAFETY: socket válido (emprestado), ponteiro para um i32 vivo.
+            unsafe { setsockopt(s.as_raw_socket() as usize, SOL_SOCKET, opcao, &BUFFER_SOCKET, 4) };
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        extern "C" {
+            fn setsockopt(fd: i32, level: i32, name: i32, val: *const i32, len: u32) -> i32;
+        }
+        // SOL_SOCKET, SO_SNDBUF, SO_RCVBUF: valores do Linux; os BSD (macOS) usam os do Windows.
+        let (nivel, opcoes) = match cfg!(target_os = "linux") {
+            true => (1, [7, 8]),
+            false => (0xffff, [0x1001, 0x1002]),
+        };
+        for opcao in opcoes {
+            // SAFETY: socket válido (emprestado), ponteiro para um i32 vivo.
+            unsafe { setsockopt(s.as_raw_fd(), nivel, opcao, &BUFFER_SOCKET, 4) };
+        }
+    }
+}
+
 pub(crate) struct Portas {
     v4: Option<UdpSocket>,
     v6: Option<UdpSocket>,
@@ -19,6 +59,9 @@ impl Portas {
     pub(crate) fn new(v4: Option<UdpSocket>, v6: Option<UdpSocket>) -> io::Result<Self> {
         if v4.is_none() && v6.is_none() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "nenhum socket"));
+        }
+        for s in v4.iter().chain(v6.iter()) {
+            ampliar_buffers(s);
         }
         Ok(Self { v4, v6 })
     }
