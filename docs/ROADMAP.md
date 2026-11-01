@@ -128,4 +128,5 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       em área de trabalho
 - [x] Encoder por software (OpenH264, ADR-013): `--encoder software` e último recurso no automático; só
       H.264, frame 1080p em ~8 ms (8 fatias em paralelo, modo câmera), padrões de 30 fps e até 1080p
-- [ ] Interface gráfica
+- [ ] Interface gráfica: `fluxo.exe` (egui) roda o host e o cliente por baixo e mostra os códigos com botão de
+      copiar. Lógica testada; falta conferir com a janela aberta

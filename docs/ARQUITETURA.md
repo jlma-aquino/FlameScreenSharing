@@ -40,6 +40,7 @@ thread da janela só processa mensagens — arrastar a janela não para a imagem
 | `fluxo-net` | Sockets UDP, pacing, RTT, pareamento e cifra no socket, sinalização e furo de NAT | Formato dos bytes, algoritmos de cripto | Qualquer |
 | `fluxo-decode` | H.264 → textura NV12 via GPU (Media Foundation + DXVA) | Rede, tela | Windows (erro em qualquer) |
 | `fluxo-audio` | Som do host: WASAPI loopback, Opus, buffer de jitter, reprodução | Rede | Opus/jitter em qualquer; WASAPI no Windows |
+| `apps/fluxo` | A janela: formulários e códigos; roda o host e o cliente por baixo | Vídeo, rede | Windows |
 | `apps/fluxo-host` | Captura → encode → rede | Decode, tela | Windows |
 | `apps/fluxo-client` | Rede → decode → janela (swapchain flip model) | Captura | Windows |
 | `apps/fluxo-sinal` | Servidor de sinalização: apresenta host e cliente em redes diferentes | Vídeo (nunca passa por ele) | Qualquer |

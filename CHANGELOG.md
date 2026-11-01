@@ -6,6 +6,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **A janela `fluxo.exe`** (fase 6, egui): compartilhar ou assistir sem
+  terminal. Roda o `fluxo-host` e o `fluxo-client` da mesma pasta, sem console,
+  mostra os códigos com botão de copiar, confere o que foi colado e manda o
+  código de resposta ao cliente. Escolha de tela, resolução, fps e som.
 - **Encoder por software** (fase 6, ADR-013): OpenH264 na CPU, para PCs sem
   encoder de hardware (`--encoder software`, e o último recurso do
   automático). Só H.264; a conversão de cor continua na GPU. Frame 1080p em

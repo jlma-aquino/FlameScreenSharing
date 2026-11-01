@@ -232,7 +232,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 false => println!("Depois cole aqui o código de resposta que ele mandar de volta:"),
             }
             ler_respostas(rx.puncher());
-            format!("Fluxo — código de conexão {cc} · cole a resposta do host no terminal")
+            format!("Fluxo — código de conexão {cc} · cole a resposta do host")
         }
         (Some(c), None) => {
             println!("Código de pareamento: {c}");
@@ -253,7 +253,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         vsync: o.vsync,
         segundos: o.segundos,
         espera: match (&codigo, &conexao) {
-            (_, Some(cc)) => format!("código de conexão\n{cc}\ncole a resposta do\nhost no terminal"),
+            (_, Some(cc)) => format!("código de conexão\n{cc}\ncole a resposta\ndo host"),
             (Some(c), None) => format!("código {c}\nhost: {endereco}\n--codigo {c}"),
             (None, None) => format!("aguardando o host\n{endereco} (sem cifra)"),
         },

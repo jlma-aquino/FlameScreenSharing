@@ -1,0 +1,17 @@
+[package]
+name = "fluxo"
+description = "Janela do Fluxo: compartilhar a tela ou assistir, sem terminal (roda o fluxo-host e o fluxo-client por baixo)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Só para conferir os códigos colados antes de mandar ao host/cliente.
+fluxo-net = { workspace = true }
+
+# fluxo-capture: a lista de monitores. eframe: egui com OpenGL (glow), sem o
+# suporte a Linux (wayland/x11).
+[target.'cfg(windows)'.dependencies]
+fluxo-capture = { workspace = true }
+eframe = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "accesskit"] }

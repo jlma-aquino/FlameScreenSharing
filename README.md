@@ -4,12 +4,12 @@ Streaming de tela **P2P** de baixa latência para Windows, escrito em Rust.
 Meta: **1080p a 60 fps** (com espaço para 1440p/4K e 120 fps) e latência de
 ponta a ponta abaixo de **40 ms em rede local**.
 
-> **Status:** Fase 5 em andamento — o pipeline completo funciona: o
-> `fluxo-host` captura, codifica (NVENC ou Media Foundation) e transmite por
-> UDP; o `fluxo-client` decodifica na GPU e mostra numa janela. Medido na
-> mesma máquina: captura → tela em ~3 ms (p50). Pareamento por código, tudo
-> cifrado, e conexão entre redes diferentes por um servidor de sinalização.
-> Veja o [ROADMAP](docs/ROADMAP.md).
+> **Status:** Fase 6 — o pipeline completo funciona: o `fluxo-host` captura,
+> codifica (H.264, HEVC ou AV1, por NVENC, Media Foundation ou na CPU) e
+> transmite por UDP, com o som do PC; o `fluxo-client` decodifica na GPU e
+> mostra numa janela. Medido na mesma máquina: captura → tela em ~3 ms (p50).
+> Pareamento por código, tudo cifrado, e conexão entre redes diferentes sem
+> servidor. Veja o [ROADMAP](docs/ROADMAP.md).
 
 ## Como funciona (resumo)
 
@@ -36,12 +36,13 @@ fluxo/
 ├── crates/                 bibliotecas, uma responsabilidade cada
 │   ├── fluxo-proto/        protocolo de rede (puro Rust, sem I/O, 100% testável)
 │   ├── fluxo-capture/      captura de tela via DXGI Desktop Duplication
-│   ├── fluxo-encode/       encoder H.264 por hardware: NVENC ou Media Foundation
+│   ├── fluxo-encode/       encoder H.264/HEVC/AV1: NVENC, Media Foundation ou CPU
 │   ├── fluxo-crypto/       código de pareamento, handshake SPAKE2, cifra dos pacotes
 │   ├── fluxo-net/          transporte UDP: pacing, remontagem, RTT, sinalização
-│   ├── fluxo-decode/       decoder H.264 na GPU (Media Foundation + DXVA)
+│   ├── fluxo-decode/       decoder na GPU (Media Foundation + DXVA)
 │   └── fluxo-audio/        som do host: WASAPI, Opus, buffer de jitter
 ├── apps/                   executáveis
+│   ├── fluxo/              a janela: compartilhar ou assistir, sem terminal
 │   ├── fluxo-host/         transmite a tela (captura → encode → rede)
 │   ├── fluxo-client/       mostra a tela recebida (rede → decode → janela)
 │   ├── fluxo-bench/        CLI para testar e medir cada etapa isoladamente
@@ -70,7 +71,15 @@ cargo build --release
 cargo test --workspace
 ```
 
-Transmitir — no PC que assiste, depois no que compartilha (no mesmo PC, use
+O jeito mais simples de usar é a janela, nos dois PCs (precisa do
+`fluxo-host.exe` e do `fluxo-client.exe` na mesma pasta); veja
+[fluxo](docs/modulos/fluxo.md):
+
+```powershell
+.\target\release\fluxo.exe
+```
+
+Pela linha de comando: transmitir — no PC que assiste, depois no que compartilha (no mesmo PC, use
 `127.0.0.1`). O cliente mostra um código de pareamento (ex.: `K7M4-QX9P`) e
 o comando pronto para o host; só quem digita esse código consegue
 transmitir, e tudo vai cifrado:
