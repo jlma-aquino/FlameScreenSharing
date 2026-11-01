@@ -12,7 +12,8 @@ ADR-006 em [DECISOES.md](../DECISOES.md).
 |---|---|---|---|
 | `nvenc` | NVENC direto (API 12.1) | NVIDIA, driver 531+ | Padrão em NVIDIA |
 | `mf` | Media Foundation (MFT de hardware) | NVIDIA, AMD, Intel | Usa o encoder que o driver de vídeo instala |
-| `auto` (padrão) | NVENC → Media Foundation em NVIDIA; Media Foundation nas outras | — | Se o NVENC falhar, cai para MF e informa o motivo |
+| `software` | OpenH264 na CPU | qualquer uma | Só H.264, até 3840x2160. Último recurso |
+| `auto` (padrão) | NVENC → Media Foundation → software em NVIDIA; Media Foundation → software nas outras | — | Cada um que falhar aparece em `skipped`, com o motivo |
 
 `open_encoder` devolve, além do encoder, a lista `skipped` com os backends
 que falharam e por quê — mostre ao usuário.
@@ -24,6 +25,23 @@ diferente de `width` × `height` (o vídeo): o Video Processor que converte
 para NV12 redimensiona na mesma passada. `scaled_size(captura, linhas)`
 calcula o tamanho com a mesma proporção; `suggested_bitrate_kbps(w, h, fps)`,
 o bitrate padrão do host (20 Mbps em 1080p60, proporcional, até 100).
+
+## Encoder por software (OpenH264)
+
+Para máquinas sem encoder de hardware (VMs, GPUs antigas). A conversão de
+cor (e o redimensionamento) continuam na GPU; o NV12 desce para a CPU
+(~1,5 ms em 1080p), vira I420 e vai para o OpenH264 (`software.rs`).
+
+| Ajuste | Por quê (1080p, CPU de 16 núcleos, OpenH264 sem NASM) |
+|---|---|
+| Modo "câmera em tempo real" | O modo "conteúdo de tela" faz uma busca de movimento a mais: 36 contra 15 ms por frame numa thread, mesmo PSNR (~44 dB) |
+| Até 8 fatias em paralelo | 15 → 7,5 ms. Ligadas depois do primeiro frame, pela API crua (o wrapper só faz uma fatia) |
+| Pular frames ligado | Deixa o controle de taxa segurar o bitrate; um frame pulado sai como nenhum |
+| Fatias por tamanho (~1100 bytes) | Testado e descartado: mais lento (75 ms) e PSNR mínimo de 15 dB |
+
+Resultado: P-frame 1080p em ~8 ms, PSNR 44 dB; host → `receber` a 30 fps
+com 131 de 131 frames decodificados. No host, o software tem padrões mais
+baixos (30 fps, até 1080 linhas): ver [fluxo-host](fluxo-host.md).
 
 ## Codecs
 
@@ -138,8 +156,9 @@ para um quadro de antes dela, ainda com o estrago da perda (medido com
 - Só 4:2:0, 8 bits. 4:4:4 foi pulado (o decoder do Windows não decodifica).
 - Resolução fixa: se a textura mudar de tamanho, `encode` devolve
   `SizeMismatch` e o encoder deve ser recriado.
-- Sem encoder por software: máquinas sem encoder de hardware (VMs, GPUs muito
-  antigas) recebem `NoBackend`.
+- O encoder por software foi compilado sem NASM (só C); com o NASM no PATH
+  ao compilar ele usa assembly e fica mais rápido. Não testado numa VM de
+  verdade (poucos núcleos, sem GPU).
 - AMD e Intel só foram testados pelo caminho comum (Media Foundation numa
   NVIDIA); falta rodar em máquinas com essas placas.
 

@@ -87,7 +87,7 @@ impl SignalServer {
                         return (vec![(de, r)], Some(SignalEvent::RoomTaken { room, client: de }));
                     }
                 }
-                let novo = self.salas.get(&room).map_or(true, |s| s.cliente != de);
+                let novo = self.salas.get(&room).is_none_or(|s| s.cliente != de);
                 self.salas.insert(
                     room,
                     Sala {

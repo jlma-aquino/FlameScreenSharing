@@ -6,13 +6,17 @@
    - Baixe em <https://visualstudio.microsoft.com/visual-cpp-build-tools/>
    - Marque **"Desenvolvimento para desktop com C++"** e instale.
 2. **Rust**: baixe e rode o `rustup-init.exe` de <https://rustup.rs>,
-   aceitando as opções padrão.
+   aceitando as opções padrão. Versão mínima: **1.85**.
 3. Feche e reabra o terminal. Confira:
    ```powershell
    rustc --version
    cargo --version
    ```
-4. *(Opcional)* Editor: VS Code com a extensão **rust-analyzer** — mostra
+4. *(Opcional)* **NASM** (<https://nasm.us>), no PATH: o OpenH264 (encoder
+   por software) compila do fonte com o compilador C++ do item 1; com o
+   NASM ele inclui as rotinas em assembly e fica várias vezes mais rápido.
+   Sem ele compila igual, só em C.
+5. *(Opcional)* Editor: VS Code com a extensão **rust-analyzer** — mostra
    erros, tipos e a documentação ao passar o mouse.
 
 ## 2. Compilar

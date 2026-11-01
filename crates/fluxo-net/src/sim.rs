@@ -66,7 +66,7 @@ impl DelayModel {
 
     /// Quando um pacote que sai em `agora` deve ser entregue.
     pub fn due(&mut self, agora: Instant) -> Instant {
-        if !self.jitter.is_zero() && self.proximo_sorteio.map_or(true, |t| agora >= t) {
+        if !self.jitter.is_zero() && self.proximo_sorteio.is_none_or(|t| agora >= t) {
             self.extra = self.jitter.mul_f64(self.rng.next_f64());
             self.proximo_sorteio = Some(agora + JITTER_PERIOD);
         }

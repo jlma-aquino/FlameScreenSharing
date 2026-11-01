@@ -6,6 +6,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Encoder por software** (fase 6, ADR-013): OpenH264 na CPU, para PCs sem
+  encoder de hardware (`--encoder software`, e o último recurso do
+  automático). Só H.264; a conversão de cor continua na GPU. Frame 1080p em
+  ~8 ms com 8 fatias em paralelo; no host, padrões de 30 fps e até 1080p.
+  Host → `receber`: 131 de 131 frames decodificados.
 - **1440p/4K e 120 fps** (fase 6): `fluxo-host --resolucao 720p|1080p|1440p|4k|N`
   transmite em outra resolução que a da tela (redimensionada na GPU, na
   mesma passada da conversão para NV12); sem `--mbps`, o bitrate máximo
@@ -208,6 +213,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - `fluxo-bench decode`: captura → encode → decode, mede o decoder isolado.
 
 ### Alterado
+- Rust mínimo 1.85 (era 1.80): o `openh264` pede 1.85. Com isso,
+  `map_or(true, …)` virou `is_none_or`.
+- Com `--encoder` explícito, o erro do backend volta sem embrulho (antes
+  saía "indisponível: … indisponível: …").
 - O cliente reconhece um PairInit repetido pelo conteúdo, não pelo
   endereço: o host tenta todos os endereços do cliente de uma vez, e o mesmo
   pedido chegando por dois caminhos não pode gerar duas sessões.

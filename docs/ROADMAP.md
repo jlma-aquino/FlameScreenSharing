@@ -126,5 +126,6 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [ ] ~~H.264 4:4:4 (NVENC) para texto colorido nítido~~ — pulado por enquanto: o decoder H.264 do Windows só
       decodifica 4:2:0, então o cliente precisaria de um decoder próprio. O 4:2:0 limita o PSNR RGB a ~32 dB
       em área de trabalho
-- [ ] Encoder por software (fallback para VMs/PCs sem encoder de hardware)
+- [x] Encoder por software (OpenH264, ADR-013): `--encoder software` e último recurso no automático; só
+      H.264, frame 1080p em ~8 ms (8 fatias em paralelo, modo câmera), padrões de 30 fps e até 1080p
 - [ ] Interface gráfica

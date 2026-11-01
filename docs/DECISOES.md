@@ -369,6 +369,36 @@ o codec em `flags`, e o cliente troca de decoder quando ele muda.
 
 ---
 
+## ADR-013 — Encoder por software: OpenH264 compilado do fonte
+
+**Status:** Aceito (2026-10-31)
+
+**Contexto.** Sem encoder de hardware (VM, GPU antiga) o host não abria.
+Opções para comprimir na CPU:
+
+| Opção | Prós | Contras |
+|---|---|---|
+| x264 | Melhor compressão por bit | GPL; build pesado |
+| **OpenH264 (Cisco)**, do fonte (crate `openh264`) | BSD; feito para tempo real; compila com o MSVC já instalado | Sem NASM, só C (mais lento) |
+| OpenH264, DLL pronta da Cisco | Assembly e a licença do H.264 paga pela Cisco | Baixar ou distribuir a DLL junto |
+
+**Decisão.** OpenH264 do fonte, só no Windows (o `receber` no Linux não
+compila C++ à toa). A conversão de cor continua na GPU; o frame desce em
+NV12 e vira I420. Modo "câmera em tempo real" e até 8 fatias em paralelo,
+medidos: 36 → 7,5 ms por frame 1080p, mesmo PSNR. No host, padrões de 30
+fps e até 1080 linhas. É o último backend do automático.
+
+**Consequências.**
+- ➕ Funciona em qualquer PC com Windows, sem dependência de driver de vídeo
+  para o encode.
+- ➖ Rust mínimo sobe para 1.85 (pedido da crate).
+- ➖ Só H.264 Baseline, e sem intra-refresh: perda se recupera com keyframe.
+- ➖ Sem NASM no PC que compila, fica só em C.
+- 🔁 Se precisar de mais velocidade em VMs fracas: NASM no build ou a DLL da
+  Cisco (`openh264` com a feature `libloading`).
+
+---
+
 ## Modelo
 
 ```markdown

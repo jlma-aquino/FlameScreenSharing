@@ -60,8 +60,9 @@ Opções:
   --bitrate-fixo        desliga o bitrate adaptativo (fica sempre em --mbps)
   --fila-max MS         bitrate adaptativo: atraso de fila tolerado (padrão 15).
                         Menor = menos latência e menos bitrate
-  --fps F               máximo de frames por segundo (padrão 60); capturas mais
-                        rápidas esperam o próximo horário, sem perder a última
+  --fps F               máximo de frames por segundo (padrão 60; 30 com o encoder
+                        por software); capturas mais rápidas esperam o próximo
+                        horário, sem perder a última
   --pacing-mbps P       taxa de envio dos pacotes (padrão 2,5 × mbps; 0 = sem pacing)
   --keyframe-a-cada S   keyframe periódico de segurança, em segundos (padrão 10;
                         0 = só o primeiro). O cliente pede um quando perde algo.
@@ -103,7 +104,8 @@ struct Opts {
     mbps: Option<f64>,
     /// Linhas do vídeo transmitido (`None`: a resolução da tela).
     resolucao: Option<u32>,
-    fps: u32,
+    /// Máximo de fps (`None`: 60, ou 30 com o encoder por software).
+    fps: Option<u32>,
     pacing_mbps: Option<f64>,
     keyframe_a_cada: f64,
     refresh: u32,
@@ -152,7 +154,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         codec: None,
         mbps: None,
         resolucao: None,
-        fps: 60,
+        fps: None,
         pacing_mbps: None,
         keyframe_a_cada: 10.0,
         refresh: 0,
@@ -194,7 +196,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             }
             "--mbps" => o.mbps = Some(valor()?.parse().map_err(|_| "mbps inválido")?),
             "--resolucao" => o.resolucao = parse_resolucao(valor()?)?,
-            "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
+            "--fps" => o.fps = Some(valor()?.parse().map_err(|_| "fps inválido")?),
             "--pacing-mbps" => o.pacing_mbps = Some(valor()?.parse().map_err(|_| "pacing-mbps inválido")?),
             "--refresh" => o.refresh = valor()?.parse().map_err(|_| "refresh inválido")?,
             "--fec" => o.fec = valor()?.parse().map_err(|_| "fec inválido (0 a 255)")?,
@@ -302,6 +304,18 @@ struct Contadores {
     onda_fim: bool,
     /// Mudanças de bitrate feitas pelo controle adaptativo.
     mudancas: u64,
+}
+
+/// fps e linhas do vídeo: os pedidos (`--fps`, `--resolucao`) ou os padrões.
+/// No encoder por `software` os padrões são mais baixos: 30 fps e no máximo
+/// 1080 linhas (a CPU faz um frame 1080p em ~7,5 ms com 8 núcleos, mas uma
+/// VM com poucos núcleos não; e 4K na CPU não dá tempo real).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn limites(fps: Option<u32>, linhas: Option<u32>, tela: (u32, u32), software: bool) -> (u32, Option<u32>) {
+    match software {
+        false => (fps.unwrap_or(60), linhas),
+        true => (fps.unwrap_or(30), linhas.or((tela.1 > 1080).then_some(1080))),
+    }
 }
 
 /// Codecs a tentar, na ordem: o `pedido` (se o cliente decodifica) ou, em
@@ -499,7 +513,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, Instant};
 
     use fluxo_capture::{enable_dpi_awareness, CaptureError, DesktopCapturer};
-    use fluxo_encode::{open_encoder, scaled_size, suggested_bitrate_kbps, EncoderConfig};
+    use fluxo_encode::{
+        open_encoder, scaled_size, suggested_bitrate_kbps, Backend, BackendChoice, EncoderConfig,
+    };
     use fluxo_net::{
         clock_us, BitrateChange, BitrateController, CursorShape, PairingCode, SenderConfig, VideoSender,
     };
@@ -512,18 +528,26 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let device = cap.d3d_device().clone();
     let context = cap.d3d_context().clone();
     let m = cap.monitor().clone();
+    // fps e linhas do vídeo: os pedidos, ou os padrões do encoder (mais
+    // baixos no por software). Em Cell porque, no automático, só se sabe que
+    // caiu no software depois de abrir.
+    let software = |sim: bool| limites(o.fps, o.resolucao, (m.width, m.height), sim);
+    let pedido_software = o.encoder == BackendChoice::Only(Backend::Software);
+    let (fps_inicial, linhas_inicial) = software(pedido_software);
+    let fps_c = std::cell::Cell::new(fps_inicial);
+    let linhas_c = std::cell::Cell::new(linhas_inicial);
     // Tamanho do vídeo para uma captura w×h (--resolucao, ou o mesmo).
-    let tamanho = |w: u32, h: u32| o.resolucao.map_or((w, h), |alt| scaled_size((w, h), alt));
+    let tamanho = |w: u32, h: u32| linhas_c.get().map_or((w, h), |alt| scaled_size((w, h), alt));
     let (vw, vh) = tamanho(m.width, m.height);
     let mbps = o
         .mbps
-        .unwrap_or(suggested_bitrate_kbps(vw, vh, o.fps) as f64 / 1000.0);
+        .unwrap_or(suggested_bitrate_kbps(vw, vh, fps_c.get()) as f64 / 1000.0);
     let bitrate_bps = (mbps * 1e6).round() as u64;
     let config_para = |w: u32, h: u32, codec| {
         let (vw, vh) = tamanho(w, h);
         EncoderConfig {
             input_size: Some((w, h)),
-            fps: o.fps,
+            fps: fps_c.get(),
             bitrate_kbps: (bitrate_bps / 1000) as u32,
             codec,
             backend: o.encoder,
@@ -612,13 +636,38 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     // Codec: o cliente diz o que decodifica (junto com os pings, a cada
     // 500 ms); usamos o melhor que esta GPU também codifica.
     let do_cliente = tx.wait_client_codecs(Duration::from_millis(1500));
-    let (codec, aberto) = abrir_com_codec(&device, o.codec, do_cliente, |c| {
+    // O encoder por software só faz H.264: nem tenta os outros.
+    let codec_pedido = o
+        .codec
+        .or(pedido_software.then_some(fluxo_encode::VideoCodec::H264));
+    let (codec, aberto) = abrir_com_codec(&device, codec_pedido, do_cliente, |c| {
         config_para(m.width, m.height, c)
     })?;
     for (b, motivo) in &aberto.skipped {
         println!("(pulando {b}: {motivo})");
     }
     let mut enc = aberto.encoder;
+    // Caiu no encoder por software sem ter pedido: reabre com os padrões dele.
+    if enc.backend() == Backend::Software && !pedido_software {
+        let (f, l) = software(true);
+        if (f, l) != (fps_c.get(), linhas_c.get()) {
+            fps_c.set(f);
+            linhas_c.set(l);
+            let cfg = EncoderConfig {
+                backend: BackendChoice::Only(Backend::Software),
+                ..config_para(m.width, m.height, codec)
+            };
+            enc = open_encoder(&device, &cfg)?.encoder;
+        }
+    }
+    if enc.backend() == Backend::Software && (o.fps.is_none() || o.resolucao.is_none()) {
+        println!(
+            "(encoder por software: até {} fps; mude com --fps e --resolucao)",
+            fps_c.get()
+        );
+    }
+    let fps = fps_c.get();
+    let (vw, vh) = tamanho(m.width, m.height);
     // Áudio numa thread própria, pelo mesmo VideoSender (pacotes à parte).
     let tx = std::sync::Arc::new(tx);
     let parar_audio = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -647,7 +696,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         tx.peer_addr(),
         enc.name(),
         mbps,
-        o.fps,
+        fps,
         pacing_mbps,
         match o.fec {
             0 => "desligado".to_string(),
@@ -689,7 +738,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let inicio = Instant::now();
     let mut ultimo_keyframe = inicio;
     let mut proximo_relatorio = Duration::from_secs(1);
-    let mut limite = FpsLimiter::new(o.fps);
+    let mut limite = FpsLimiter::new(fps);
     // Frame que chegou cedo demais: cópia na GPU + momento da captura.
     let mut pendente: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
     let mut pendente_us = 0u32;
@@ -704,7 +753,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     // é recodificada a cada intervalo de frame até a onda terminar.
     let mut onda_ativa = false;
     let mut ultimo_encode = Instant::now();
-    let intervalo_frame = Duration::from_secs_f64(1.0 / o.fps.max(1) as f64);
+    let intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
         // Com um pendente, espera no máximo até o horário dele; sem pendente,
@@ -847,7 +896,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             }
             pendente = None;
             ultima = None;
-            limite = FpsLimiter::new(o.fps);
+            limite = FpsLimiter::new(fps);
             onda_ativa = false;
         }
 
@@ -907,7 +956,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         "  frames: {} ({:.1} fps médio, limite {}), {:.2} Mbps médio; {} capturas adiadas pelo limite",
         total.frames,
         total.frames as f64 / t,
-        o.fps,
+        fps,
         total.bytes as f64 * 8.0 / t / 1e6,
         total.adiadas
     );
@@ -975,6 +1024,16 @@ mod tests {
 #[cfg(test)]
 mod testes_resolucao {
     use super::parse_resolucao;
+
+    #[test]
+    fn software_tem_padroes_mais_baixos_mas_obedece_o_pedido() {
+        use super::limites;
+        let tela_4k = (3840, 2160);
+        assert_eq!(limites(None, None, tela_4k, false), (60, None));
+        assert_eq!(limites(None, None, tela_4k, true), (30, Some(1080)));
+        assert_eq!(limites(None, None, (1920, 1080), true), (30, None));
+        assert_eq!(limites(Some(60), Some(2160), tela_4k, true), (60, Some(2160)));
+    }
 
     #[test]
     fn nomes_e_numeros() {

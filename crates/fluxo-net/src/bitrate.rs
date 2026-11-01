@@ -120,7 +120,7 @@ impl BitrateController {
         let perda = r.loss.unwrap_or(0.0);
         let pode_cair = self
             .last_down
-            .map_or(true, |t| now.duration_since(t) >= ENTRE_QUEDAS);
+            .is_none_or(|t| now.duration_since(t) >= ENTRE_QUEDAS);
 
         let limite = self.queue_limit_ms;
         let queda = if perda >= 0.10 || r.queue_delay_ms >= limite * 2.4 {
@@ -146,12 +146,12 @@ impl BitrateController {
         let folgada = perda < 0.01 && r.queue_delay_ms < limite * 0.4;
         let usando = r
             .sent_kbps
-            .map_or(true, |s| s as f64 >= self.current_kbps as f64 * USO_PARA_SUBIR);
+            .is_none_or(|s| s as f64 >= self.current_kbps as f64 * USO_PARA_SUBIR);
         let calma = now.duration_since(self.last_down.unwrap_or(self.started)) >= CALMA_PARA_SUBIR
             || self.last_down.is_none();
         let pode_subir = self
             .last_up
-            .map_or(true, |t| now.duration_since(t) >= ENTRE_SUBIDAS);
+            .is_none_or(|t| now.duration_since(t) >= ENTRE_SUBIDAS);
         if folgada && usando && calma && pode_subir && self.current_kbps < self.max_kbps {
             self.last_up = Some(now);
             let alvo = (self.current_kbps as f64 * SUBIDA).max(self.current_kbps as f64 + 300.0);

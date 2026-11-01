@@ -23,7 +23,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 license = "MIT"
 
 # Versões de dependências compartilhadas ficam aqui, num lugar só.

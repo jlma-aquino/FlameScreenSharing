@@ -76,6 +76,14 @@ escolhido (`NVENC AV1 (...)`); um codec que a GPU recusar aparece como
 `hevc`, `av1`) força um; se o cliente não o decodifica, o host para e diz o
 que ele decodifica.
 
+## Encoder por software
+
+Sem encoder de hardware (ou com `--encoder software`), o vídeo vai em H.264
+pelo OpenH264 na CPU. Os padrões caem para **30 fps** e no máximo **1080
+linhas** (uma tela 4K vira 1080p), porque uma VM com poucos núcleos não
+acompanha mais que isso; `--fps` e `--resolucao` pedem outros valores. Aqui
+(16 núcleos) o frame 1080p leva ~8 ms, o que daria 60 fps.
+
 ## Resolução e fps
 
 `--resolucao 720p|1080p|1440p|4k|N` transmite em outra resolução que a da

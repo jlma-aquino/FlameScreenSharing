@@ -9,10 +9,12 @@
 //! |---|---|---|
 //! | [`Backend::Nvenc`] (`nvenc`) | NVIDIA | API do driver, menor latência. Padrão em NVIDIA. |
 //! | [`Backend::MediaFoundation`] (`mf`) | NVIDIA, AMD, Intel | Encoder de hardware do fabricante via Windows. |
+//! | [`Backend::Software`] (`software`) | qualquer uma (CPU) | OpenH264, só H.264. Último recurso: VMs, GPUs sem encoder. |
 //!
 //! A escolha é feita por [`BackendChoice`] (`--encoder auto|nvenc|mf` nos
 //! executáveis). Em `auto`, placas NVIDIA usam NVENC e caem para Media
-//! Foundation se ele falhar; as demais usam Media Foundation. Motivo do
+//! Foundation se ele falhar; as demais usam Media Foundation; se nenhum
+//! encoder de hardware funcionar, sobra o OpenH264 na CPU. Motivo do
 //! desenho: ADR-006 em `docs/DECISOES.md`.
 //!
 //! ## Uso
@@ -61,6 +63,8 @@ mod mf;
 mod nvenc;
 #[cfg(windows)]
 mod platform;
+#[cfg(windows)]
+mod software;
 
 #[cfg(windows)]
 pub use platform::{gpu_vendor, open_encoder, probe_backend, Encoder, OpenedEncoder};
@@ -72,17 +76,20 @@ pub enum Backend {
     Nvenc,
     /// Media Foundation do Windows (encoder de hardware de qualquer fabricante).
     MediaFoundation,
+    /// OpenH264 na CPU: funciona em qualquer máquina, só H.264, mais lento.
+    Software,
 }
 
 impl Backend {
     /// Todos os backends, na ordem de preferência.
-    pub const ALL: [Backend; 2] = [Backend::Nvenc, Backend::MediaFoundation];
+    pub const ALL: [Backend; 3] = [Backend::Nvenc, Backend::MediaFoundation, Backend::Software];
 
-    /// Nome curto usado na linha de comando (`nvenc`, `mf`).
+    /// Nome curto usado na linha de comando (`nvenc`, `mf`, `software`).
     pub fn id(self) -> &'static str {
         match self {
             Self::Nvenc => "nvenc",
             Self::MediaFoundation => "mf",
+            Self::Software => "software",
         }
     }
 }
@@ -92,6 +99,7 @@ impl fmt::Display for Backend {
         f.write_str(match self {
             Self::Nvenc => "NVENC",
             Self::MediaFoundation => "Media Foundation",
+            Self::Software => "OpenH264 (software)",
         })
     }
 }
@@ -126,7 +134,10 @@ impl FromStr for BackendChoice {
             "auto" => Ok(Self::Auto),
             "nvenc" => Ok(Self::Only(Backend::Nvenc)),
             "mf" => Ok(Self::Only(Backend::MediaFoundation)),
-            outro => Err(format!("encoder desconhecido '{outro}' (use auto, nvenc ou mf)")),
+            "software" | "cpu" | "openh264" => Ok(Self::Only(Backend::Software)),
+            outro => Err(format!(
+                "encoder desconhecido '{outro}' (use auto, nvenc, mf ou software)"
+            )),
         }
     }
 }
@@ -172,18 +183,20 @@ impl GpuVendor {
 ///
 /// assert_eq!(
 ///     backend_order(BackendChoice::Auto, GpuVendor::Nvidia),
-///     vec![Backend::Nvenc, Backend::MediaFoundation]
+///     vec![Backend::Nvenc, Backend::MediaFoundation, Backend::Software]
 /// );
 /// assert_eq!(
 ///     backend_order(BackendChoice::Auto, GpuVendor::Amd),
-///     vec![Backend::MediaFoundation]
+///     vec![Backend::MediaFoundation, Backend::Software]
 /// );
 /// ```
 pub fn backend_order(choice: BackendChoice, vendor: GpuVendor) -> Vec<Backend> {
     match (choice, vendor) {
         (BackendChoice::Only(b), _) => vec![b],
-        (BackendChoice::Auto, GpuVendor::Nvidia) => vec![Backend::Nvenc, Backend::MediaFoundation],
-        (BackendChoice::Auto, _) => vec![Backend::MediaFoundation],
+        (BackendChoice::Auto, GpuVendor::Nvidia) => {
+            vec![Backend::Nvenc, Backend::MediaFoundation, Backend::Software]
+        }
+        (BackendChoice::Auto, _) => vec![Backend::MediaFoundation, Backend::Software],
     }
 }
 
@@ -412,7 +425,7 @@ mod tests {
 
     #[test]
     fn escolha_volta_ao_mesmo_texto() {
-        for texto in ["auto", "nvenc", "mf"] {
+        for texto in ["auto", "nvenc", "mf", "software"] {
             let c: BackendChoice = texto.parse().unwrap();
             assert_eq!(c.to_string(), texto);
         }
@@ -422,16 +435,16 @@ mod tests {
     fn auto_em_nvidia_tenta_nvenc_depois_mf() {
         assert_eq!(
             backend_order(BackendChoice::Auto, GpuVendor::Nvidia),
-            vec![Backend::Nvenc, Backend::MediaFoundation]
+            vec![Backend::Nvenc, Backend::MediaFoundation, Backend::Software]
         );
     }
 
     #[test]
-    fn auto_fora_da_nvidia_usa_so_mf() {
+    fn auto_fora_da_nvidia_usa_mf_e_depois_software() {
         for v in [GpuVendor::Amd, GpuVendor::Intel, GpuVendor::Other(0x1414)] {
             assert_eq!(
                 backend_order(BackendChoice::Auto, v),
-                vec![Backend::MediaFoundation]
+                vec![Backend::MediaFoundation, Backend::Software]
             );
         }
     }

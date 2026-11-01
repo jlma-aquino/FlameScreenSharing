@@ -7,7 +7,8 @@ use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 
 use crate::{
-    backend_order, mf, nvenc, Backend, BackendChoice, EncodeError, EncodedFrame, EncoderConfig, GpuVendor,
+    backend_order, mf, nvenc, software, Backend, BackendChoice, EncodeError, EncodedFrame, EncoderConfig,
+    GpuVendor,
 };
 
 /// Um encoder H.264 aberto.
@@ -75,17 +76,12 @@ pub fn open_encoder(device: &ID3D11Device, cfg: &EncoderConfig) -> Result<Opened
     for backend in backend_order(cfg.backend, vendor) {
         match probe_backend(device, cfg, backend) {
             Ok(encoder) => return Ok(OpenedEncoder { encoder, skipped }),
+            // Pedido explícito: devolve o erro daquele backend, sem embrulho.
+            Err(e) if matches!(cfg.backend, BackendChoice::Only(_)) => return Err(e),
             Err(e) => skipped.push((backend, e.to_string())),
         }
     }
-    match cfg.backend {
-        // Pedido explícito: devolve o erro daquele backend, sem embrulho.
-        BackendChoice::Only(backend) => Err(EncodeError::BackendUnavailable {
-            backend,
-            reason: skipped.pop().map(|(_, m)| m).unwrap_or_default(),
-        }),
-        BackendChoice::Auto => Err(EncodeError::NoBackend(skipped)),
-    }
+    Err(EncodeError::NoBackend(skipped))
 }
 
 /// Tenta abrir exatamente este backend, ignorando `cfg.backend`.
@@ -100,6 +96,7 @@ pub fn probe_backend(
     Ok(match backend {
         Backend::Nvenc => Box::new(nvenc::NvencEncoder::new(device, cfg)?),
         Backend::MediaFoundation => Box::new(mf::MfEncoder::new(device, cfg)?),
+        Backend::Software => Box::new(software::SoftwareEncoder::new(device, cfg)?),
     })
 }
 

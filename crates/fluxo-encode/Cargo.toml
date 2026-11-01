@@ -1,6 +1,6 @@
 [package]
 name = "fluxo-encode"
-description = "Encoder de vídeo (H.264, HEVC, AV1) por hardware do Fluxo: NVENC e Media Foundation (Windows)."
+description = "Encoder de vídeo do Fluxo (Windows): H.264, HEVC e AV1 por hardware (NVENC, Media Foundation) e H.264 na CPU (OpenH264)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,9 @@ fluxo-proto = { workspace = true }
 # qualquer sistema; os backends só existem no Windows.
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
+# Encoder por software (H.264 da Cisco, compilado do fonte pelo build script).
+openh264 = "0.9"
+openh264-sys2 = "0.9"
 
 # Só para o exemplo da documentação (captura → encode).
 [target.'cfg(windows)'.dev-dependencies]

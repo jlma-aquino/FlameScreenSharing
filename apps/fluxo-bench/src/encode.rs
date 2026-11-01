@@ -101,18 +101,18 @@ pub fn cmd_encoders(o: &Opts) -> Result<(), Box<dyn Error>> {
     for b in Backend::ALL {
         match probe_backend(cap.d3d_device(), &cfg, b) {
             Ok(mut enc) => {
-                println!("  [ok]  {:<6} {}", b.id(), enc.name());
+                println!("  [ok]  {:<8} {}", b.id(), enc.name());
                 // O bitrate adaptativo precisa mudar o bitrate em tempo real.
                 let metade = enc.bitrate_kbps() / 2;
                 match enc.set_bitrate(metade) {
                     Ok(()) => println!(
-                        "               bitrate em tempo real: ok ({} → {metade} kbps)",
+                        "                 bitrate em tempo real: ok ({} → {metade} kbps)",
                         cfg.bitrate_kbps
                     ),
-                    Err(e) => println!("               bitrate em tempo real: NÃO ({e})"),
+                    Err(e) => println!("                 bitrate em tempo real: NÃO ({e})"),
                 }
             }
-            Err(e) => println!("  [--]  {:<6} {e}", b.id()),
+            Err(e) => println!("  [--]  {:<8} {e}", b.id()),
         }
     }
     let aberto = open_encoder(cap.d3d_device(), &cfg)?;

@@ -929,8 +929,8 @@ fn on_cursor(payload: &[u8], socket: &Portas, de: SocketAddr, shared: &Shared) {
                 c.versao += 1;
             }
             // Forma que não temos (alguma parte se perdeu): pede de novo.
-            let falta = shape != 0 && c.forma.as_ref().map_or(true, |(id, _)| *id != shape);
-            let pode = c.ultimo_pedido.map_or(true, |t| t.elapsed() >= PEDIDO_DE_FORMA);
+            let falta = shape != 0 && c.forma.as_ref().is_none_or(|(id, _)| *id != shape);
+            let pode = c.ultimo_pedido.is_none_or(|t| t.elapsed() >= PEDIDO_DE_FORMA);
             if falta && pode {
                 c.ultimo_pedido = Some(Instant::now());
                 drop(c);
