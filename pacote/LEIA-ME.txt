@@ -38,6 +38,15 @@ Importante: quem assiste vê a tela inteira e ouve o som do PC de quem
 compartilha. Feche o que não quiser mostrar antes de começar.
 
 
+MAIS DE UM ESPECTADOR
+---------------------
+Quem compartilha pode adicionar até 4 pessoas: com a transmissão rodando, abra
+"Adicionar espectador", cole o código de conexão da pessoa, clique em Adicionar
+e mande de volta o código de resposta que aparecer, se houver. Cada pessoa precisa
+de cerca de 20 Mbps no upload de quem compartilha (em 1080p60), e uma pessoa com
+rede ruim pode baixar a qualidade de todos.
+
+
 SE NÃO CONECTAR
 ---------------
 - Confira o firewall e o antivírus nos dois PCs.

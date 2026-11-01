@@ -6,6 +6,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Vários espectadores** (ADR-014): até 4 na mesma transmissão, com um encoder
+  só e sem mudar o protocolo. Na janela, "Adicionar espectador"; no terminal do
+  host, `conexao CÓDIGO` ou `destino IP:PORTA CÓDIGO`. O bitrate e o codec seguem
+  o espectador em pior situação; quem fica 15 s calado sai da lista.
+  `VideoSender::silent_for`; `fluxo-bench receber --so-h264`.
 - **Pacote para testes** (`pacotegerar_pacote.ps1`): zip com os três programas e um
   LEIA-ME. O nome visível passa a ser **FlameScreenSharing (FSS)**; por dentro
   continua Fluxo. Na janela, "Copiar detalhes".

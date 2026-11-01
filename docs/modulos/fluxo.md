@@ -55,6 +55,8 @@ derruba a janela. O custo é o texto impresso virar contrato: ao mudar um
 
 ## Limitações conhecidas
 
+- "Adicionar espectador": a lógica e o host estão testados, mas o botão ainda não
+  foi usado com a janela aberta.
 - Parar encerra o programa na hora: o resumo final do host não aparece.
 - As opções não ficam salvas entre uma abertura e outra.
 - Só as opções mais comuns; o resto (`--codec`, `--mbps`, `--fec`…) continua
@@ -78,6 +80,6 @@ com o vídeo já chegando; agora o cliente avisa no primeiro frame.
 cargo test -p fluxo
 ```
 
-16 testes, sem abrir janela: leitura das linhas, montagem dos argumentos,
+18 testes, sem abrir janela: leitura das linhas, montagem dos argumentos,
 mensagens de código errado, e o processo de verdade (entrada e saída por pipe,
 erro, fim, soltar encerra). Telas: só conferindo com a janela aberta.

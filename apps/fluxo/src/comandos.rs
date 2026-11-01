@@ -132,6 +132,27 @@ impl Assistir {
     }
 }
 
+/// Mais um espectador pela internet: a linha para o host, pela entrada padrão.
+pub fn linha_espectador_internet(conexao: &str) -> Result<String, String> {
+    let c = conexao.trim();
+    if c.is_empty() {
+        return Err("Cole o código de conexão de quem vai assistir.".into());
+    }
+    ConnectionCode::parse(c).map_err(|e| format!("Código de conexão: {e}"))?;
+    Ok(format!("conexao {c}"))
+}
+
+/// Mais um espectador na mesma rede: a linha para o host.
+pub fn linha_espectador_rede(destino: &str, codigo: &str) -> Result<String, String> {
+    let d = destino.trim();
+    if d.is_empty() {
+        return Err("Preencha o endereço de quem vai assistir.".into());
+    }
+    let c = codigo.trim();
+    PairingCode::parse(c).map_err(|e| format!("Código: {e}"))?;
+    Ok(format!("destino {} {c}", com_porta(d)))
+}
+
 /// Confere o código de resposta colado e devolve a linha para o cliente.
 pub fn linha_de_resposta(texto: &str) -> Result<String, String> {
     let t = texto.trim();
@@ -205,6 +226,19 @@ mod tests {
         assert!(sem_destino.args().unwrap_err().contains("endereço"));
         assert!(linha_de_resposta("  ").is_err());
         assert!(linha_de_resposta("XXXX").is_err());
+    }
+
+    #[test]
+    fn linhas_para_mais_um_espectador() {
+        let codigo = codigo_valido();
+        assert_eq!(
+            linha_espectador_rede("10.0.0.2", &codigo).unwrap(),
+            format!("destino 10.0.0.2:9000 {codigo}")
+        );
+        assert!(linha_espectador_rede("", &codigo).is_err());
+        assert!(linha_espectador_rede("10.0.0.2", "x").is_err());
+        assert!(linha_espectador_internet(" ").is_err());
+        assert!(linha_espectador_internet("AAAA").is_err());
     }
 
     #[test]

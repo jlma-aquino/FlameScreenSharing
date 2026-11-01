@@ -12,6 +12,14 @@ pub enum Evento {
     Conexao(String),
     /// Host, redes diferentes: código de resposta para mandar de volta.
     Resposta(String),
+    /// Host: resposta para um espectador que entrou depois do primeiro.
+    RespostaDe { numero: u32, codigo: String },
+    /// Host: quantos estão assistindo agora; `numero` acabou de entrar.
+    Conectou { numero: u32, total: usize },
+    /// Host: `numero` saiu ou caiu.
+    Saiu { numero: u32, total: usize },
+    /// Host: não deu para parear com `numero`; o resto segue.
+    NaoConectou { numero: u32, motivo: String },
     /// Host: a transmissão começou.
     Transmitindo,
     /// Cliente: o vídeo chegou (`vídeo em AV1 | decoder: …`).
@@ -32,6 +40,38 @@ pub fn ler(linha: &str) -> Evento {
     }
     if let Some(c) = t.strip_prefix("Código de resposta: ") {
         return Evento::Resposta(c.trim().to_string());
+    }
+    // "Código de resposta (espectador 2): 8D9E-66WU-866"
+    if let Some(resto) = t.strip_prefix("Código de resposta (espectador ") {
+        if let Some((n, c)) = resto.split_once("): ") {
+            if let Ok(numero) = n.parse() {
+                return Evento::RespostaDe {
+                    numero,
+                    codigo: c.trim().to_string(),
+                };
+            }
+        }
+    }
+    // "Espectador 2 conectou (2 no total)", "Espectador 2 saiu (1 no total)",
+    // "Espectador 2 não conectou: motivo"
+    if let Some(resto) = t.strip_prefix("Espectador ") {
+        if let Some((n, depois)) = resto.split_once(' ') {
+            if let Ok(numero) = n.parse() {
+                if let Some(motivo) = depois.strip_prefix("não conectou: ") {
+                    return Evento::NaoConectou {
+                        numero,
+                        motivo: motivo.to_string(),
+                    };
+                }
+                let total = |d: &str| d.split_whitespace().next().and_then(|x| x.parse().ok());
+                if let Some(total) = depois.strip_prefix("conectou (").and_then(total) {
+                    return Evento::Conectou { numero, total };
+                }
+                if let Some(total) = depois.strip_prefix("saiu (").and_then(total) {
+                    return Evento::Saiu { numero, total };
+                }
+            }
+        }
     }
     if let Some(c) = t.strip_prefix("Código de pareamento: ") {
         return Evento::Pareamento {
@@ -159,6 +199,32 @@ mod tests {
         assert_eq!(
             ler("  vídeo em AV1 | decoder: AV1 AV1VideoExtension, acelerado pela GPU (DXVA)"),
             Evento::Recebendo("AV1 | decoder: AV1 AV1VideoExtension, acelerado pela GPU (DXVA)".into())
+        );
+    }
+
+    #[test]
+    fn espectadores_entrando_e_saindo() {
+        assert_eq!(
+            ler("Código de resposta (espectador 2): 8D9E-66WU-866"),
+            Evento::RespostaDe {
+                numero: 2,
+                codigo: "8D9E-66WU-866".into()
+            }
+        );
+        assert_eq!(
+            ler("Espectador 2 conectou (2 no total)"),
+            Evento::Conectou { numero: 2, total: 2 }
+        );
+        assert_eq!(
+            ler("Espectador 1 saiu (1 no total)"),
+            Evento::Saiu { numero: 1, total: 1 }
+        );
+        assert_eq!(
+            ler("Espectador 3 não conectou: tempo esgotado"),
+            Evento::NaoConectou {
+                numero: 3,
+                motivo: "tempo esgotado".into()
+            }
         );
     }
 

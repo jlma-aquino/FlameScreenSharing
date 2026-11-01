@@ -128,5 +128,7 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       em área de trabalho
 - [x] Encoder por software (OpenH264, ADR-013): `--encoder software` e último recurso no automático; só
       H.264, frame 1080p em ~8 ms (8 fatias em paralelo, modo câmera), padrões de 30 fps e até 1080p
+- [x] Vários espectadores (ADR-014): até 4, um encoder só, sem mudar o protocolo. Com 4 na mesma máquina: 0
+      perdidos, todos os frames decodificados, troca de codec no meio; adicionar pela janela ainda sem teste na tela
 - [x] Interface gráfica: `fluxo.exe` (egui) roda o host e o cliente por baixo e mostra os códigos com botão de
       copiar. Transmissão real iniciada pela janela: 60 fps, captura→tela 11,6 ms, 0 perdidos

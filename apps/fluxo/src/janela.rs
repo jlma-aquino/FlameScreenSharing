@@ -8,9 +8,15 @@ use std::time::Duration;
 
 use eframe::egui::{self, Color32, RichText};
 
-use crate::comandos::{linha_de_resposta, Assistir, Compartilhar, FPS, RESOLUCOES};
+use crate::comandos::{
+    linha_de_resposta, linha_espectador_internet, linha_espectador_rede, Assistir, Compartilhar, FPS,
+    RESOLUCOES,
+};
 use crate::processo::{caminho_do_programa, Processo};
 use crate::saida::{ler, Evento};
+
+/// O limite do host (`espectadores.rs`, `MAX_ESPECTADORES`), para o texto da janela.
+const MAX_ESPECTADORES: usize = 4;
 
 /// Linhas guardadas no registro.
 const MAX_REGISTRO: usize = 500;
@@ -32,11 +38,17 @@ struct Sessao {
     conexao: Option<String>,
     /// Host, redes diferentes.
     resposta: Option<String>,
+    /// Host: respostas de quem entrou depois e ainda não conectou.
+    respostas: Vec<(u32, String)>,
+    /// Host: quantos estão assistindo.
+    assistindo: usize,
     transmitindo: bool,
     /// Cliente: o vídeo chegou (codec e decoder).
     recebendo: Option<String>,
     relatorio: Option<String>,
     erro: Option<String>,
+    /// Problema com um espectador que tentou entrar; a transmissão segue.
+    aviso_espectador: Option<String>,
     registro: VecDeque<String>,
     /// `Some(sucesso)` quando o programa terminou.
     fim: Option<bool>,
@@ -50,10 +62,13 @@ impl Sessao {
             destino: None,
             conexao: None,
             resposta: None,
+            respostas: Vec::new(),
+            assistindo: 0,
             transmitindo: false,
             recebendo: None,
             relatorio: None,
             erro: None,
+            aviso_espectador: None,
             registro: VecDeque::new(),
             fim: None,
         }
@@ -69,6 +84,16 @@ impl Sessao {
                 }
                 Evento::Conexao(c) => self.conexao = Some(c),
                 Evento::Resposta(c) => self.resposta = Some(c),
+                Evento::RespostaDe { numero, codigo } => self.respostas.push((numero, codigo)),
+                Evento::Conectou { numero, total } => {
+                    self.assistindo = total;
+                    self.respostas.retain(|(n, _)| *n != numero);
+                }
+                Evento::Saiu { total, .. } => self.assistindo = total,
+                Evento::NaoConectou { numero, motivo } => {
+                    self.respostas.retain(|(n, _)| *n != numero);
+                    self.aviso_espectador = Some(format!("Espectador {numero} não conectou: {motivo}"));
+                }
                 Evento::Transmitindo => self.transmitindo = true,
                 Evento::Recebendo(v) => self.recebendo = Some(v),
                 Evento::Relatorio(r) => self.relatorio = Some(r),
@@ -96,6 +121,10 @@ pub struct Janela {
     /// Problema no formulário (código errado, programa não encontrado).
     aviso: Option<String>,
     resposta_colada: String,
+    /// Mais um espectador: código de conexão, ou endereço + código na mesma rede.
+    novo_conexao: String,
+    novo_destino: String,
+    novo_codigo: String,
 }
 
 impl Janela {
@@ -115,6 +144,9 @@ impl Janela {
             sessao: None,
             aviso: None,
             resposta_colada: String::new(),
+            novo_conexao: String::new(),
+            novo_destino: String::new(),
+            novo_codigo: String::new(),
         }
     }
 
@@ -306,10 +338,71 @@ impl Janela {
                 ui.label("Terminou.");
             }
             (None, None, true, _) => {
-                ui.colored_label(verde, "Transmitindo");
+                let quem = match s.assistindo {
+                    0 => "Transmitindo: ninguém assistindo agora".to_string(),
+                    1 => "Transmitindo para 1 espectador".to_string(),
+                    n => format!("Transmitindo para {n} espectadores"),
+                };
+                ui.colored_label(verde, quem);
                 if let Some(r) = &s.relatorio {
                     ui.small(r);
                 }
+                for (n, c) in &s.respostas {
+                    codigo(
+                        ui,
+                        &format!("Mande este código de resposta para o espectador {n}:"),
+                        c,
+                    );
+                }
+                if let Some(a) = &s.aviso_espectador {
+                    ui.colored_label(Color32::from_rgb(220, 160, 60), a);
+                }
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new("Adicionar espectador").show(ui, |ui| {
+                    ui.small(format!(
+                        "Até {MAX_ESPECTADORES}. Cada um usa mais uma cópia do vídeo no seu upload."
+                    ));
+                    let linha = if self.compartilhar.internet {
+                        ui.label("Código de conexão dele:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.novo_conexao)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("cole aqui"),
+                        );
+                        ui.button("Adicionar")
+                            .clicked()
+                            .then(|| linha_espectador_internet(&self.novo_conexao))
+                    } else {
+                        ui.label("Endereço e código dele:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.novo_destino)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("192.168.0.21:9000"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.novo_codigo)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("XXXX-XXXX"),
+                        );
+                        ui.button("Adicionar")
+                            .clicked()
+                            .then(|| linha_espectador_rede(&self.novo_destino, &self.novo_codigo))
+                    };
+                    if let Some(linha) = linha {
+                        let envio = linha.and_then(|l| {
+                            s.processo
+                                .enviar(&l)
+                                .map_err(|e| format!("Não consegui enviar: {e}"))
+                        });
+                        self.aviso = envio.err();
+                        if self.aviso.is_none() {
+                            s.aviso_espectador = None;
+                            self.novo_conexao.clear();
+                            self.novo_destino.clear();
+                            self.novo_codigo.clear();
+                        }
+                    }
+                });
             }
             (None, None, false, Some(video)) => {
                 ui.colored_label(verde, "Recebendo: o vídeo está na outra janela");

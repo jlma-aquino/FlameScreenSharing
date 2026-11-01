@@ -76,6 +76,28 @@ escolhido (`NVENC AV1 (...)`); um codec que a GPU recusar aparece como
 `hevc`, `av1`) força um; se o cliente não o decodifica, o host para e diz o
 que ele decodifica.
 
+## Vários espectadores
+
+Com o host rodando, mais gente entra pela entrada padrão (é o que o botão
+"Adicionar espectador" da janela faz), até 4 no total:
+
+```text
+conexao CÓDIGO-DE-CONEXÃO
+destino IP:PORTA XXXX-XXXX
+```
+
+Cada um pareia à parte, em sockets próprios. Pela internet, aparece
+`Código de resposta (espectador N): …`. Depois, `Espectador N conectou (M no
+total)` e `Espectador N saiu (M no total)` (15 s sem nenhum pacote dele). Decisão
+e efeitos: ADR-014. Os **Mbps do relatório são de uma cópia**: o upload real é
+isso vezes o número de espectadores.
+
+Medido com 4 `fluxo-bench receber --verificar` na mesma máquina, 34 s: 0 frames
+perdidos, 1563 de 1563 e 1083 de 1083 decodificados nos dois que chegaram ao
+resumo, encode igual (2,2 ms), captura→chegada p50 ~11 ms. Um espectador só com
+H.264 entrando obrigou a troca de AV1 para H.264, sem frame perdido para quem já
+assistia. O quinto foi recusado, e o que caiu saiu da lista.
+
 ## Encoder por software
 
 Sem encoder de hardware (ou com `--encoder software`), o vídeo vai em H.264

@@ -52,6 +52,8 @@ struct Opts {
     fps: u32,
     keyframe_a_cada: f64,
     verificar: bool,
+    /// No receber: anuncia só H.264, como um PC sem as extensões da Store.
+    so_h264: bool,
     porta: u16,
     /// Destino do `enviar` (IP:PORTA).
     destino: Option<String>,
@@ -100,6 +102,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         fps: 60,
         keyframe_a_cada: 5.0,
         verificar: false,
+        so_h264: false,
         porta: 9000,
         destino: None,
         sinal: None,
@@ -127,6 +130,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--saida" => o.saida = Some(valor()?.clone()),
             "--copiar-cpu" => o.copiar_cpu = true,
             "--verificar" => o.verificar = true,
+            "--so-h264" => o.so_h264 = true,
             "--porta" => o.porta = valor()?.parse().map_err(|_| "porta inválida")?,
             "--destino" => o.destino = Some(valor()?.clone()),
             "--sinal" => o.sinal = Some(valor()?.clone()),
@@ -192,6 +196,7 @@ Opções:
   --verificar           no encode, decodifica cada frame com o decoder do
                         Windows, mede o PSNR e salva o último frame em BMP;
                         no receber, confere que todo frame decodifica
+  --so-h264             no receber: anuncia só H.264, como um PC sem as extensões da Store
   --porta P             porta UDP do receber (padrão 9000)
   --destino IP:PORTA    destino do enviar (o PC que roda o receber)
   --sinal SERVIDOR      servidor de sinalização (fluxo-sinal): o receber se registra

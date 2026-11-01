@@ -130,7 +130,10 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             on_pairing: internet
                 .as_ref()
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
-            codecs: codecs_anunciados(),
+            codecs: match o.so_h264 {
+                true => fluxo_net::VideoCodec::H264.bit(),
+                false => codecs_anunciados(),
+            },
             ..ReceiverConfig::default()
         },
     )?;

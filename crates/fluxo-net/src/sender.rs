@@ -374,6 +374,8 @@ pub(crate) struct Shared {
     envio_anterior: Mutex<Option<(Instant, u64)>>,
     /// Estado do cursor, para repetir a posição e reenviar a forma pedida.
     cursor: Mutex<CursorHost>,
+    /// Quando chegou o último pacote do cliente (`None`: ainda nenhum).
+    ultimo_contato: Mutex<Option<Instant>>,
 }
 
 impl Shared {
@@ -546,6 +548,8 @@ impl VideoSender {
             report: Mutex::new(None),
             envio_anterior: Mutex::new(None),
             cursor: Mutex::new(CursorHost::default()),
+            // Pareado é contato; sem cifra, o cliente pode nem ter aberto ainda.
+            ultimo_contato: Mutex::new(cifra.is_some().then(Instant::now)),
         });
         let (queue, jobs) = mpsc::channel();
 
@@ -673,6 +677,17 @@ impl VideoSender {
     /// Muda a taxa de pacing (0 desliga). Vale para os próximos pacotes.
     pub fn set_pacing_bps(&self, bps: u64) {
         self.shared.pacing_bps.store(bps, Ordering::Relaxed);
+    }
+
+    /// Há quanto tempo não chega nada do cliente, que manda pings a cada 500
+    /// ms. `None`: nunca chegou nada (sem cifra, ele pode nem ter aberto).
+    pub fn silent_for(&self) -> Option<Duration> {
+        let contato = self
+            .shared
+            .ultimo_contato
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        contato.map(|t| t.elapsed())
     }
 
     /// Cópia das estatísticas atuais.
@@ -1033,7 +1048,10 @@ fn recv_loop(
             ));
         }
         let n = match socket.recv(&mut buf) {
-            Ok(n) => n,
+            Ok(n) => {
+                *shared.ultimo_contato.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+                n
+            }
             Err(e) if is_transient(&e) => continue,
             Err(_) => {
                 // Erro inesperado: evita girar em falso e tenta de novo.

@@ -17,6 +17,8 @@
 
 // Só o host Windows usa; os testes da lógica de tempo rodam em qualquer sistema.
 #[cfg(any(windows, test))]
+mod espectadores;
+#[cfg(any(windows, test))]
 mod limite;
 
 use std::process::ExitCode;
@@ -79,6 +81,11 @@ Opções:
                         como uma conexão pela internet
   --simular-jitter MS   TESTE: atraso extra sorteado entre 0 e MS a cada 20 ms,
                         em cada sentido (os pacotes saem em rajadas, como no Wi-Fi)
+
+Mais espectadores: com o host rodando, digite no terminal (até 4 no total, e cada
+um é mais uma cópia do vídeo no seu upload):
+  conexao CÓDIGO-DE-CONEXÃO
+  destino IP:PORTA XXXX-XXXX
 
 Para testar sem cliente, rode antes em outro terminal (ou outro PC):
   fluxo-bench receber --porta 9000";
@@ -381,7 +388,7 @@ fn abrir_com_codec(
 fn codificar(
     enc: &mut dyn fluxo_encode::Encoder,
     codec: fluxo_encode::VideoCodec,
-    tx: &fluxo_net::VideoSender,
+    tx: &espectadores::Espectadores,
     textura: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
     capturado_us: u32,
     pedir_keyframe: bool,
@@ -417,10 +424,10 @@ fn codificar(
 }
 
 /// Thread de áudio: captura o que o PC toca, codifica em Opus (quadros de
-/// 10 ms) e manda pelo mesmo `VideoSender`, até `parar`. Devolve o resumo.
+/// 10 ms) e manda a todos os espectadores, até `parar`. Devolve o resumo.
 #[cfg(windows)]
 fn transmitir_audio(
-    tx: &fluxo_net::VideoSender,
+    tx: &espectadores::Espectadores,
     dispositivo: Option<usize>,
     parar: &std::sync::atomic::AtomicBool,
 ) -> Result<String, fluxo_audio::AudioError> {
@@ -516,9 +523,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use fluxo_encode::{
         open_encoder, scaled_size, suggested_bitrate_kbps, Backend, BackendChoice, EncoderConfig,
     };
-    use fluxo_net::{
-        clock_us, BitrateChange, BitrateController, CursorShape, PairingCode, SenderConfig, VideoSender,
-    };
+    use fluxo_net::{clock_us, BitrateController, CursorShape, PairingCode, SenderConfig, VideoSender};
 
     use crate::limite::FpsLimiter;
 
@@ -598,10 +603,17 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .map(|m| (m * 1000.0) as u32)
         .unwrap_or(max_kbps / 8)
         .max(1000);
-    let mut abr = (!o.bitrate_fixo)
-        .then(|| BitrateController::new(min_kbps, max_kbps, Instant::now()).with_queue_limit(o.fila_max));
+    let mut adaptativo = !o.bitrate_fixo;
+    let novo_abr = || BitrateController::new(min_kbps, max_kbps, Instant::now()).with_queue_limit(o.fila_max);
     let pacing_segue_bitrate = o.pacing_mbps.is_none();
     let pacing_mbps = net_cfg.pacing_bps as f64 / 1e6;
+    // Para quem entrar depois: cada um pareia por conta própria, com tempo
+    // para o código de resposta ir e voltar pelo chat.
+    let cfg_novos = SenderConfig {
+        on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
+        pairing_timeout: Duration::from_secs(300),
+        ..net_cfg.clone()
+    };
     let tx = match (servidor, &o.conexao) {
         (Some(s), _) => VideoSender::connect_via_signal(("0.0.0.0", o.porta_local), s, net_cfg)?,
         (None, Some(c)) => {
@@ -640,7 +652,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let codec_pedido = o
         .codec
         .or(pedido_software.then_some(fluxo_encode::VideoCodec::H264));
-    let (codec, aberto) = abrir_com_codec(&device, codec_pedido, do_cliente, |c| {
+    let (mut codec, aberto) = abrir_com_codec(&device, codec_pedido, do_cliente, |c| {
         config_para(m.width, m.height, c)
     })?;
     for (b, motivo) in &aberto.skipped {
@@ -668,8 +680,27 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     }
     let fps = fps_c.get();
     let (vw, vh) = tamanho(m.width, m.height);
-    // Áudio numa thread própria, pelo mesmo VideoSender (pacotes à parte).
-    let tx = std::sync::Arc::new(tx);
+    let (local, destino) = (tx.local_addr(), tx.peer_addr());
+    // Quem assiste. Mais gente pode entrar pela entrada padrão (a janela manda
+    // os códigos por ela), cada um pareando em thread própria.
+    let primeiro = tx;
+    let tx = std::sync::Arc::new(espectadores::Espectadores::default());
+    let quantos = tx.adicionar(
+        1,
+        primeiro,
+        do_cliente.unwrap_or(fluxo_encode::VideoCodec::H264.bit()),
+        adaptativo.then(novo_abr),
+    );
+    println!("Espectador 1 conectou ({quantos} no total)");
+    let ocupados = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1));
+    let (novos_tx, novos) = std::sync::mpsc::channel();
+    {
+        let (ocupados, ttl) = (ocupados.clone(), o.ttl_furo);
+        std::thread::Builder::new()
+            .name("fluxo-pedidos".into())
+            .spawn(move || espectadores::atender_pedidos(cfg_novos, ttl, novos_tx, ocupados))?;
+    }
+    // Áudio numa thread própria, para todos (pacotes à parte).
     let parar_audio = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let audio = match o.sem_audio {
         true => None,
@@ -692,8 +723,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             true => String::new(),
             false => format!(" → {vw}x{vh}"),
         },
-        tx.local_addr(),
-        tx.peer_addr(),
+        local,
+        destino,
         enc.name(),
         mbps,
         fps,
@@ -711,14 +742,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     if tx.stats().encrypted {
         println!("  pareado: só esse cliente recebe, tudo cifrado (ChaCha20-Poly1305)");
     }
-    match &abr {
-        Some(c) => println!(
+    match adaptativo {
+        true => println!(
             "  bitrate adaptativo: entre {:.1} e {:.1} Mbps, fila máxima {} ms",
             min_kbps as f64 / 1000.0,
             max_kbps as f64 / 1000.0,
-            c.queue_limit_ms()
+            o.fila_max
         ),
-        None => println!("  bitrate fixo (--bitrate-fixo)"),
+        false => println!("  bitrate fixo (--bitrate-fixo)"),
     }
     if o.simular_banda > 0.0 {
         println!("  TESTE: simulando um link de {} Mbps", o.simular_banda);
@@ -753,6 +784,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     // é recodificada a cada intervalo de frame até a onda terminar.
     let mut onda_ativa = false;
     let mut ultimo_encode = Instant::now();
+    // Tamanho atual da captura (para reabrir o encoder).
+    let mut captura = (m.width, m.height);
     let intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
@@ -791,42 +824,73 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Relatório do cliente → bitrate adaptativo.
-        if let Some(r) = tx.take_report() {
-            if let Some((kbps, motivo)) = abr.as_mut().and_then(|c| c.on_report(&r, Instant::now())) {
-                match enc.set_bitrate(kbps) {
-                    Ok(()) => {
-                        if pacing_segue_bitrate {
-                            tx.set_pacing_bps(kbps as u64 * 1000 * 5 / 2);
-                        }
-                        seg.mudancas += 1;
-                        if motivo != BitrateChange::Up {
-                            println!(
-                                "  ↓ bitrate {:.1} Mbps ({})",
-                                kbps as f64 / 1000.0,
-                                match motivo {
-                                    BitrateChange::DownLoss =>
-                                        format!("perda {:.1}%", r.loss.unwrap_or(0.0) * 100.0),
-                                    _ => format!("fila {:.0} ms", r.queue_delay_ms),
-                                }
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!(
-                            "(o encoder não aceitou mudar o bitrate: {e}; bitrate fixo daqui em diante)"
-                        );
-                        abr = None;
+        // Quem pareou agora: entra na lista e recebe um keyframe. Se não
+        // decodifica o codec atual, o encoder muda para um que sirva a todos
+        // (quem já assistia troca de decoder sozinho, no keyframe).
+        let mut keyframe_novo = false;
+        while let Ok(n) = novos.try_recv() {
+            let comum = tx.codecs_comuns(n.codecs);
+            if codec_pedido.is_some_and(|c| comum & c.bit() == 0) {
+                println!(
+                    "Espectador {} não conectou: não decodifica o codec pedido",
+                    n.numero
+                );
+                ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                std::thread::spawn(move || drop(n.tx));
+                continue;
+            }
+            if comum & codec.bit() == 0 {
+                let (novo, aberto) = abrir_com_codec(&device, codec_pedido, Some(comum), |c| {
+                    config_para(captura.0, captura.1, c)
+                })?;
+                println!(
+                    "(trocando para {}: nem todos decodificam {})",
+                    novo.name(),
+                    codec.name()
+                );
+                codec = novo;
+                enc = aberto.encoder;
+                onda_ativa = false;
+            }
+            let quantos = tx.adicionar(n.numero, n.tx, n.codecs, adaptativo.then(novo_abr));
+            println!("Espectador {} conectou ({quantos} no total)", n.numero);
+            keyframe_novo = true;
+        }
+        if inicio.elapsed() >= proximo_relatorio {
+            for (numero, quantos) in tx.remover_silenciosos(espectadores::SILENCIO_MAXIMO) {
+                println!("Espectador {numero} saiu ({quantos} no total)");
+                ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+
+        // Relatórios dos clientes → bitrate adaptativo: um encoder só, então
+        // vale o do espectador em pior situação.
+        let queda = tx.processar_relatorios(Instant::now());
+        if let Some(kbps) = tx.alvo_kbps().filter(|k| *k != enc.bitrate_kbps()) {
+            match enc.set_bitrate(kbps) {
+                Ok(()) => {
+                    seg.mudancas += 1;
+                    if let Some(q) = queda {
+                        println!("  ↓ bitrate {:.1} Mbps ({q})", kbps as f64 / 1000.0);
                     }
                 }
+                Err(e) => {
+                    println!("(o encoder não aceitou mudar o bitrate: {e}; bitrate fixo daqui em diante)");
+                    tx.desligar_adaptativo();
+                    adaptativo = false;
+                }
             }
+        }
+        if pacing_segue_bitrate {
+            // Também para quem acabou de entrar.
+            tx.set_pacing_bps(enc.bitrate_kbps() as u64 * 1000 * 5 / 2);
         }
 
         // Recuperação pedida pelo cliente: keyframe se ele precisa de um (sem
         // imagem, decoder falhou) ou se o encoder não tem intra-refresh;
         // senão, uma onda de intra-refresh. O keyframe periódico é a rede de
         // segurança, caso um pedido se perca.
-        let pedido_keyframe = tx.take_keyframe_request();
+        let pedido_keyframe = tx.take_keyframe_request() | keyframe_novo;
         let pedido_refresh = tx.take_refresh_request();
         let onda = pedido_refresh && !pedido_keyframe && enc.start_intra_refresh();
         let pedido = pedido_keyframe || pedido_refresh;
@@ -889,11 +953,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some((w, h)) = recriar {
             println!("(resolução mudou para {w}x{h}; recriando o encoder, que começa com keyframe)");
+            captura = (w, h);
             enc = open_encoder(&device, &config_para(w, h, codec))?.encoder;
-            if let Some(c) = &abr {
-                // O encoder novo nasce no máximo; volta ao bitrate atual.
-                let _ = enc.set_bitrate(c.current_kbps());
-            }
             pendente = None;
             ultima = None;
             limite = FpsLimiter::new(fps);
@@ -903,7 +964,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         if inicio.elapsed() >= proximo_relatorio {
             let s = tx.stats();
             println!(
-                "  {:>4} s: {} fps, {:.1} Mbps (alvo {:.1}), perda {}, fila {:.0} ms, encode {:.1} ms, envio {:.1} ms (fila de envio {}), RTT {}, {} capturas adiadas, {} pedidos de recuperação",
+                "  {:>4} s: {} fps, {:.1} Mbps (alvo {:.1}), perda {}, fila {:.0} ms, encode {:.1} ms, envio {:.1} ms (fila de envio {}), RTT {}, {} capturas adiadas, {} pedidos de recuperação, {} espectadores",
                 proximo_relatorio.as_secs(),
                 seg.frames,
                 seg.bytes as f64 * 8.0 / 1e6,
@@ -919,6 +980,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 },
                 seg.adiadas,
                 seg.pedidos,
+                tx.quantos(),
             );
             total.mudancas += seg.mudancas;
             alvo_min = alvo_min.min(enc.bitrate_kbps());
@@ -949,7 +1011,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         None => "áudio desligado (--sem-audio)".to_string(),
     };
     let s = tx.stats();
-    drop(tx); // espera a fila de envio esvaziar
+    drop(tx); // espera as filas de envio esvaziarem
     let t = inicio.elapsed().as_secs_f64();
     println!("\nResultado");
     println!(
@@ -975,7 +1037,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             n => format!("; {n} pacotes descartados pela perda simulada"),
         }
     );
-    if abr.is_some() {
+    if adaptativo {
         println!(
             "  bitrate adaptativo: {} mudanças, chegou a {:.1} Mbps, terminou em {:.1} Mbps ({} relatórios do cliente)",
             total.mudancas,

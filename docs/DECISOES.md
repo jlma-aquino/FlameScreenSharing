@@ -399,6 +399,34 @@ fps e até 1080 linhas. É o último backend do automático.
 
 ---
 
+## ADR-014 — Vários espectadores: um encoder e um VideoSender por pessoa
+
+**Status:** Aceito (2026-11-01)
+
+**Contexto.** Mais de uma pessoa quer assistir, sem servidor. Abrir um host por
+espectador repete a captura e o encode; um servidor no meio exige alugar um.
+
+**Decisão.** Um encoder só e um `VideoSender` por espectador
+(`apps/fluxo-host/src/espectadores.rs`), cada um com sockets, pareamento, cifra,
+pacing e medição próprios. O protocolo não muda: o cliente nem sabe que há
+outros. Limite de 4. O que é único segue o pior espectador: o bitrate do encoder
+é o menor dos controladores, o codec é um que todos decodificam (se quem entra
+não decodifica o atual, o encoder troca) e um keyframe pedido vai para todos.
+Mais gente entra pela entrada padrão do host, que é por onde a janela manda os
+códigos. Quem fica 15 s calado sai da lista.
+
+**Consequências.**
+- ➕ Na GPU, quase o custo de um espectador; um espectador lento não atrasa o
+  envio dos outros.
+- ➕ Clientes de versões anteriores continuam servindo como espectadores.
+- ➖ O upload é multiplicado pelo número de espectadores.
+- ➖ Um espectador com rede ruim baixa a qualidade de todos, e cada perda dele
+  gera recuperação para todos.
+- 🔁 Se isso incomodar: dois encoders (qualidades diferentes), ou tirar do
+  cálculo quem estiver muito abaixo dos outros.
+
+---
+
 ## Modelo
 
 ```markdown
