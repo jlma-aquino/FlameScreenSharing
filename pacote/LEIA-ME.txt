@@ -1,0 +1,56 @@
+FlameScreenSharing (FSS) - versão de teste
+==========================================
+
+Compartilha a tela (com o som do PC) direto entre dois PCs com Windows 10 ou 11,
+sem servidor e sem criar conta. Os dois precisam usar esta mesma versão.
+
+
+ANTES DE COMEÇAR
+----------------
+1. Extraia o zip INTEIRO para uma pasta. Abrir de dentro do zip não funciona.
+2. Abra o FlameScreenSharing.exe.
+3. O programa não tem assinatura digital, então o Windows pode avisar:
+   - "O Windows protegeu o computador": clique em "Mais informações" e depois
+     em "Executar assim mesmo".
+   - Firewall: permita o acesso, marcando redes privadas e públicas se puder.
+   Só faça isso se você recebeu o arquivo de alguém em quem confia.
+
+
+COMO TESTAR (cada um na sua casa, pela internet)
+------------------------------------------------
+Quem vai ASSISTIR:
+  1. Clique em Assistir > Começar.
+  2. Copie o código de conexão e mande para o outro (Discord, WhatsApp...).
+     Uma janela de vídeo abre e fica esperando; pode deixar aberta.
+
+Quem vai COMPARTILHAR:
+  3. Clique em Compartilhar minha tela e cole o código.
+  4. Clique em Começar. Você tem até 5 minutos para concluir os próximos passos.
+  5. Copie o código de resposta, se aparecer, e mande de volta.
+
+Quem vai ASSISTIR:
+  6. Cole o código de resposta no campo da janela e clique em Enviar.
+
+A imagem aparece na janela de vídeo de quem assiste. Para terminar, clique em
+Parar ou feche a janela.
+
+Importante: quem assiste vê a tela inteira e ouve o som do PC de quem
+compartilha. Feche o que não quiser mostrar antes de começar.
+
+
+SE NÃO CONECTAR
+---------------
+- Confira o firewall e o antivírus nos dois PCs.
+- Tente de novo com códigos novos: clique em Parar e depois em Começar.
+- Algumas redes (internet de celular, certos provedores) bloqueiam a conexão
+  direta. Tente trocando a rede de um dos lados. Ainda não há servidor de
+  apoio para esses casos.
+
+
+PARA AJUDAR NO TESTE
+--------------------
+Mande para quem pediu o teste:
+- O que você fez e o que aconteceu.
+- O texto de "Detalhes" (abra Detalhes > Copiar detalhes). Ele traz endereços
+  de IP da conexão: mande só para essa pessoa.
+- Sua placa de vídeo e como ficou a imagem e o som.

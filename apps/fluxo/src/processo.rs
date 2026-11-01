@@ -20,20 +20,22 @@ pub struct Processo {
     linhas: Receiver<String>,
 }
 
-/// Caminho de um programa do Fluxo: na mesma pasta deste executável.
+/// Caminho de um programa (`host` ou `client`): na mesma pasta deste
+/// executável, com o nome do pacote (`FSS-host.exe`) ou o da compilação
+/// (`fluxo-host.exe`).
 pub fn caminho_do_programa(nome: &str) -> io::Result<PathBuf> {
     let eu = std::env::current_exe()?;
     let pasta = eu
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "pasta do programa"))?;
-    let caminho = pasta.join(format!("{nome}.exe"));
-    if !caminho.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("{} não encontrado", caminho.display()),
-        ));
-    }
-    Ok(caminho)
+    ["FSS", "fluxo"]
+        .iter()
+        .map(|prefixo| pasta.join(format!("{prefixo}-{nome}.exe")))
+        .find(|caminho| caminho.exists())
+        .ok_or_else(|| {
+            let falta = format!("falta FSS-{nome}.exe nesta pasta. Extraia o zip inteiro antes de abrir");
+            io::Error::new(io::ErrorKind::NotFound, falta)
+        })
 }
 
 impl Processo {

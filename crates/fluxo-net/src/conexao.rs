@@ -185,11 +185,18 @@ fn escrever(f: &mut fmt::Formatter<'_>, mut v: Vec<u8>) -> fmt::Result {
     Ok(())
 }
 
+/// O que pode vir no meio de um código colado de um chat e não é símbolo:
+/// espaços, hifens (também os tipográficos) e caracteres invisíveis.
+fn e_separador(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(c, '-' | '\u{2010}'..='\u{2015}' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}')
+}
+
 /// Símbolos (0..31) do que foi digitado, com a conferência verificada e
 /// removida. `tamanhos`: as quantidades aceitas (com a conferência).
 fn simbolos(texto: &str, tamanhos: &[usize]) -> Result<Vec<u8>, CodeError> {
     let mut v = Vec::new();
-    for c in texto.chars().filter(|c| !matches!(c, '-' | ' ')) {
+    for c in texto.chars().filter(|c| !e_separador(*c)) {
         let maiuscula = c.to_ascii_uppercase();
         let s = ALFABETO
             .iter()
@@ -293,6 +300,14 @@ mod tests {
             open: true,
             ..exemplo()
         }
+    }
+
+    #[test]
+    fn codigo_colado_de_um_chat_com_invisiveis() {
+        let a = SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 7), 41000);
+        let r = ReplyCode { addr: a, addr6: None };
+        let sujo = format!("\u{FEFF}{}\u{200B} \r\n", r.to_string().replace('-', "\u{2011}"));
+        assert_eq!(ReplyCode::parse(&sujo).unwrap(), r);
     }
 
     #[test]

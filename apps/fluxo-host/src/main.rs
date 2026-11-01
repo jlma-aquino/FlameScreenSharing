@@ -608,7 +608,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             // Os endereços públicos valem só para estes sockets: os mesmos levam o vídeo.
             let internet = fluxo_net::Internet::open(o.porta_local, false)?;
             println!("\nCódigo de resposta: {}", internet.reply_code(c)?);
-            println!("  Mande para quem vai assistir: ele cola no terminal do fluxo-client.");
+            println!("  Mande para quem vai assistir: ele cola no campo de resposta (ou no terminal do fluxo-client).");
             println!("  Esperando até 5 min…");
             for linha in internet.summary() {
                 println!("  {linha}");

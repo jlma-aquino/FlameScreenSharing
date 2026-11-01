@@ -6,6 +6,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Pacote para testes** (`pacotegerar_pacote.ps1`): zip com os três programas e um
+  LEIA-ME. O nome visível passa a ser **FlameScreenSharing (FSS)**; por dentro
+  continua Fluxo. Na janela, "Copiar detalhes".
+- Códigos de conexão e de resposta aceitam hifens tipográficos e caracteres
+  invisíveis, que podem vir ao colar de um chat.
 - **A janela `fluxo.exe`** (fase 6, egui): compartilhar ou assistir sem
   terminal. Roda o `fluxo-host` e o `fluxo-client` da mesma pasta, sem console,
   mostra os códigos com botão de copiar, confere o que foi colado e manda o

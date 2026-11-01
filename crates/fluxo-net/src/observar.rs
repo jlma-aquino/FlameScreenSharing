@@ -114,11 +114,11 @@ pub(crate) fn kind_of(datagrama: &[u8]) -> &'static str {
             PacketKind::PairInit => "pedido de pareamento",
             PacketKind::PairReply => "resposta de pareamento",
             PacketKind::Signal => "sinalização",
-            _ if h.is_encrypted() => "pacote cifrado do Fluxo",
-            _ => "pacote do Fluxo em claro",
+            _ if h.is_encrypted() => "pacote cifrado do FSS",
+            _ => "pacote do FSS em claro",
         },
-        Err(ProtoError::UnsupportedVersion(_)) => "pacote do Fluxo de outra versão",
-        Err(_) => "lixo (não é do Fluxo)",
+        Err(ProtoError::UnsupportedVersion(_)) => "pacote do FSS de outra versão",
+        Err(_) => "lixo (não é do FSS)",
     }
 }
 
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(kind_of(&fluxo_proto::stun::binding_request(&[0; 12])), STUN);
         let mut velho = furo.clone();
         velho[2] = 1;
-        assert_eq!(kind_of(&velho), "pacote do Fluxo de outra versão");
-        assert_eq!(kind_of(b"oi"), "lixo (não é do Fluxo)");
+        assert_eq!(kind_of(&velho), "pacote do FSS de outra versão");
+        assert_eq!(kind_of(b"oi"), "lixo (não é do FSS)");
     }
 }

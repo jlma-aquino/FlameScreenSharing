@@ -129,14 +129,14 @@ impl Janela {
                 self.aviso = None;
                 self.resposta_colada.clear();
             }
-            Err(e) => self.aviso = Some(format!("Não consegui abrir o {programa}: {e}")),
+            Err(e) => self.aviso = Some(format!("Não consegui abrir o programa: {e}")),
         }
     }
 
     fn tela_inicio(&mut self, ui: &mut egui::Ui) {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
-            ui.heading(RichText::new("Fluxo").size(32.0));
+            ui.heading(RichText::new(crate::NOME).size(32.0));
             ui.label("Compartilhe a tela direto entre dois PCs, sem servidor.");
             ui.add_space(24.0);
             let tamanho = egui::vec2(280.0, 56.0);
@@ -224,7 +224,7 @@ impl Janela {
         ui.add_space(12.0);
         if ui.button(RichText::new("Começar").size(16.0)).clicked() {
             match self.compartilhar.args() {
-                Ok(args) => self.iniciar(ctx, "fluxo-host", args),
+                Ok(args) => self.iniciar(ctx, "host", args),
                 Err(e) => self.aviso = Some(e),
             }
         }
@@ -244,7 +244,7 @@ impl Janela {
         ui.add_space(12.0);
         if ui.button(RichText::new("Começar").size(16.0)).clicked() {
             let args = self.assistir.args();
-            self.iniciar(ctx, "fluxo-client", args);
+            self.iniciar(ctx, "client", args);
         }
     }
 
@@ -325,6 +325,13 @@ impl Janela {
 
         ui.add_space(8.0);
         egui::CollapsingHeader::new("Detalhes").show(ui, |ui| {
+            if ui.small_button("Copiar detalhes").clicked() {
+                let texto: Vec<&str> = s.registro.iter().map(String::as_str).collect();
+                ui.ctx().copy_text(texto.join(
+                    "
+",
+                ));
+            }
             egui::ScrollArea::vertical()
                 .max_height(160.0)
                 .stick_to_bottom(true)

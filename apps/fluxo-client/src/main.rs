@@ -232,16 +232,16 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 false => println!("Depois cole aqui o código de resposta que ele mandar de volta:"),
             }
             ler_respostas(rx.puncher());
-            format!("Fluxo — código de conexão {cc} · cole a resposta do host")
+            format!("FSS — código de conexão {cc} · cole a resposta do host")
         }
         (Some(c), None) => {
             println!("Código de pareamento: {c}");
             println!("No PC que compartilha:  fluxo-host {endereco} --codigo {c}");
-            format!("Fluxo — código {c} · aguardando o host ({endereco})")
+            format!("FSS — código {c} · aguardando o host ({endereco})")
         }
         (None, None) => {
             println!("TESTE: sem pareamento nem cifra (--sem-cifra)");
-            format!("Fluxo — aguardando o host ({endereco}, sem cifra)")
+            format!("FSS — aguardando o host ({endereco}, sem cifra)")
         }
     };
     let mut janela = Window::new(&espera, o.largura, o.altura, o.no_topo)?;

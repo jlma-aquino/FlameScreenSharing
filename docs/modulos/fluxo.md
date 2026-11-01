@@ -20,7 +20,22 @@ Pela internet (redes diferentes), sem servidor:
 
 Na mesma rede é igual, com endereço + código no lugar do código de conexão.
 
-## Arquivos
+## Nome e pacote para testes
+
+Para quem usa, o programa se chama **FlameScreenSharing (FSS)**: janela, títulos e
+descrição da porta no roteador (`NOME` em `src/main.rs`). Por dentro (crates,
+comandos, documentação) continua Fluxo.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File pacotegerar_pacote.ps1
+```
+
+Gera `distlamescreensharing.zip` com `flamescreensharing.exe`, `fss-host.exe`,
+`fss-client.exe` e o `leia-me.txt`, com o runtime do c++ embutido (o outro pc não
+precisa do visual c++ redistributable). não tem assinatura digital: o windows avisa
+ao abrir.
+
+## arquivos
 
 | Arquivo | Conteúdo |
 |---|---|

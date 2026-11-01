@@ -137,7 +137,7 @@ impl Gateway {
             "<NewRemoteHost></NewRemoteHost><NewExternalPort>{externa}</NewExternalPort>\
              <NewProtocol>UDP</NewProtocol><NewInternalPort>{}</NewInternalPort>\
              <NewInternalClient>{}</NewInternalClient><NewEnabled>1</NewEnabled>\
-             <NewPortMappingDescription>Fluxo</NewPortMappingDescription>\
+             <NewPortMappingDescription>FlameScreenSharing</NewPortMappingDescription>\
              <NewLeaseDuration>{}</NewLeaseDuration>",
             interno.port(),
             interno.ip(),
