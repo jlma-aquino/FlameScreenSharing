@@ -9,6 +9,7 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 
 ```text
 fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
+           [--codec auto|h264|hevc|av1]
 fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S] [--refresh N] [--fec K]
            [--segundos S] [--porta-local P] [--sem-cifra]
@@ -64,6 +65,16 @@ Na primeira execução do `fluxo-bench receber` (ou de qualquer programa que
 escute numa porta), o Windows pode perguntar se libera o acesso à rede. Para
 receber de **outro PC** é preciso permitir em "Redes privadas". Na mesma
 máquina (127.0.0.1) funciona mesmo sem permitir.
+
+## Codec
+
+O encoder só abre depois do pareamento: o cliente diz que codecs
+decodifica (junto com os pings) e o host usa o melhor que a GPU também
+codifica, na ordem AV1, HEVC, H.264 (ADR-012). A linha do encoder mostra o
+escolhido (`NVENC AV1 (...)`); um codec que a GPU recusar aparece como
+`(sem AV1 nesta GPU: ...)` antes de tentar o próximo. `--codec h264` (ou
+`hevc`, `av1`) força um; se o cliente não o decodifica, o host para e diz o
+que ele decodifica.
 
 ## Lendo a saída (a cada segundo)
 

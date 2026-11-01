@@ -3,7 +3,7 @@
 //! Lado de quem compartilha a tela: captura → encode → rede.
 //!
 //! ```text
-//! fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
+//! fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf] [--codec auto|h264|hevc|av1]
 //!            [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S]
 //!            [--segundos S] [--porta-local P]
 //! ```
@@ -46,6 +46,8 @@ Opções:
   --audio-dispositivo N captura o som da saída N (padrão: a saída padrão do Windows;
                         a lista aparece em fluxo-bench audio)
   --encoder E           auto, nvenc ou mf (padrão auto)
+  --codec C             auto, h264, hevc ou av1 (padrão auto: o melhor que a GPU
+                        codifica e o cliente decodifica, na ordem AV1, HEVC, H.264)
   --mbps M              bitrate máximo do vídeo (padrão 20). O bitrate adaptativo
                         começa em até 20 Mbps, sobe até este valor se a rede
                         deixar e desce quando ela reclama
@@ -90,6 +92,8 @@ struct Opts {
     ttl_furo: u32,
     monitor: usize,
     encoder: fluxo_encode::BackendChoice,
+    /// Codec pedido (`None`: o melhor que os dois lados suportam).
+    codec: Option<fluxo_encode::VideoCodec>,
     mbps: f64,
     fps: u32,
     pacing_mbps: Option<f64>,
@@ -119,6 +123,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         audio_dispositivo: None,
         monitor: 0,
         encoder: Default::default(),
+        codec: None,
         mbps: 20.0,
         fps: 60,
         pacing_mbps: None,
@@ -154,6 +159,12 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             }
             "--monitor" => o.monitor = valor()?.parse().map_err(|_| "monitor inválido")?,
             "--encoder" => o.encoder = valor()?.parse()?,
+            "--codec" => {
+                o.codec = match valor()?.as_str() {
+                    "auto" => None,
+                    c => Some(c.parse()?),
+                }
+            }
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
             "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
             "--pacing-mbps" => o.pacing_mbps = Some(valor()?.parse().map_err(|_| "pacing-mbps inválido")?),
@@ -265,11 +276,69 @@ struct Contadores {
     mudancas: u64,
 }
 
+/// Codecs a tentar, na ordem: o `pedido` (se o cliente decodifica) ou, em
+/// automático, todos os que o cliente decodifica, do melhor ao mais
+/// compatível. `cliente`: máscara recebida; `None` = só H.264.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn codecs_candidatos(
+    pedido: Option<fluxo_encode::VideoCodec>,
+    cliente: Option<u8>,
+) -> Result<Vec<fluxo_encode::VideoCodec>, String> {
+    use fluxo_encode::VideoCodec;
+
+    let mascara = cliente.unwrap_or(VideoCodec::H264.bit());
+    let decodifica = |c: VideoCodec| mascara & c.bit() != 0;
+    match pedido {
+        Some(c) if decodifica(c) => Ok(vec![c]),
+        Some(c) => {
+            let tem: Vec<&str> = VideoCodec::PREFERENCE
+                .into_iter()
+                .filter(|&c| decodifica(c))
+                .map(VideoCodec::name)
+                .collect();
+            Err(format!(
+                "o cliente não decodifica {} (decodifica: {}); use --codec auto",
+                c.name(),
+                tem.join(", ")
+            ))
+        }
+        None => Ok(VideoCodec::PREFERENCE
+            .into_iter()
+            .filter(|&c| decodifica(c))
+            .collect()),
+    }
+}
+
+/// Abre o encoder com o primeiro codec de [`codecs_candidatos`] que esta
+/// GPU codifica.
+#[cfg(windows)]
+fn abrir_com_codec(
+    device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
+    pedido: Option<fluxo_encode::VideoCodec>,
+    cliente: Option<u8>,
+    config: impl Fn(fluxo_encode::VideoCodec) -> fluxo_encode::EncoderConfig,
+) -> Result<(fluxo_encode::VideoCodec, fluxo_encode::OpenedEncoder), Box<dyn std::error::Error>> {
+    let candidatos = codecs_candidatos(pedido, cliente)?;
+    if cliente.is_none() {
+        println!("(o cliente não disse que codecs decodifica; usando H.264)");
+    }
+    let ultimo = candidatos.len() - 1;
+    for (i, codec) in candidatos.into_iter().enumerate() {
+        match fluxo_encode::open_encoder(device, &config(codec)) {
+            Ok(aberto) => return Ok((codec, aberto)),
+            Err(e) if i < ultimo => println!("(sem {} nesta GPU: {e})", codec.name()),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    unreachable!("a lista nunca é vazia (o cliente sempre decodifica H.264) e o último devolve")
+}
+
 /// Codifica `textura` e enfileira o resultado na rede. Devolve o tamanho
 /// novo se a resolução mudou (o encoder precisa ser recriado).
 #[cfg(windows)]
 fn codificar(
     enc: &mut dyn fluxo_encode::Encoder,
+    codec: fluxo_encode::VideoCodec,
     tx: &fluxo_net::VideoSender,
     textura: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
     capturado_us: u32,
@@ -299,7 +368,7 @@ fn codificar(
         ]
         .iter()
         .filter(|(sim, _)| *sim)
-        .fold(0, |f, (_, bit)| f | bit);
+        .fold(codec.flags(), |f, (_, bit)| f | bit);
         tx.send_frame_with_flags(p.data, flags, capturado_us)?;
     }
     Ok(None)
@@ -415,19 +484,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let device = cap.d3d_device().clone();
     let context = cap.d3d_context().clone();
     let bitrate_bps = (o.mbps * 1e6).round() as u64;
-    let config_para = |w: u32, h: u32| EncoderConfig {
+    let config_para = |w: u32, h: u32, codec| EncoderConfig {
         fps: o.fps,
         bitrate_kbps: (bitrate_bps / 1000) as u32,
+        codec,
         backend: o.encoder,
         intra_refresh_frames: o.refresh,
         ..EncoderConfig::new(w, h)
     };
     let m = cap.monitor().clone();
-    let aberto = open_encoder(&device, &config_para(m.width, m.height))?;
-    for (b, motivo) in &aberto.skipped {
-        println!("(pulando {b}: {motivo})");
-    }
-    let mut enc = aberto.encoder;
 
     let net_cfg = SenderConfig {
         pacing_bps: o
@@ -505,6 +570,17 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         }
         (None, None) => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,
     };
+
+    // Codec: o cliente diz o que decodifica (junto com os pings, a cada
+    // 500 ms); usamos o melhor que esta GPU também codifica.
+    let do_cliente = tx.wait_client_codecs(Duration::from_millis(1500));
+    let (codec, aberto) = abrir_com_codec(&device, o.codec, do_cliente, |c| {
+        config_para(m.width, m.height, c)
+    })?;
+    for (b, motivo) in &aberto.skipped {
+        println!("(pulando {b}: {motivo})");
+    }
+    let mut enc = aberto.encoder;
     // Áudio numa thread própria, pelo mesmo VideoSender (pacotes à parte).
     let tx = std::sync::Arc::new(tx);
     let parar_audio = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -675,6 +751,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             if limite.on_frame(Instant::now()) {
                 recriar = codificar(
                     &mut *enc,
+                    codec,
                     &tx,
                     frame.texture(),
                     capturado_us,
@@ -692,7 +769,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         }
         if recriar.is_none() && limite.on_tick(Instant::now()) {
             if let Some(t) = &pendente {
-                recriar = codificar(&mut *enc, &tx, t, pendente_us, pedir_keyframe, &mut seg)?;
+                recriar = codificar(&mut *enc, codec, &tx, t, pendente_us, pedir_keyframe, &mut seg)?;
                 pedir_keyframe = false;
                 guardar_copia(&device, &context, t, &mut ultima)?;
             }
@@ -703,7 +780,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         let continuar_onda = onda_ativa && ultimo_encode.elapsed() >= intervalo_frame;
         if seg.frames == frames_antes && recriar.is_none() && (pedido || continuar_onda) {
             if let Some(t) = &ultima {
-                recriar = codificar(&mut *enc, &tx, t, clock_us(), pedir_keyframe, &mut seg)?;
+                recriar = codificar(&mut *enc, codec, &tx, t, clock_us(), pedir_keyframe, &mut seg)?;
             }
         }
         if seg.frames != frames_antes {
@@ -721,7 +798,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some((w, h)) = recriar {
             println!("(resolução mudou para {w}x{h}; recriando o encoder, que começa com keyframe)");
-            enc = open_encoder(&device, &config_para(w, h))?.encoder;
+            enc = open_encoder(&device, &config_para(w, h, codec))?.encoder;
             if let Some(c) = &abr {
                 // O encoder novo nasce no máximo; volta ao bitrate atual.
                 let _ = enc.set_bitrate(c.current_kbps());
@@ -822,4 +899,33 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("  {resumo_audio}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::codecs_candidatos;
+    use fluxo_encode::VideoCodec::{Av1, Hevc, H264};
+
+    #[test]
+    fn automatico_tenta_do_melhor_ao_mais_compativel() {
+        let todos = H264.bit() | Hevc.bit() | Av1.bit();
+        assert_eq!(codecs_candidatos(None, Some(todos)), Ok(vec![Av1, Hevc, H264]));
+        assert_eq!(
+            codecs_candidatos(None, Some(H264.bit() | Av1.bit())),
+            Ok(vec![Av1, H264])
+        );
+    }
+
+    #[test]
+    fn sem_noticia_do_cliente_so_h264() {
+        assert_eq!(codecs_candidatos(None, None), Ok(vec![H264]));
+        assert!(codecs_candidatos(Some(Av1), None).is_err());
+    }
+
+    #[test]
+    fn pedido_que_o_cliente_nao_decodifica_explica_o_que_ele_tem() {
+        let e = codecs_candidatos(Some(Hevc), Some(H264.bit() | Av1.bit())).unwrap_err();
+        assert!(e.contains("HEVC") && e.contains("AV1, H.264"), "{e}");
+        assert_eq!(codecs_candidatos(Some(Av1), Some(Av1.bit() | 1)), Ok(vec![Av1]));
+    }
 }

@@ -10,13 +10,15 @@
 //!                               nvEncEncodePicture (síncrono)
 //!                                     │ nvEncLockBitstream
 //!                                     ▼
-//!                               bytes H.264 ─► EncodedFrame
+//!                               bytes H.264/HEVC/AV1 ─► EncodedFrame
 //! ```
 //!
 //! ## Configuração (otimizada para streaming de baixa latência)
 //!
 //! - Preset P4 com *tuning* "ultra low latency" (equilíbrio qualidade/tempo).
-//! - Perfil High, sem B-frames (`frameIntervalP = 1`).
+//! - Perfil High (H.264) ou Main (HEVC, AV1), sem B-frames (`frameIntervalP = 1`).
+//! - Os ajustes abaixo são os mesmos nos três codecs; só muda onde cada um
+//!   fica na config (`campos`).
 //! - Intra-refresh opcional (`EncoderConfig::intra_refresh_frames`): ondas
 //!   pedidas por `start_intra_refresh` redesenham a imagem em faixas ao
 //!   longo de N frames, em vez de um keyframe inteiro.
@@ -24,7 +26,8 @@
 //!   keyframe repete SPS/PPS.
 //! - CBR com VBV de **um frame** (`bitrate / fps`): nenhum frame fica muito
 //!   maior que a média, então nenhum demora a mais para atravessar a rede.
-//! - VUI sinaliza BT.709 faixa limitada, igual à conversão em `convert.rs`.
+//! - Cor BT.709 faixa limitada (VUI; no AV1, campos próprios), igual à
+//!   conversão em `convert.rs`.
 
 mod api;
 // Gerado por nvenc/gerar_layout.ps1; fica como o gerador escreveu.
@@ -41,7 +44,7 @@ use self::api::{Api, Blob};
 use self::layout::*;
 use crate::convert::Nv12Converter;
 use crate::platform::{adapter_info, check_size, Encoder};
-use crate::{Backend, EncodeError, EncodedFrame, EncoderConfig};
+use crate::{Backend, EncodeError, EncodedFrame, EncoderConfig, VideoCodec};
 
 /// Preset de qualidade: P1 (mais rápido) … P7 (melhor qualidade).
 const PRESET: GUID = PRESET_P4_GUID;
@@ -50,6 +53,113 @@ const PRESET_NAME: &str = "P4";
 /// Período do intra-refresh automático: ~4,6 h a 60 fps, ou seja, nunca.
 /// Só usamos as ondas pedidas por `start_intra_refresh`.
 const INTRA_REFRESH_PERIOD_NUNCA: u32 = 1_000_000;
+
+/// Onde cada codec guarda os mesmos ajustes: a config específica do codec é
+/// uma union, e cada membro tem os campos numa posição diferente.
+struct Campos {
+    guid: GUID,
+    perfil: GUID,
+    idr_period: usize,
+    /// Repetir os parâmetros (SPS/PPS, cabeçalho de sequência do AV1) em
+    /// cada keyframe.
+    repetir_cabecalho: Bit,
+    intra_refresh: Bit,
+    /// SEI de ponto de recuperação (H.264/HEVC; o AV1 não tem).
+    recovery_sei: Option<Bit>,
+    refresh_period: usize,
+    refresh_cnt: usize,
+    max_ref_frames: usize,
+    num_ref: usize,
+    cor: Cor,
+    pp_force_refresh: usize,
+}
+
+/// Sinalização de cor: VUI no H.264/HEVC, campos próprios no AV1.
+enum Cor {
+    Vui {
+        signal_type_present: usize,
+        video_format: usize,
+        full_range: usize,
+        colour_desc_present: usize,
+        primaries: usize,
+        transfer: usize,
+        matrix: usize,
+    },
+    Av1 {
+        primaries: usize,
+        transfer: usize,
+        matrix: usize,
+        range: usize,
+    },
+}
+
+fn campos(codec: VideoCodec) -> Campos {
+    match codec {
+        VideoCodec::H264 => Campos {
+            guid: CODEC_H264_GUID,
+            perfil: H264_PROFILE_HIGH_GUID,
+            idr_period: CFG_H264_IDR_PERIOD,
+            repetir_cabecalho: CFG_H264_REPEAT_SPSPPS,
+            intra_refresh: CFG_H264_ENABLE_INTRA_REFRESH,
+            recovery_sei: Some(CFG_H264_RECOVERY_POINT_SEI),
+            refresh_period: CFG_H264_INTRA_REFRESH_PERIOD,
+            refresh_cnt: CFG_H264_INTRA_REFRESH_CNT,
+            max_ref_frames: CFG_H264_MAX_NUM_REF_FRAMES,
+            num_ref: CFG_H264_NUM_REF_L0,
+            cor: Cor::Vui {
+                signal_type_present: CFG_H264_VUI_SIGNAL_TYPE_PRESENT,
+                video_format: CFG_H264_VUI_VIDEO_FORMAT,
+                full_range: CFG_H264_VUI_FULL_RANGE,
+                colour_desc_present: CFG_H264_VUI_COLOUR_DESC_PRESENT,
+                primaries: CFG_H264_VUI_COLOUR_PRIMARIES,
+                transfer: CFG_H264_VUI_TRANSFER,
+                matrix: CFG_H264_VUI_COLOUR_MATRIX,
+            },
+            pp_force_refresh: PP_H264_FORCE_INTRA_REFRESH,
+        },
+        VideoCodec::Hevc => Campos {
+            guid: CODEC_HEVC_GUID,
+            perfil: HEVC_PROFILE_MAIN_GUID,
+            idr_period: CFG_HEVC_IDR_PERIOD,
+            repetir_cabecalho: CFG_HEVC_REPEAT_SPSPPS,
+            intra_refresh: CFG_HEVC_ENABLE_INTRA_REFRESH,
+            recovery_sei: Some(CFG_HEVC_RECOVERY_POINT_SEI),
+            refresh_period: CFG_HEVC_INTRA_REFRESH_PERIOD,
+            refresh_cnt: CFG_HEVC_INTRA_REFRESH_CNT,
+            max_ref_frames: CFG_HEVC_MAX_NUM_REF_FRAMES,
+            num_ref: CFG_HEVC_NUM_REF_L0,
+            cor: Cor::Vui {
+                signal_type_present: CFG_HEVC_VUI_SIGNAL_TYPE_PRESENT,
+                video_format: CFG_HEVC_VUI_VIDEO_FORMAT,
+                full_range: CFG_HEVC_VUI_FULL_RANGE,
+                colour_desc_present: CFG_HEVC_VUI_COLOUR_DESC_PRESENT,
+                primaries: CFG_HEVC_VUI_COLOUR_PRIMARIES,
+                transfer: CFG_HEVC_VUI_TRANSFER,
+                matrix: CFG_HEVC_VUI_COLOUR_MATRIX,
+            },
+            pp_force_refresh: PP_HEVC_FORCE_INTRA_REFRESH,
+        },
+        VideoCodec::Av1 => Campos {
+            guid: CODEC_AV1_GUID,
+            perfil: AV1_PROFILE_MAIN_GUID,
+            idr_period: CFG_AV1_IDR_PERIOD,
+            repetir_cabecalho: CFG_AV1_REPEAT_SEQ_HDR,
+            intra_refresh: CFG_AV1_ENABLE_INTRA_REFRESH,
+            recovery_sei: None,
+            refresh_period: CFG_AV1_INTRA_REFRESH_PERIOD,
+            refresh_cnt: CFG_AV1_INTRA_REFRESH_CNT,
+            max_ref_frames: CFG_AV1_MAX_NUM_REF_FRAMES,
+            num_ref: CFG_AV1_NUM_FWD_REFS,
+            cor: Cor::Av1 {
+                primaries: CFG_AV1_COLOR_PRIMARIES,
+                transfer: CFG_AV1_TRANSFER,
+                matrix: CFG_AV1_MATRIX,
+                range: CFG_AV1_COLOR_RANGE,
+            },
+            pp_force_refresh: PP_AV1_FORCE_INTRA_REFRESH,
+        },
+    }
+}
 
 pub(crate) struct NvencEncoder {
     api: Api,
@@ -72,6 +182,8 @@ pub(crate) struct NvencEncoder {
     refresh_pending: bool,
     /// Índice do primeiro frame da onda em andamento.
     onda: Option<u64>,
+    /// Posição do `forceIntraRefreshWithFrameCnt` do codec nos parâmetros do frame.
+    pp_force_refresh: usize,
     name: String,
     /// Configuração e parâmetros de inicialização, guardados para mudar o
     /// bitrate depois (`nvEncReconfigureEncoder` recebe os dois de novo).
@@ -105,8 +217,10 @@ impl NvencEncoder {
             refresh_frames: 0,
             refresh_pending: false,
             onda: None,
+            pp_force_refresh: campos(cfg.codec).pp_force_refresh,
             name: format!(
-                "NVENC ({}), preset {PRESET_NAME}, ultra baixa latência",
+                "NVENC {} ({}), preset {PRESET_NAME}, ultra baixa latência",
+                cfg.codec.name(),
                 adapter.name
             ),
             config: Blob::new(),
@@ -138,19 +252,21 @@ impl NvencEncoder {
         }
         self.enc = enc;
 
-        // 2. A GPU codifica H.264? (Todas as NVENC até hoje sim, mas é barato conferir.)
+        // 2. A GPU codifica este codec? H.264 todas as NVENC; HEVC desde a
+        // Maxwell 2ª geração; AV1 só da RTX 40 em diante.
+        let c = campos(cfg.codec);
         // SAFETY: sessão aberta.
-        if !unsafe { api.encode_guids(enc)? }.contains(&CODEC_H264_GUID) {
+        if !unsafe { api.encode_guids(enc)? }.contains(&c.guid) {
             return Err(EncodeError::BackendUnavailable {
                 backend: Backend::Nvenc,
-                reason: "esta GPU não codifica H.264".into(),
+                reason: format!("esta GPU não codifica {}", cfg.codec.name()),
             });
         }
         // Intra-refresh só se a GPU suportar; senão fica desligado e quem
         // pedir uma onda recebe `false` (e usa keyframe).
         if cfg.intra_refresh_frames > 0 {
             // SAFETY: sessão aberta.
-            let suporta = unsafe { api.encode_cap(enc, CODEC_H264_GUID, CAPS_SUPPORT_INTRA_REFRESH)? };
+            let suporta = unsafe { api.encode_cap(enc, c.guid, CAPS_SUPPORT_INTRA_REFRESH)? };
             if suporta != 0 {
                 self.refresh_frames = cfg.intra_refresh_frames;
             }
@@ -161,15 +277,8 @@ impl NvencEncoder {
         preset.set_u32(PC_VERSION, PRESET_CONFIG_VER);
         preset.set_u32(PC_PRESET_CFG + CFG_VERSION, CONFIG_VER);
         // SAFETY: sessão aberta, struct com as duas versões preenchidas.
-        let st = unsafe {
-            api.preset_config(
-                enc,
-                CODEC_H264_GUID,
-                PRESET,
-                TUNING_ULTRA_LOW_LATENCY,
-                preset.as_mut_ptr(),
-            )
-        };
+        let st =
+            unsafe { api.preset_config(enc, c.guid, PRESET, TUNING_ULTRA_LOW_LATENCY, preset.as_mut_ptr()) };
         api.check(enc, "nvEncGetEncodePresetConfigEx", st)?;
 
         let config = &mut self.config;
@@ -177,39 +286,66 @@ impl NvencEncoder {
             .bytes_mut()
             .copy_from_slice(&preset.bytes()[PC_PRESET_CFG..PC_PRESET_CFG + CONFIG_SIZE]);
         config.set_u32(CFG_VERSION, CONFIG_VER);
-        config.set_guid(CFG_PROFILE_GUID, &H264_PROFILE_HIGH_GUID);
+        config.set_guid(CFG_PROFILE_GUID, &c.perfil);
         config.set_u32(CFG_GOP_LENGTH, INFINITE_GOPLENGTH);
         config.set_u32(CFG_FRAME_INTERVAL_P, 1);
         config.set_u32(CFG_RC_MODE, RC_CBR);
         set_rate(config, cfg.bitrate_bps(), cfg.fps);
-        config.set_u32(CFG_H264_IDR_PERIOD, INFINITE_GOPLENGTH);
-        config.set_bit(CFG_H264_REPEAT_SPSPPS, true);
+        config.set_u32(c.idr_period, INFINITE_GOPLENGTH);
+        config.set_bit(c.repetir_cabecalho, true);
         if self.refresh_frames > 0 {
             // As ondas são pedidas uma a uma (`forceIntraRefreshWithFrameCnt`);
             // o período automático fica tão longo que na prática não acontece.
-            config.set_bit(CFG_H264_ENABLE_INTRA_REFRESH, true);
-            config.set_bit(CFG_H264_RECOVERY_POINT_SEI, true);
-            config.set_u32(CFG_H264_INTRA_REFRESH_PERIOD, INTRA_REFRESH_PERIOD_NUNCA);
-            config.set_u32(CFG_H264_INTRA_REFRESH_CNT, self.refresh_frames);
+            config.set_bit(c.intra_refresh, true);
+            if let Some(sei) = c.recovery_sei {
+                config.set_bit(sei, true);
+            }
+            config.set_u32(c.refresh_period, INTRA_REFRESH_PERIOD_NUNCA);
+            config.set_u32(c.refresh_cnt, self.refresh_frames);
             // Um quadro de referência só: com mais, um P-frame depois da onda
             // podia apontar para um quadro de antes dela, ainda com o estrago
             // da perda (medido: diferença de ~38 dB alguns frames depois de
             // uma onda de 4, contra um decoder que não perdeu nada).
-            config.set_u32(CFG_H264_MAX_NUM_REF_FRAMES, 1);
-            config.set_u32(CFG_H264_NUM_REF_L0, NUM_REF_FRAMES_1);
+            config.set_u32(c.max_ref_frames, 1);
+            config.set_u32(c.num_ref, NUM_REF_FRAMES_1);
         }
-        config.set_u32(CFG_H264_VUI_SIGNAL_TYPE_PRESENT, 1);
-        config.set_u32(CFG_H264_VUI_VIDEO_FORMAT, VUI_VIDEO_FORMAT_UNSPECIFIED);
-        config.set_u32(CFG_H264_VUI_FULL_RANGE, 0);
-        config.set_u32(CFG_H264_VUI_COLOUR_DESC_PRESENT, 1);
-        config.set_u32(CFG_H264_VUI_COLOUR_PRIMARIES, VUI_COLOR_PRIMARIES_BT709);
-        config.set_u32(CFG_H264_VUI_TRANSFER, VUI_TRANSFER_CHARACTERISTIC_BT709);
-        config.set_u32(CFG_H264_VUI_COLOUR_MATRIX, VUI_MATRIX_COEFFS_BT709);
+        // BT.709 faixa limitada, igual à conversão em `convert.rs`. (Os
+        // valores dos enums de cor do AV1 são os mesmos da VUI.)
+        match c.cor {
+            Cor::Vui {
+                signal_type_present,
+                video_format,
+                full_range,
+                colour_desc_present,
+                primaries,
+                transfer,
+                matrix,
+            } => {
+                config.set_u32(signal_type_present, 1);
+                config.set_u32(video_format, VUI_VIDEO_FORMAT_UNSPECIFIED);
+                config.set_u32(full_range, 0);
+                config.set_u32(colour_desc_present, 1);
+                config.set_u32(primaries, VUI_COLOR_PRIMARIES_BT709);
+                config.set_u32(transfer, VUI_TRANSFER_CHARACTERISTIC_BT709);
+                config.set_u32(matrix, VUI_MATRIX_COEFFS_BT709);
+            }
+            Cor::Av1 {
+                primaries,
+                transfer,
+                matrix,
+                range,
+            } => {
+                config.set_u32(primaries, VUI_COLOR_PRIMARIES_BT709);
+                config.set_u32(transfer, VUI_TRANSFER_CHARACTERISTIC_BT709);
+                config.set_u32(matrix, VUI_MATRIX_COEFFS_BT709);
+                config.set_u32(range, 0); // faixa limitada (studio)
+            }
+        }
 
         // 4. Inicializa.
         let init = &mut self.init;
         init.set_u32(IP_VERSION, INITIALIZE_PARAMS_VER);
-        init.set_guid(IP_ENCODE_GUID, &CODEC_H264_GUID);
+        init.set_guid(IP_ENCODE_GUID, &c.guid);
         init.set_guid(IP_PRESET_GUID, &PRESET);
         init.set_u32(IP_ENCODE_WIDTH, cfg.width);
         init.set_u32(IP_ENCODE_HEIGHT, cfg.height);
@@ -279,7 +415,7 @@ impl NvencEncoder {
         if force_keyframe {
             self.onda = None;
         } else if self.refresh_pending {
-            pic.set_u32(PP_H264_FORCE_INTRA_REFRESH, self.refresh_frames);
+            pic.set_u32(self.pp_force_refresh, self.refresh_frames);
             self.onda = Some(index);
         }
         self.refresh_pending = false;

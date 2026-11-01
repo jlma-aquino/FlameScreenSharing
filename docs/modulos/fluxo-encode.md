@@ -1,8 +1,8 @@
 # fluxo-encode
 
-**Caminho:** `crates/fluxo-encode` · **Dependências:** `windows` (só no Windows) · **Plataforma:** Windows 10+
+**Caminho:** `crates/fluxo-encode` · **Dependências:** `fluxo-proto` (só o `VideoCodec`), `windows` (só no Windows) · **Plataforma:** Windows 10+
 
-Comprime em H.264, por hardware, as texturas do `fluxo-capture`, sem o frame
+Comprime em H.264, HEVC ou AV1 (`EncoderConfig::codec`), por hardware, as texturas do `fluxo-capture`, sem o frame
 sair da GPU. Dois backends atrás da trait `Encoder`; por que esse desenho:
 ADR-006 em [DECISOES.md](../DECISOES.md).
 
@@ -16,6 +16,20 @@ ADR-006 em [DECISOES.md](../DECISOES.md).
 
 `open_encoder` devolve, além do encoder, a lista `skipped` com os backends
 que falharam e por quê — mostre ao usuário.
+
+## Codecs
+
+| Codec | NVENC | Media Foundation | Bitstream |
+|---|---|---|---|
+| H.264 (padrão) | perfil High, toda NVIDIA | MFT H.264 do driver | Annex B, SPS/PPS em cada keyframe |
+| HEVC | perfil Main, NVIDIA Maxwell 2ª geração+ | MFT HEVC do driver | Annex B, VPS/SPS/PPS em cada keyframe |
+| AV1 | perfil Main, NVIDIA RTX 40+ | MFT AV1 do driver (AMD RX 7000+, Intel Arc) | OBUs, cabeçalho de sequência em cada keyframe |
+
+Os ajustes de baixa latência (abaixo) são os mesmos nos três; no NVENC só
+muda onde cada campo fica na config (a parte do codec é uma union): tabela
+`campos` em `nvenc/mod.rs`. A GPU sem o codec pedido devolve
+`BackendUnavailable` ("esta GPU não codifica AV1"); quem escolhe o codec da
+sessão é o host (ADR-012).
 
 ## Arquivos
 
@@ -88,8 +102,18 @@ rode `crates\fluxo-encode\nvenc\gerar_layout.ps1` e faça commit do
 | PSNR de luminância | 48,8 dB | 48,8 dB |
 
 O PSNR RGB fica em ~32 dB: a perda vem da cor em meia resolução (4:2:0) em
-texto e ícones coloridos, não do encoder. Melhorar isso exige H.264 4:4:4
-(no roadmap).
+texto e ícones coloridos, não do encoder. Melhorar isso exigiria 4:4:4
+(pulado: o decoder do Windows não decodifica).
+
+HEVC e AV1 (mesma máquina, tela em movimento, 3 s cada; o bitrate depende
+do que estava na tela, não compare entre linhas):
+
+| | Encode P (p50 / p99) | Keyframe | Decode (`fluxo-bench decode`) |
+|---|---|---|---|
+| NVENC HEVC | 2,6 / 3,6 ms | 37 KB, 5,4 ms | — (sem decoder HEVC aqui) |
+| NVENC AV1 | 2,2 / 2,4 ms | 33 KB, 5,3 ms | 158 de 159, CPU p50 0,13 ms |
+| MF HEVC (MFT NVIDIA) | 2,3 / 2,6 ms | — | — |
+| MF AV1 (MFT NVIDIA) | 1,6 / 2,0 ms | — | 91 de 91, CPU p50 0,16 ms |
 
 ## Intra-refresh (opcional)
 
@@ -103,7 +127,7 @@ para um quadro de antes dela, ainda com o estrago da perda (medido com
 
 ## Limitações conhecidas
 
-- Só H.264 4:2:0, 8 bits. HEVC/AV1 e 4:4:4 ficam para a fase 6.
+- Só 4:2:0, 8 bits. 4:4:4 foi pulado (o decoder do Windows não decodifica).
 - Resolução fixa: se a textura mudar de tamanho, `encode` devolve
   `SizeMismatch` e o encoder deve ser recriado.
 - Sem encoder por software: máquinas sem encoder de hardware (VMs, GPUs muito

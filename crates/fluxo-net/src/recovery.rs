@@ -161,6 +161,7 @@ mod tests {
             preceded_by_loss: perda,
             refresh_start: inicio,
             refresh_end: fim,
+            codec: Some(crate::VideoCodec::H264),
         }
     }
 

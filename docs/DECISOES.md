@@ -331,6 +331,44 @@ começo) e a fila da placa em 20 ms.
 
 ---
 
+## ADR-012 — Codec por sessão: o melhor que os dois lados suportam
+
+**Status:** Aceito (2026-10-31)
+
+**Contexto.** HEVC e AV1 dão a mesma imagem com menos bits que o H.264
+(em geral 30–50% a menos; não medido aqui), o que importa pela internet do celular.
+Mas nenhum dos dois é garantido: codificar depende da GPU do host (AV1 só da
+NVIDIA RTX 40 / AMD RX 7000 / Intel Arc em diante), e decodificar depende de
+uma extensão da Microsoft Store no cliente (aqui: AV1 instalado, HEVC não).
+Opções:
+
+| Opção | Prós | Contras |
+|---|---|---|
+| Só H.264 | Funciona em todo par de PCs | Desperdiça banda quando os dois têm algo melhor |
+| Escolha manual nos dois lados | Simples | Usuário precisa saber o que cada PC tem; errar = tela preta |
+| **O cliente anuncia, o host escolhe** | Automático, cai para H.264 sozinho | Um pacote novo e uma espera curta antes do primeiro frame |
+
+**Decisão.** O cliente manda a máscara do que decodifica (pacote Caps,
+protocolo v12) junto com cada Ping. Depois do pareamento o host espera até
+1,5 s pelo primeiro Caps e tenta abrir o encoder na ordem AV1, HEVC, H.264,
+pulando o que o cliente não decodifica e o que a GPU recusar. Cada frame leva
+o codec em `flags`, e o cliente troca de decoder quando ele muda.
+`fluxo-host --codec` força um codec (erro se o cliente não decodifica).
+
+**Consequências.**
+- ➕ Sem configuração: AV1 entre esta máquina e ela mesma; H.264 com o
+  notebook (Linux, o `receber` anuncia só H.264).
+- ➕ O decoder novo serve para qualquer MFT síncrono do Windows (HEVC e AV1
+  da Store); os de hardware assíncronos ficam de fora.
+- ➖ O encoder só abre depois do pareamento (antes abria na largada): um erro
+  de GPU aparece mais tarde.
+- ➖ HEVC não testado de ponta a ponta (este PC não tem o decoder; o encode
+  funciona).
+- 🔁 Se aparecer diferença de latência entre os codecs no cliente real,
+  pesar latência e não só compressão na ordem de preferência.
+
+---
+
 ## Modelo
 
 ```markdown

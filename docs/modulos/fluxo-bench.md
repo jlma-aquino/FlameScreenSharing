@@ -11,7 +11,7 @@ Ferramenta de linha de comando para validar captura, encode e rede isoladamente.
 | `src/main.rs` | Parsing de argumentos e os comandos `listar`, `bench`, `screenshot` |
 | `src/encode.rs` | Comandos `encoders`, `encode` e `decode` |
 | `src/receber.rs` | Comando `receber` (receptor provisório do fluxo-host) |
-| `src/verificar.rs` | `--verificar`: decoder H.264 do Windows, PSNR, NV12→BGRA |
+| `src/verificar.rs` | `encode --verificar`: decoder H.264 do Windows por software, PSNR, NV12→BGRA (só H.264) |
 | `src/bmp.rs` | Gravação de BMP 32 bits sem dependências |
 
 ## Comandos
@@ -21,10 +21,10 @@ fluxo-bench listar
 fluxo-bench bench      [--monitor N] [--segundos S] [--copiar-cpu]
 fluxo-bench screenshot [--monitor N] [--saida arquivo.bmp]
 fluxo-bench encoders   [--monitor N]
-fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
+fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--codec h264|hevc|av1]
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
                        [--saida arquivo.h264] [--verificar] [--refresh N] [--perder-a-cada S]
-fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
+fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M] [--codec C]
 fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra] [--sinal SERVIDOR | --internet [--sem-upnp]]
 fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR) (--codigo C | --sem-cifra) [--mbps M] [--fps F] [--segundos S] [--fec K]
 fluxo-bench enviar     --conexao CÓDIGO [--mbps M] [--fps F] [--segundos S] [--fec K]
@@ -105,11 +105,16 @@ ondas com mais de um quadro de referência.
 ## `receber`
 
 Receptor sem janela: escuta numa porta UDP (`--porta`, padrão 9000), recebe
-o vídeo do [fluxo-host](fluxo-host.md), grava em `recebido.h264` a partir do
-primeiro keyframe e mostra estatísticas. `--segundos` conta a partir do
+o vídeo do [fluxo-host](fluxo-host.md), grava em `recebido.h264`
+(`.h265` com HEVC, `.obu` com AV1) a partir do primeiro keyframe e mostra
+estatísticas. `--segundos` conta a partir do
 primeiro frame recebido (0 = até Ctrl+C). Como o cliente, mostra um código de
 pareamento (ou usa `--codigo`); o host precisa dele. `--sem-cifra` só para
 teste.
+
+Codec: no Windows, anuncia ao host os que este PC decodifica (o host
+costuma escolher AV1 ou HEVC; aparece na linha "vídeo em ..." com
+`--verificar`). Em Linux/macOS anuncia só H.264.
 
 É o único comando que **roda também em Linux/macOS** (usa só o `fluxo-net`):
 serve para testar a rede com um segundo PC que não seja Windows. Lá,
@@ -122,7 +127,7 @@ compilar: seção "Receptor em Linux" de [COMPILAR.md](../COMPILAR.md).
 | frames perdidos na rede | Frames que nunca chegaram inteiros | 0 em rede cabeada |
 | descartados na fila | O próprio receptor não leu a tempo | 0 |
 | RTT | Ida e volta medida por ping | LAN cabeada < 1 ms |
-| decodificados (com `--verificar`) | Frames aceitos pelo decoder H.264 do Windows | todos |
+| decodificados (com `--verificar`) | Frames aceitos pelo decoder do cliente (na GPU, no codec que o host escolheu) | todos |
 | grupos de FEC que falharam | Nos frames perdidos: grupos com 2 pacotes faltando (Reed-Solomon de 2 paridades salvaria) e com 3+ (rajada) | — |
 
 ## `enviar`

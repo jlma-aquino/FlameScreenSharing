@@ -1,4 +1,4 @@
-//! Backend Media Foundation: o encoder H.264 de hardware que o fabricante da
+//! Backend Media Foundation: o encoder (H.264, HEVC ou AV1) de hardware que o fabricante da
 //! GPU instala no Windows (AMD AMF, Intel QuickSync, NVIDIA NVENC), acessado
 //! como um *MFT* (Media Foundation Transform).
 //!
@@ -30,7 +30,16 @@ use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
 
 use crate::convert::Nv12Converter;
 use crate::platform::{adapter_info, check_size, win_err, Encoder};
-use crate::{Backend, EncodeError, EncodedFrame, EncoderConfig};
+use crate::{Backend, EncodeError, EncodedFrame, EncoderConfig, VideoCodec};
+
+/// Subtipo de saída do MFT e perfil (`MF_MT_MPEG2_PROFILE`) para o codec.
+fn subtipo(codec: VideoCodec) -> (GUID, u32) {
+    match codec {
+        VideoCodec::H264 => (MFVideoFormat_H264, eAVEncH264VProfile_High.0 as u32),
+        VideoCodec::Hevc => (MFVideoFormat_HEVC, eAVEncH265VProfile_Main_420_8.0 as u32),
+        VideoCodec::Av1 => (MFVideoFormat_AV1, eAVEncAV1VProfile_Main_420_8.0 as u32),
+    }
+}
 
 /// Quantas texturas NV12 alternamos. O MFT pode segurar a amostra de
 /// entrada um pouco depois de pedir a próxima; 4 dá folga de sobra.
@@ -79,7 +88,7 @@ impl MfEncoder {
             let mt: ID3D11Multithread = device.cast().map_err(win_err("ID3D11Multithread"))?;
             let _ = mt.SetMultithreadProtected(true);
 
-            let (activate, mft_name) = find_hardware_encoder(adapter.luid)?;
+            let (activate, mft_name) = find_hardware_encoder(adapter.luid, cfg.codec)?;
             let transform: IMFTransform = activate
                 .ActivateObject()
                 .map_err(win_err("IMFActivate::ActivateObject"))?;
@@ -141,16 +150,17 @@ impl MfEncoder {
             }
 
             // Tipo de saída primeiro (regra dos encoders de hardware), depois o de entrada.
-            let out_type = media_type(&MFVideoFormat_H264, cfg)?;
+            let (formato, perfil) = subtipo(cfg.codec);
+            let out_type = media_type(&formato, cfg)?;
             out_type
                 .SetUINT32(&MF_MT_AVG_BITRATE, cfg.bitrate_bps())
                 .map_err(win_err("MF_MT_AVG_BITRATE"))?;
             out_type
-                .SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)
+                .SetUINT32(&MF_MT_MPEG2_PROFILE, perfil)
                 .map_err(win_err("MF_MT_MPEG2_PROFILE"))?;
             transform
                 .SetOutputType(output_id, &out_type, 0)
-                .map_err(win_err("IMFTransform::SetOutputType (H.264)"))?;
+                .map_err(win_err("IMFTransform::SetOutputType"))?;
             let in_type = media_type(&MFVideoFormat_NV12, cfg)?;
             transform
                 .SetInputType(input_id, &in_type, 0)
@@ -421,9 +431,10 @@ fn start_media_foundation() -> Result<(), EncodeError> {
         .map_err(|m| unavailable(format!("MFStartup falhou: {m}")))
 }
 
-/// Procura o encoder H.264 de hardware da placa com este LUID.
+/// Procura o encoder de hardware deste codec na placa com este LUID.
 fn find_hardware_encoder(
     luid: windows::Win32::Foundation::LUID,
+    codec: VideoCodec,
 ) -> Result<(IMFActivate, String), EncodeError> {
     let input = MFT_REGISTER_TYPE_INFO {
         guidMajorType: MFMediaType_Video,
@@ -431,8 +442,9 @@ fn find_hardware_encoder(
     };
     let output = MFT_REGISTER_TYPE_INFO {
         guidMajorType: MFMediaType_Video,
-        guidSubtype: MFVideoFormat_H264,
+        guidSubtype: subtipo(codec).0,
     };
+    let nome_codec = codec.name();
     let mut array: *mut Option<IMFActivate> = std::ptr::null_mut();
     let mut count = 0u32;
     // SAFETY: o MF aloca o array com CoTaskMemAlloc; tomamos posse de cada
@@ -456,9 +468,9 @@ fn find_hardware_encoder(
         v
     };
     if all.is_empty() {
-        return Err(unavailable(
-            "nenhum encoder H.264 de hardware instalado (driver de vídeo?)".into(),
-        ));
+        return Err(unavailable(format!(
+            "nenhum encoder {nome_codec} de hardware instalado (driver de vídeo? GPU antiga?)"
+        )));
     }
 
     let mut want = [0u8; 8];
@@ -476,9 +488,11 @@ fn find_hardware_encoder(
             Err(_) => {}
         }
     }
-    reserva
-        .map(named)
-        .ok_or_else(|| unavailable("a placa do monitor não tem encoder H.264 de hardware".into()))
+    reserva.map(named).ok_or_else(|| {
+        unavailable(format!(
+            "a placa do monitor não tem encoder {nome_codec} de hardware"
+        ))
+    })
 }
 
 /// Junta o activate com o nome amigável do MFT.
@@ -493,7 +507,7 @@ fn named(activate: IMFActivate) -> (IMFActivate, String) {
                 CoTaskMemFree(Some(pwstr.0 as *const _));
                 s
             }
-            Err(_) => "encoder H.264 sem nome".into(),
+            Err(_) => "encoder sem nome".into(),
         }
     };
     (activate, nome)

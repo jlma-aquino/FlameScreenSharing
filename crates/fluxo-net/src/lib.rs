@@ -84,7 +84,7 @@ pub use signal::{SignalEvent, SignalServer, ROOM_TTL};
 pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
 pub use upnp::{find_gateway, is_private_v4, open_port, Gateway, PortMapping, UpnpOutcome, UPNP_LEASE};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
-pub use fluxo_proto::{FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
+pub use fluxo_proto::{VideoCodec, FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START};
 // Código de pareamento (`SenderConfig`/`ReceiverConfig::pairing_code`).
 pub use fluxo_crypto::PairingCode;
 // Imagem do cursor (`VideoSender::set_cursor_shape`, `CursorView::shape`).

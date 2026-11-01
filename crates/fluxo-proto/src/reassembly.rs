@@ -63,6 +63,8 @@ pub struct CompletedFrame {
     pub refresh_start: bool,
     /// Último frame de uma onda de intra-refresh ([`crate::FLAG_REFRESH_END`]).
     pub refresh_end: bool,
+    /// Codec do frame (bits 4–5 das flags); `None`: valor desconhecido.
+    pub codec: Option<crate::VideoCodec>,
 }
 
 /// Contadores para diagnóstico (mostrar na tela de estatísticas, logs etc.).
@@ -326,6 +328,7 @@ impl Reassembler {
             preceded_by_loss: gap > 0,
             refresh_start: partial.flags & crate::FLAG_REFRESH_START != 0,
             refresh_end: partial.flags & crate::FLAG_REFRESH_END != 0,
+            codec: crate::VideoCodec::from_flags(partial.flags),
         }
     }
 

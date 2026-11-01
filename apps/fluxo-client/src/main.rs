@@ -204,6 +204,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             on_pairing: internet
                 .as_ref()
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
+            // O host escolhe o codec entre os que este Windows decodifica.
+            codecs: fluxo_decode::decodable_codecs(),
             ..ReceiverConfig::default()
         },
     )?;

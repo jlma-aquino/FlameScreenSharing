@@ -8,10 +8,10 @@
 //! fluxo-bench bench      [--monitor N] [--segundos S] [--copiar-cpu]
 //! fluxo-bench screenshot [--monitor N] [--saida arquivo.bmp]
 //! fluxo-bench encoders   [--monitor N]
-//! fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf]
+//! fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--codec h264|hevc|av1]
 //!                        [--mbps M] [--fps F] [--keyframe-a-cada S] [--saida arquivo.h264]
 //!                        [--verificar] [--refresh N] [--perder-a-cada S]
-//! fluxo-bench decode    [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M]
+//! fluxo-bench decode    [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M] [--codec C]
 //! fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--sinal SERVIDOR | --internet]
 //! fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR | --conexao C) [--mbps M] [--fps F] [--segundos S] [--fec K]
 //! fluxo-bench nat
@@ -46,6 +46,8 @@ struct Opts {
     /// Arquivo de saída; cada comando tem seu padrão.
     saida: Option<String>,
     encoder: BackendChoice,
+    /// Codec do encode/decode (padrão H.264).
+    codec: fluxo_net::VideoCodec,
     mbps: f64,
     fps: u32,
     keyframe_a_cada: f64,
@@ -93,6 +95,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         copiar_cpu: false,
         saida: None,
         encoder: BackendChoice::Auto,
+        codec: Default::default(),
         mbps: 20.0,
         fps: 60,
         keyframe_a_cada: 5.0,
@@ -140,6 +143,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--codigo" => o.codigo = Some(valor()?.clone()),
             "--sem-cifra" => o.sem_cifra = true,
             "--encoder" => o.encoder = valor()?.parse()?,
+            "--codec" => o.codec = valor()?.parse()?,
             "--mbps" => o.mbps = valor()?.parse().map_err(|_| "mbps inválido")?,
             "--fps" => o.fps = valor()?.parse().map_err(|_| "fps inválido")?,
             "--keyframe-a-cada" => {
@@ -176,9 +180,11 @@ Opções:
                         conta a partir do primeiro frame; 0 = sem fim)
   --copiar-cpu          no bench, também copia cada frame para a RAM e mede o custo
   --saida ARQ           arquivo de saída (padrão captura.bmp / captura.h264 /
-                        recebido.h264)
+                        recebido.h264; .h265/.obu com HEVC/AV1)
   --encoder E           auto, nvenc ou mf (padrão auto: NVENC em NVIDIA,
                         senão Media Foundation)
+  --codec C             h264, hevc ou av1 no encode/decode (padrão h264; HEVC e AV1
+                        dependem da GPU)
   --mbps M              bitrate alvo do encode (padrão 20)
   --fps F               fps informado ao encoder (padrão 60)
   --keyframe-a-cada S   no encode, força um keyframe a cada S segundos para
@@ -214,6 +220,15 @@ Opções:
 
 Dica: com a tela parada o Windows não gera frames. Durante bench/encode,
 deixe um vídeo ou jogo rodando a 60 fps no monitor capturado.";
+
+/// Extensão do arquivo com o bitstream cru do codec.
+fn extensao(c: fluxo_net::VideoCodec) -> &'static str {
+    match c {
+        fluxo_net::VideoCodec::H264 => "h264",
+        fluxo_net::VideoCodec::Hevc => "h265",
+        fluxo_net::VideoCodec::Av1 => "obu",
+    }
+}
 
 fn main() -> ExitCode {
     enable_dpi_awareness();

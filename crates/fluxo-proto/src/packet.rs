@@ -47,7 +47,9 @@ pub const MAGIC: u16 = 0x464C;
 /// - 9: sinalização pela internet (Signal) e furo de NAT (Punch).
 /// - 10: cursor do mouse à parte (Cursor).
 /// - 11: áudio (Audio): um quadro Opus de 10 ms por pacote.
-pub const PROTOCOL_VERSION: u8 = 11;
+/// - 12: codec do vídeo nas flags (bits 4–5) e Caps (o cliente diz o que
+///   decodifica).
+pub const PROTOCOL_VERSION: u8 = 12;
 
 /// Bit 0 de `flags`: o frame é um *keyframe* (IDR), decodificável sozinho.
 /// Num [`PacketKind::KeyframeRequest`]: o cliente **precisa** de um keyframe
@@ -63,6 +65,65 @@ pub const FLAG_REFRESH_END: u8 = 0b0000_0100;
 /// Bit 3 de `flags`: payload cifrado (ChaCha20-Poly1305, tag no fim),
 /// cabeçalho autenticado. Vale para qualquer tipo menos os de pareamento.
 pub const FLAG_ENCRYPTED: u8 = 0b0000_1000;
+/// Bits 4–5 de `flags` nos pacotes de vídeo e paridade: o codec
+/// ([`VideoCodec`]). 0 = H.264 (o de sempre).
+pub const FLAG_CODEC_MASK: u8 = 0b0011_0000;
+const FLAG_CODEC_SHIFT: u32 = 4;
+
+/// Codec do vídeo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum VideoCodec {
+    #[default]
+    H264 = 0,
+    Hevc = 1,
+    Av1 = 2,
+}
+
+impl VideoCodec {
+    /// Todos, do preferido (melhor compressão) ao mais compatível.
+    pub const PREFERENCE: [VideoCodec; 3] = [VideoCodec::Av1, VideoCodec::Hevc, VideoCodec::H264];
+
+    /// O codec marcado em `flags` (bits 4–5); valor desconhecido = `None`.
+    pub fn from_flags(flags: u8) -> Option<Self> {
+        match (flags & FLAG_CODEC_MASK) >> FLAG_CODEC_SHIFT {
+            0 => Some(Self::H264),
+            1 => Some(Self::Hevc),
+            2 => Some(Self::Av1),
+            _ => None,
+        }
+    }
+
+    /// Os bits deste codec em `flags`.
+    pub fn flags(self) -> u8 {
+        (self as u8) << FLAG_CODEC_SHIFT
+    }
+
+    /// Bit deste codec numa máscara de [`PacketKind::Caps`].
+    pub fn bit(self) -> u8 {
+        1 << self as u8
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::Hevc => "HEVC",
+            Self::Av1 => "AV1",
+        }
+    }
+}
+
+impl std::str::FromStr for VideoCodec {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "h264" | "h.264" | "avc" => Ok(Self::H264),
+            "hevc" | "h265" | "h.265" => Ok(Self::Hevc),
+            "av1" => Ok(Self::Av1),
+            _ => Err(format!("codec desconhecido: {s} (h264, hevc ou av1)")),
+        }
+    }
+}
 
 /// Tamanho do payload de um [`PacketKind::Pong`]: o relógio (u32, big-endian)
 /// de quem respondeu.
@@ -112,6 +173,9 @@ pub enum PacketKind {
     /// `frame_id` = número do quadro (sobe de 1 em 1), `timestamp_us` =
     /// captura da primeira amostra. Cifrado.
     Audio = 13,
+    /// Cliente → host: os codecs que o cliente decodifica (payload: 1 byte,
+    /// máscara de [`VideoCodec::bit`]). Repetido de tempos em tempos. Cifrado.
+    Caps = 14,
 }
 
 impl PacketKind {
@@ -129,6 +193,7 @@ impl PacketKind {
             10 => Some(Self::Punch),
             11 => Some(Self::Cursor),
             13 => Some(Self::Audio),
+            14 => Some(Self::Caps),
             _ => None,
         }
     }
@@ -299,6 +364,7 @@ impl PacketHeader {
         let esperado = match self.kind {
             PacketKind::Pong => Some(PONG_LEN),
             PacketKind::Feedback => Some(crate::feedback::FEEDBACK_LEN),
+            PacketKind::Caps => Some(1),
             _ => None,
         };
         if let Some(declared) = esperado.filter(|&e| e != actual) {
@@ -540,5 +606,38 @@ mod tests {
         let mut pkt = PacketKind::Ping.control(1, 2).encode_with_payload(&[]).unwrap();
         pkt[2] = 1; // pacote de um Fluxo antigo
         assert_eq!(PacketHeader::decode(&pkt), Err(ProtoError::UnsupportedVersion(1)));
+    }
+}
+
+#[cfg(test)]
+mod codec_tests {
+    use super::*;
+
+    #[test]
+    fn codec_nas_flags_e_na_mascara() {
+        for c in VideoCodec::PREFERENCE {
+            let flags = c.flags() | FLAG_KEYFRAME | FLAG_REFRESH_END;
+            assert_eq!(VideoCodec::from_flags(flags), Some(c));
+            assert_eq!(c.name().parse::<VideoCodec>(), Ok(c));
+        }
+        assert_eq!(VideoCodec::from_flags(0), Some(VideoCodec::H264), "o de sempre");
+        assert_eq!(VideoCodec::from_flags(FLAG_CODEC_MASK), None);
+        let mascara = VideoCodec::H264.bit() | VideoCodec::Av1.bit();
+        assert_eq!(mascara, 0b101);
+        assert!("vp9".parse::<VideoCodec>().is_err());
+    }
+
+    #[test]
+    fn caps_tem_um_byte() {
+        let p = PacketKind::Caps
+            .control(0, 0)
+            .encode_with_payload(&[0b111])
+            .unwrap();
+        assert!(PacketHeader::decode(&p).is_ok());
+        let p = PacketKind::Caps
+            .control(0, 0)
+            .encode_with_payload(&[1, 2])
+            .unwrap();
+        assert!(PacketHeader::decode(&p).is_err());
     }
 }

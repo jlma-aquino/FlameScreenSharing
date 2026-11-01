@@ -53,6 +53,10 @@ pub const ERR_NEED_MORE_INPUT: i32 = 17;
 // --- GUIDs ---
 pub const CODEC_H264_GUID: GUID = GUID::from_values(0x6BC82762, 0x4E63, 0x4CA4, [0xAA, 0x85, 0x1E, 0x50, 0xF3, 0x21, 0xF6, 0xBF]);
 pub const H264_PROFILE_HIGH_GUID: GUID = GUID::from_values(0xE7CBC309, 0x4F7A, 0x4B89, [0xAF, 0x2A, 0xD5, 0x37, 0xC9, 0x2B, 0xE3, 0x10]);
+pub const CODEC_HEVC_GUID: GUID = GUID::from_values(0x790CDC88, 0x4522, 0x4D7B, [0x94, 0x25, 0xBD, 0xA9, 0x97, 0x5F, 0x76, 0x03]);
+pub const HEVC_PROFILE_MAIN_GUID: GUID = GUID::from_values(0xB514C39A, 0xB55B, 0x40FA, [0x87, 0x8F, 0xF1, 0x25, 0x3B, 0x4D, 0xFD, 0xEC]);
+pub const CODEC_AV1_GUID: GUID = GUID::from_values(0x0A352289, 0x0AA7, 0x4759, [0x86, 0x2D, 0x5D, 0x15, 0xCD, 0x16, 0xD2, 0x54]);
+pub const AV1_PROFILE_MAIN_GUID: GUID = GUID::from_values(0x5F2A39F5, 0xF14E, 0x4F95, [0x9A, 0x9E, 0xB7, 0x6D, 0x56, 0x8F, 0xCF, 0x97]);
 pub const PRESET_P1_GUID: GUID = GUID::from_values(0xFC0A8D3E, 0x45F8, 0x4CF8, [0x80, 0xC7, 0x29, 0x88, 0x71, 0x59, 0x0E, 0xBF]);
 pub const PRESET_P2_GUID: GUID = GUID::from_values(0xF581CFB8, 0x88D6, 0x4381, [0x93, 0xF0, 0xDF, 0x13, 0xF9, 0xC2, 0x7D, 0xAB]);
 pub const PRESET_P3_GUID: GUID = GUID::from_values(0x36850110, 0x3A07, 0x441F, [0x94, 0xD5, 0x36, 0x70, 0x63, 0x1F, 0x91, 0xF6]);
@@ -124,6 +128,33 @@ pub const CFG_H264_VUI_COLOUR_DESC_PRESENT: usize = 260;
 pub const CFG_H264_VUI_COLOUR_PRIMARIES: usize = 264;
 pub const CFG_H264_VUI_TRANSFER: usize = 268;
 pub const CFG_H264_VUI_COLOUR_MATRIX: usize = 272;
+pub const CFG_HEVC_IDR_PERIOD: usize = 188;
+pub const CFG_HEVC_REPEAT_SPSPPS: Bit = Bit { byte: 184, bit: 7 };
+pub const CFG_HEVC_ENABLE_INTRA_REFRESH: Bit = Bit { byte: 185, bit: 0 };
+pub const CFG_HEVC_RECOVERY_POINT_SEI: Bit = Bit { byte: 186, bit: 2 };
+pub const CFG_HEVC_INTRA_REFRESH_PERIOD: usize = 192;
+pub const CFG_HEVC_INTRA_REFRESH_CNT: usize = 196;
+pub const CFG_HEVC_MAX_NUM_REF_FRAMES: usize = 200;
+pub const CFG_HEVC_NUM_REF_L0: usize = 352;
+pub const CFG_HEVC_VUI_SIGNAL_TYPE_PRESENT: usize = 240;
+pub const CFG_HEVC_VUI_VIDEO_FORMAT: usize = 244;
+pub const CFG_HEVC_VUI_FULL_RANGE: usize = 248;
+pub const CFG_HEVC_VUI_COLOUR_DESC_PRESENT: usize = 252;
+pub const CFG_HEVC_VUI_COLOUR_PRIMARIES: usize = 256;
+pub const CFG_HEVC_VUI_TRANSFER: usize = 260;
+pub const CFG_HEVC_VUI_COLOUR_MATRIX: usize = 264;
+pub const CFG_AV1_IDR_PERIOD: usize = 188;
+pub const CFG_AV1_REPEAT_SEQ_HDR: Bit = Bit { byte: 184, bit: 5 };
+pub const CFG_AV1_ENABLE_INTRA_REFRESH: Bit = Bit { byte: 184, bit: 6 };
+pub const CFG_AV1_OUTPUT_ANNEXB: Bit = Bit { byte: 184, bit: 0 };
+pub const CFG_AV1_INTRA_REFRESH_PERIOD: usize = 192;
+pub const CFG_AV1_INTRA_REFRESH_CNT: usize = 196;
+pub const CFG_AV1_MAX_NUM_REF_FRAMES: usize = 200;
+pub const CFG_AV1_NUM_FWD_REFS: usize = 272;
+pub const CFG_AV1_COLOR_PRIMARIES: usize = 236;
+pub const CFG_AV1_TRANSFER: usize = 240;
+pub const CFG_AV1_MATRIX: usize = 244;
+pub const CFG_AV1_COLOR_RANGE: usize = 248;
 
 // --- NV_ENC_INITIALIZE_PARAMS ---
 pub const INITIALIZE_PARAMS_SIZE: usize = 1808;
@@ -189,6 +220,8 @@ pub const PP_OUTPUT_BITSTREAM: usize = 48;
 pub const PP_BUFFER_FMT: usize = 64;
 pub const PP_PICTURE_STRUCT: usize = 68;
 pub const PP_H264_FORCE_INTRA_REFRESH: usize = 96;
+pub const PP_HEVC_FORCE_INTRA_REFRESH: usize = 92;
+pub const PP_AV1_FORCE_INTRA_REFRESH: usize = 92;
 
 // --- NV_ENC_LOCK_BITSTREAM ---
 pub const LOCK_BITSTREAM_SIZE: usize = 1552;

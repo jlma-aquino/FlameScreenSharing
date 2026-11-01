@@ -1,6 +1,6 @@
 //! # fluxo-encode
 //!
-//! Comprime em **H.264**, por hardware, as texturas que o `fluxo-capture`
+//! Comprime em **H.264**, **HEVC** ou **AV1** ([`VideoCodec`]), por hardware, as texturas que o `fluxo-capture`
 //! entrega — sem o frame sair da GPU.
 //!
 //! ## Backends
@@ -50,6 +50,8 @@
 
 use std::fmt;
 use std::str::FromStr;
+
+pub use fluxo_proto::VideoCodec;
 
 #[cfg(windows)]
 mod convert;
@@ -196,6 +198,9 @@ pub struct EncoderConfig {
     pub fps: u32,
     /// Bitrate alvo em kbit/s (CBR).
     pub bitrate_kbps: u32,
+    /// Codec do bitstream. HEVC e AV1 dependem da GPU (AV1: NVIDIA RTX 40+,
+    /// AMD RX 7000+, Intel Arc); sem suporte, a abertura falha.
+    pub codec: VideoCodec,
     /// Backend a usar.
     pub backend: BackendChoice,
     /// Intra-refresh: duração de cada onda, em frames (0 = desligado). Com
@@ -206,14 +211,15 @@ pub struct EncoderConfig {
 }
 
 impl EncoderConfig {
-    /// Configuração padrão para este tamanho: 60 fps, 20 Mbps, backend
-    /// automático, sem intra-refresh.
+    /// Configuração padrão para este tamanho: H.264, 60 fps, 20 Mbps,
+    /// backend automático, sem intra-refresh.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,
             height,
             fps: 60,
             bitrate_kbps: 20_000,
+            codec: VideoCodec::H264,
             backend: BackendChoice::Auto,
             intra_refresh_frames: 0,
         }
@@ -257,8 +263,10 @@ impl EncoderConfig {
 /// Um frame comprimido.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncodedFrame {
-    /// Bitstream H.264 em formato Annex B (NALs com prefixo `00 00 00 01`).
-    /// Keyframes trazem SPS/PPS, então o decoder pode começar por eles.
+    /// Bitstream do codec configurado. H.264 e HEVC: Annex B (NALs com
+    /// prefixo `00 00 00 01`), keyframes com os parâmetros (SPS/PPS, e VPS no
+    /// HEVC). AV1: OBUs no formato de baixo overhead, keyframes com o
+    /// cabeçalho de sequência. Em todos, o decoder pode começar por um keyframe.
     pub data: Vec<u8>,
     /// `true` se é um keyframe (IDR): decodificável sem frames anteriores.
     pub keyframe: bool,

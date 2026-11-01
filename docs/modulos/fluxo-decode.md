@@ -1,25 +1,31 @@
 # fluxo-decode
 
-**Caminho:** `crates/fluxo-decode` · **Dependências:** `windows` (só no Windows) · **Plataforma:** Windows 10+
+**Caminho:** `crates/fluxo-decode` · **Dependências:** `fluxo-proto` (só o `VideoCodec`), `windows` (só no Windows) · **Plataforma:** Windows 10+
 
-Decodifica H.264 em texturas NV12 na GPU com o decoder da própria Microsoft
-(MFT) acelerado por DXVA — qualquer GPU com driver de vídeo. Por que esse
-caminho: ADR-007 em [DECISOES.md](../DECISOES.md).
+Decodifica H.264, HEVC ou AV1 em texturas NV12 na GPU com os decoders do
+Media Foundation (MFT) acelerados por DXVA. H.264: o da própria Microsoft,
+que vem em todo Windows. HEVC e AV1: o MFT síncrono instalado, das
+extensões da Microsoft Store ("HEVC Video Extensions", "AV1 Video
+Extension"); os MFTs de hardware assíncronos não servem para o laço de
+decode e ficam de fora. Por que esse caminho: ADR-007 em [DECISOES.md](../DECISOES.md).
 
 ## Arquivos
 
 | Arquivo | Conteúdo |
 |---|---|
 | `src/lib.rs` | `DecodeError` (compila em qualquer sistema) |
-| `src/mf.rs` | `create_device`, `VideoDecoder`, `DecodedFrame` |
+| `src/mf.rs` | `create_device`, `VideoDecoder`, `DecodedFrame`, `decodable_codecs`, `available_decoders` |
 
 ## API
 
 | Item | Para quê |
 |---|---|
 | `create_device()` | Device D3D11 na GPU padrão com suporte a vídeo e proteção multithread |
-| `VideoDecoder::new(&device)` | Decoder; o tamanho do vídeo vem do primeiro keyframe |
-| `dec.decode(&bytes)` | Um frame H.264 completo → `Some(DecodedFrame)` ou `None` (antes do 1º keyframe) |
+| `VideoDecoder::new(&device)` | Decoder H.264; o tamanho do vídeo vem do primeiro keyframe |
+| `VideoDecoder::with_codec(&device, codec)` | Decoder de H.264, HEVC ou AV1 (erro se o Windows não tiver) |
+| `decodable_codecs()` | Máscara dos codecs que `with_codec` abre aqui: o que o cliente anuncia ao host |
+| `available_decoders()` | Todos os MFTs de cada codec, de hardware e de software (`fluxo-bench encoders`) |
+| `dec.decode(&bytes)` | Um frame completo → `Some(DecodedFrame)` ou `None` (antes do 1º keyframe) |
 | `dec.is_hardware()` / `dec.name()` | Se o DXVA está ativo |
 | `frame.texture()` + `frame.subresource()` | NV12 na GPU (fatia de um array de texturas do decoder) |
 | `frame.width()` / `frame.height()` | Tamanho visível (1080, mesmo com superfície de 1088) |
@@ -46,7 +52,9 @@ não há o que reordenar).
 
 ## Limitações conhecidas
 
-- Só H.264 (o que o `fluxo-encode` gera).
+- HEVC sem decoder neste PC (a extensão da Store não está instalada): só o
+  encode foi testado. AV1: 158 de 159 frames no `fluxo-bench decode`
+  (o último ainda estava no decoder), decode p50 0,13 ms.
 - Bitstream corrompido por perda de pacotes pode gerar artefatos até o
   próximo keyframe; o pedido de keyframe e o FEC vêm na fase 4.
 

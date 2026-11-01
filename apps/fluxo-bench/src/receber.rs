@@ -16,9 +16,37 @@ use fluxo_net::{
     FrameAction, PairingCode, Puncher, ReceiverConfig, Recovery, RecoveryRequest, ReplyCode, VideoReceiver,
 };
 
-#[cfg(windows)]
-use crate::verificar::Decoder;
 use crate::Opts;
+
+/// `--verificar` no Windows: o mesmo decoder do cliente (na GPU), trocado
+/// quando o codec dos frames muda. Só conta os frames que saem.
+#[cfg(windows)]
+struct Decoder {
+    device: windows::Win32::Graphics::Direct3D11::ID3D11Device,
+    dec: fluxo_decode::VideoDecoder,
+    size: (u32, u32),
+}
+
+#[cfg(windows)]
+impl Decoder {
+    /// Decodifica um frame; devolve quantos saíram (0 ou 1).
+    fn decode(&mut self, codec: fluxo_net::VideoCodec, data: &[u8]) -> Result<u64, Box<dyn Error>> {
+        if codec != self.dec.codec() {
+            self.dec = fluxo_decode::VideoDecoder::with_codec(&self.device, codec)?;
+            println!("  vídeo em {} | decoder: {}", codec.name(), self.dec.name());
+        }
+        Ok(match self.dec.decode(data)? {
+            Some(f) => {
+                self.size = (f.width(), f.height());
+                1
+            }
+            None => 0,
+        })
+    }
+    fn size(&self) -> (u32, u32) {
+        self.size
+    }
+}
 
 /// Fora do Windows não há decoder: `--verificar` vira um aviso.
 #[cfg(not(windows))]
@@ -26,11 +54,8 @@ struct Decoder;
 
 #[cfg(not(windows))]
 impl Decoder {
-    fn decode(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
-        Ok(Vec::new())
-    }
-    fn finish(&mut self) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
-        Ok(Vec::new())
+    fn decode(&mut self, _: fluxo_net::VideoCodec, _: &[u8]) -> Result<u64, Box<dyn Error>> {
+        Ok(0)
     }
     fn size(&self) -> (u32, u32) {
         (0, 0)
@@ -39,15 +64,29 @@ impl Decoder {
 
 #[cfg(windows)]
 fn abrir_decoder() -> Result<Option<Decoder>, Box<dyn Error>> {
-    let mut d = Decoder::new(0, 0)?;
-    d.convert = false; // só contar: converter custaria CPU e atrasaria a recepção
-    Ok(Some(d))
+    let device = fluxo_decode::create_device()?;
+    let dec = fluxo_decode::VideoDecoder::new(&device)?;
+    Ok(Some(Decoder {
+        device,
+        dec,
+        size: (0, 0),
+    }))
 }
 
 #[cfg(not(windows))]
 fn abrir_decoder() -> Result<Option<Decoder>, Box<dyn Error>> {
     println!("(--verificar só existe no Windows; confira o arquivo gravado com ffplay ou VLC)");
     Ok(None)
+}
+
+/// Codecs que o `receber` anuncia ao host: os que este Windows decodifica
+/// (com ou sem `--verificar`, o arquivo gravado abre no player). Fora do
+/// Windows, só H.264, o que qualquer player toca.
+fn codecs_anunciados() -> u8 {
+    #[cfg(windows)]
+    return fluxo_decode::decodable_codecs();
+    #[cfg(not(windows))]
+    return fluxo_net::VideoCodec::H264.bit();
 }
 
 pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
@@ -91,10 +130,12 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             on_pairing: internet
                 .as_ref()
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
+            codecs: codecs_anunciados(),
             ..ReceiverConfig::default()
         },
     )?;
-    let saida = o.saida.clone().unwrap_or_else(|| "recebido.h264".into());
+    // Sem --saida, o nome sai do codec do primeiro frame (recebido.h264/.h265/.obu).
+    let mut saida = o.saida.clone();
     match (&codigo, &o.sinal, &internet) {
         (Some(c), _, Some(i)) => {
             let cc = i.connection_code(c.clone())?;
@@ -133,7 +174,7 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         true => abrir_decoder()?,
         false => None,
     };
-    let mut arquivo = BufWriter::new(File::create(&saida)?);
+    let mut arquivo: Option<BufWriter<File>> = None;
     let duracao = (o.segundos > 0.0).then(|| Duration::from_secs_f64(o.segundos));
 
     let mut inicio: Option<Instant> = None;
@@ -223,9 +264,17 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
                 }
                 ja_limpo = true;
             }
+            let arquivo = match arquivo.as_mut() {
+                Some(a) => a,
+                None => {
+                    let codec = f.frame.codec.unwrap_or_default();
+                    let nome = saida.get_or_insert_with(|| format!("recebido.{}", crate::extensao(codec)));
+                    arquivo.insert(BufWriter::new(File::create(&*nome)?))
+                }
+            };
             arquivo.write_all(&f.frame.data)?;
             if let Some(d) = &mut decoder {
-                decodificados += d.decode(&f.frame.data)?.len() as u64;
+                decodificados += d.decode(f.frame.codec.unwrap_or_default(), &f.frame.data)?;
             }
             frames += 1;
             bytes += f.frame.data.len() as u64;
@@ -265,9 +314,8 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    arquivo.flush()?;
-    if let Some(d) = &mut decoder {
-        decodificados += d.finish()?.len() as u64;
+    if let Some(a) = arquivo.as_mut() {
+        a.flush()?;
     }
 
     let s = rx.stats();
@@ -341,7 +389,10 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
         let (w, h) = d.size();
         println!("  decodificados:            {decodificados} de {frames} ({w}x{h})");
     }
-    println!("  gravado em {saida}");
+    match (&arquivo, &saida) {
+        (Some(_), Some(s)) => println!("  gravado em {s}"),
+        _ => println!("  nada gravado (nenhum keyframe chegou)"),
+    }
     if let Some(t) = &tocador {
         let s = t.stats();
         println!(

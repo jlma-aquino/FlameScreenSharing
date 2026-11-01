@@ -41,8 +41,9 @@ pub use cursor::{CursorMessage, CursorShape, ShapeAssembler};
 pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
 pub use packet::{
-    prepare_seal, stamp_send_time, PacketHeader, PacketKind, ProtoError, FLAG_ENCRYPTED, FLAG_KEYFRAME,
-    FLAG_REFRESH_END, FLAG_REFRESH_START, HEADER_LEN, MAGIC, PONG_LEN, PROTOCOL_VERSION,
+    prepare_seal, stamp_send_time, PacketHeader, PacketKind, ProtoError, VideoCodec, FLAG_CODEC_MASK,
+    FLAG_ENCRYPTED, FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START, HEADER_LEN, MAGIC, PONG_LEN,
+    PROTOCOL_VERSION,
 };
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};
 pub use signal::SignalMessage;

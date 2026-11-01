@@ -1,4 +1,4 @@
-# Protocolo de rede — versão 11
+# Protocolo de rede — versão 12
 
 Especificação do formato dos pacotes UDP do Fluxo. Implementação de
 referência: `crates/fluxo-proto`.
@@ -12,12 +12,12 @@ CHANGELOG.
 | Offset | Tamanho | Campo | Descrição |
 |---:|---:|---|---|
 | 0 | 2 | `magic` | Sempre `0x464C` ("FL"). Pacote com outro valor é descartado. |
-| 2 | 1 | `version` | `11`. Versões diferentes são descartadas (histórico na seção 6). |
-| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply, `9` = Signal, `10` = Punch, `11` = Cursor, `13` = Audio (`12` reservado: Input). |
+| 2 | 1 | `version` | `12`. Versões diferentes são descartadas (histórico na seção 6). |
+| 3 | 1 | `kind` | `1` = Video, `2` = Ping, `3` = Pong, `4` = KeyframeRequest, `5` = Parity, `6` = Feedback, `7` = PairInit, `8` = PairReply, `9` = Signal, `10` = Punch, `11` = Cursor, `13` = Audio, `14` = Caps (`12` reservado: Input). |
 | 4 | 4 | `frame_id` | Número do frame (Video) ou do ping. Cresce de 1 em 1, pode dar a volta. |
 | 8 | 2 | `frag_index` | Índice do fragmento, `0 .. frag_count-1`. |
 | 10 | 2 | `frag_count` | Total de fragmentos do frame (≥ 1). |
-| 12 | 1 | `flags` | Bit 0: keyframe. Bit 1: início de uma onda de intra-refresh. Bit 2: fim da onda. Bit 3: payload cifrado (seção 2.1). Bits 4–7 reservados (enviar 0, ignorar ao ler). No KeyframeRequest, o bit 0 diz que só keyframe serve. |
+| 12 | 1 | `flags` | Bit 0: keyframe. Bit 1: início de uma onda de intra-refresh. Bit 2: fim da onda. Bit 3: payload cifrado (seção 2.1). Bits 4–5: codec do vídeo (`0` H.264, `1` HEVC, `2` AV1; seção 2.6). Bits 6–7 reservados (enviar 0, ignorar ao ler). No KeyframeRequest, o bit 0 diz que só keyframe serve. |
 | 13 | 1 | `fec_group` | Só em Parity: fragmentos por grupo de FEC (≥ 1). Nos outros tipos, 0. |
 | 14 | 2 | `payload_len` | Bytes de payload (cifrado: inclui a tag de 16). Deve ser igual a `tamanho do datagrama − 28`. |
 | 16 | 4 | `timestamp_us` | Momento da captura em µs: relógio de parede (UTC) truncado para 32 bits, volta a cada ~71 min (`fluxo_net::clock_us`). |
@@ -28,9 +28,12 @@ CHANGELOG.
 ## 2. Tipos de pacote
 
 ### Video (`kind = 1`)
-Um pedaço de um frame codificado em **H.264 Annex B** (NALs com prefixo
-`00 00 00 01`; keyframes trazem SPS/PPS). Todos os fragmentos de um frame têm
-o mesmo `frame_id`, `frag_count`, `flags` e `timestamp_us`.
+Um pedaço de um frame codificado. O codec vem nos bits 4–5 de `flags`
+(seção 2.6): **H.264** ou **HEVC** em Annex B (NALs com prefixo
+`00 00 00 01`; keyframes trazem SPS/PPS, e VPS no HEVC) ou **AV1** em OBUs
+no formato de baixo overhead (keyframes trazem o cabeçalho de sequência).
+Todos os fragmentos de um frame têm o mesmo `frame_id`, `frag_count`,
+`flags` e `timestamp_us`.
 
 ### Ping (`kind = 2`) / Pong (`kind = 3`)
 Medição de RTT e **sincronização de relógio**, nos dois sentidos (host e
@@ -320,6 +323,25 @@ pacing nem frames grandes).
   diminui depois de 10 s estável), FEC do Opus para o perdido quando o
   seguinte já chegou, ocultação de perda (o Opus inventa) quando não.
 
+## 2.6. Codec do vídeo e Caps (`kind = 14`)
+
+O host escolhe o codec por sessão, entre os que o cliente decodifica:
+
+- **Caps** (cliente → host, cifrado): payload de 1 byte, máscara de codecs
+  que o cliente decodifica (bit 0 H.264, bit 1 HEVC, bit 2 AV1). Vai junto
+  com cada Ping (a cada 500 ms), então um Caps perdido é repetido logo.
+  H.264 é sempre suposto: o host liga o bit 0 mesmo se não vier.
+- O host espera até 1,5 s depois do pareamento pelo primeiro Caps e abre o
+  encoder com o melhor codec que **a GPU dele codifica e o cliente
+  decodifica**, na ordem AV1, HEVC, H.264 (ou o pedido com
+  `fluxo-host --codec`). Sem Caps no prazo: H.264.
+- Cada frame de vídeo leva o codec nos bits 4–5 de `flags` (e as paridades
+  também, por terem as mesmas `flags` do frame). O cliente troca de decoder
+  quando o codec muda — na prática só no primeiro frame, que é keyframe.
+- O que o cliente anuncia: H.264 sempre (decoder da Microsoft, vem no
+  Windows); HEVC e AV1 só com a extensão da Microsoft Store instalada
+  ("HEVC Video Extensions", "AV1 Video Extension").
+
 ### Reservado: Input (`kind = 12`)
 
 Para o controle remoto (mouse e teclado do cliente no host, fase 6,
@@ -395,3 +417,4 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
 | 9 | + Signal (`kind = 9`, servidor de sinalização) e Punch (`kind = 10`, furo de NAT); um PairInit repetido é reconhecido pelo conteúdo, venha de onde vier. Versões anteriores recusadas. |
 | 10 | + Cursor (`kind = 11`): posição e forma do ponteiro à parte do vídeo, pedido de forma perdida. `kind = 12` reservado para o controle remoto. Versões anteriores recusadas. |
 | 11 | + Audio (`kind = 13`): o som do host em Opus, um quadro de 10 ms por pacote. Versões anteriores recusadas. |
+| 12 | + Caps (`kind = 14`, codecs que o cliente decodifica); codec do vídeo nos bits 4–5 de `flags` (H.264, HEVC, AV1). Versões anteriores recusadas. |

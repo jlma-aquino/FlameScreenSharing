@@ -23,9 +23,6 @@ pub struct Decoder {
     plane_height: u32,
     stride: u32,
     out_size: u32,
-    /// Converter cada frame para BGRA (para PSNR). Desligado, `decode` só
-    /// conta: devolve um `Vec` vazio por frame decodificado.
-    pub convert: bool,
 }
 
 impl Decoder {
@@ -53,7 +50,6 @@ impl Decoder {
                 plane_height: height,
                 stride: width,
                 out_size: 0,
-                convert: true,
             };
             // Sem tamanho conhecido, o tipo de saída só existe depois do
             // primeiro keyframe (chega como STREAM_CHANGE em drain_outputs).
@@ -65,12 +61,6 @@ impl Decoder {
             me.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
             Ok(me)
         }
-    }
-
-    /// Tamanho visível dos frames decodificados (0×0 até o primeiro keyframe,
-    /// se criado sem tamanho).
-    pub fn size(&self) -> (u32, u32) {
-        (self.width, self.height)
     }
 
     /// Escolhe saída NV12 e lê a geometria real do buffer.
@@ -161,10 +151,6 @@ impl Decoder {
             }
             let Some(sample) = sample else { continue };
             // SAFETY: Lock/Unlock pareados; lemos dentro do tamanho travado.
-            if !self.convert {
-                frames.push(Vec::new());
-                continue;
-            }
             let bgra = unsafe {
                 let buffer = sample.ConvertToContiguousBuffer()?;
                 let mut p = std::ptr::null_mut();

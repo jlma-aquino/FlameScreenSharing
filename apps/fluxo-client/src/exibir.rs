@@ -181,6 +181,13 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
             match recuperacao.on_frame(&f.frame, Instant::now()) {
                 FrameAction::Skip => pulados += 1,
                 FrameAction::Decode { show } => {
+                    // O codec vem marcado em cada frame; troca o decoder se
+                    // mudou (na prática só no primeiro, que é keyframe).
+                    let codec = f.frame.codec.unwrap_or_default();
+                    if codec != decoder.codec() {
+                        decoder = VideoDecoder::with_codec(&device, codec)?;
+                        println!("  vídeo em {} | decoder: {}", codec.name(), decoder.name());
+                    }
                     let t = Instant::now();
                     match decoder.decode(&f.frame.data) {
                         Ok(Some(d)) if show => para_mostrar = Some((d, f.frame.timestamp_us)),
@@ -190,7 +197,7 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
                             // keyframe com um decoder limpo.
                             erros_decode += 1;
                             eprintln!("(decode falhou: {e}; pedindo keyframe)");
-                            decoder = VideoDecoder::new(&device)?;
+                            decoder = VideoDecoder::with_codec(&device, decoder.codec())?;
                             recuperacao.on_decode_error(Instant::now());
                         }
                     }

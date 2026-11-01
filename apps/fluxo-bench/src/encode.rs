@@ -8,8 +8,9 @@ use std::io::{BufWriter, Write};
 use std::time::{Duration, Instant};
 
 use fluxo_capture::{CaptureError, DesktopCapturer};
-use fluxo_encode::{gpu_vendor, open_encoder, probe_backend, Backend, EncoderConfig};
+use fluxo_encode::{gpu_vendor, open_encoder, probe_backend, Backend, EncoderConfig, VideoCodec};
 
+use crate::extensao;
 use crate::verificar::{psnr, Decoder};
 use crate::{bmp, Opts, Serie};
 
@@ -38,9 +39,19 @@ fn config(o: &Opts, cap: &DesktopCapturer) -> EncoderConfig {
     EncoderConfig {
         fps: o.fps,
         bitrate_kbps: (o.mbps * 1000.0).round() as u32,
+        codec: o.codec,
         backend: o.encoder,
         intra_refresh_frames: o.refresh,
         ..EncoderConfig::new(m.width, m.height)
+    }
+}
+
+/// Formato do arquivo para o `ffplay -f`.
+fn formato_ffplay(c: VideoCodec) -> &'static str {
+    match c {
+        VideoCodec::H264 => "h264",
+        VideoCodec::Hevc => "hevc",
+        VideoCodec::Av1 => "obu",
     }
 }
 
@@ -109,6 +120,18 @@ pub fn cmd_encoders(o: &Opts) -> Result<(), Box<dyn Error>> {
     for (b, motivo) in &aberto.skipped {
         println!("  (pulou {b}: {motivo})");
     }
+    // Decoders: o que este PC conseguiria receber (como cliente).
+    println!("\nDecoders (Media Foundation):");
+    for (codec, lista) in fluxo_decode::available_decoders() {
+        match lista.is_empty() {
+            true => println!("  {codec:<6} nenhum"),
+            false => {
+                for (nome, hw) in lista {
+                    println!("  {codec:<6} {nome}{}", if hw { " (hardware)" } else { "" });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -116,12 +139,24 @@ pub fn cmd_encoders(o: &Opts) -> Result<(), Box<dyn Error>> {
 pub fn cmd_encode(o: &Opts) -> Result<(), Box<dyn Error>> {
     let mut cap = DesktopCapturer::new(o.monitor)?;
     let cfg = config(o, &cap);
+    if o.verificar && cfg.codec != VideoCodec::H264 {
+        return Err(format!(
+            "--verificar no encode só com H.264 (a conferência usa o decoder H.264 da Microsoft); \
+             para medir o decode de {} use: fluxo-bench decode --codec {}",
+            cfg.codec.name(),
+            cfg.codec.name().to_lowercase()
+        )
+        .into());
+    }
     let aberto = open_encoder(cap.d3d_device(), &cfg)?;
     for (b, motivo) in &aberto.skipped {
         println!("(pulando {b}: {motivo})");
     }
     let mut enc = aberto.encoder;
-    let saida = o.saida.clone().unwrap_or_else(|| "captura.h264".into());
+    let saida = o
+        .saida
+        .clone()
+        .unwrap_or_else(|| format!("captura.{}", extensao(cfg.codec)));
     println!(
         "Codificando monitor {} ({}x{}) com {}\n  alvo {} Mbps a {} fps, {} s → {saida}",
         o.monitor,
@@ -426,7 +461,10 @@ pub fn cmd_encode(o: &Opts) -> Result<(), Box<dyn Error>> {
             println!("  erros do decoder:          {erros_decode}");
         }
     }
-    println!("\nAbra o vídeo no VLC (arraste o arquivo) ou: ffplay -f h264 {saida}");
+    println!(
+        "\nAbra o vídeo no VLC (arraste o arquivo) ou: ffplay -f {} {saida}",
+        formato_ffplay(cfg.codec)
+    );
     if (entradas as f64) / total < 5.0 {
         println!(
             "Poucos frames? A tela provavelmente estava parada. Rode de novo com um vídeo ou jogo aberto."
@@ -442,7 +480,7 @@ pub fn cmd_decode(o: &Opts) -> Result<(), Box<dyn Error>> {
     let cfg = config(o, &cap);
     let mut enc = open_encoder(cap.d3d_device(), &cfg)?.encoder;
     let device = fluxo_decode::create_device()?;
-    let mut dec = fluxo_decode::VideoDecoder::new(&device)?;
+    let mut dec = fluxo_decode::VideoDecoder::with_codec(&device, cfg.codec)?;
     println!(
         "Encode: {}\nDecode: {}\n{} s com a tela do monitor {}...",
         enc.name(),

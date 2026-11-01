@@ -1,4 +1,8 @@
-//! Decoder H.264 da Microsoft (MFT) com saída em textura D3D11.
+//! Decoder de vídeo do Media Foundation (MFT) com saída em textura D3D11.
+//!
+//! H.264: o decoder da Microsoft, que vem em todo Windows. HEVC e AV1: o MFT
+//! que estiver instalado (extensões da Microsoft Store), achado por
+//! `MFTEnumEx`. Todos são síncronos e usam DXVA quando recebem o device.
 //!
 //! ## Dois caminhos
 //!
@@ -31,7 +35,16 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 
-use crate::DecodeError;
+use crate::{DecodeError, VideoCodec};
+
+/// Subtipo de entrada do Media Foundation para o codec.
+fn subtipo(codec: VideoCodec) -> windows::core::GUID {
+    match codec {
+        VideoCodec::H264 => MFVideoFormat_H264,
+        VideoCodec::Hevc => MFVideoFormat_HEVC,
+        VideoCodec::Av1 => MFVideoFormat_AV1,
+    }
+}
 
 fn win_err(context: &'static str) -> impl Fn(windows::core::Error) -> DecodeError {
     move |e| DecodeError::Windows {
@@ -111,11 +124,13 @@ impl DecodedFrame {
     }
 }
 
-/// Decoder H.264 (Annex B) → texturas NV12.
+/// Decoder (H.264/HEVC em Annex B, AV1 em OBUs) → texturas NV12.
 ///
 /// Não é `Send`: use na thread que vai desenhar.
 pub struct VideoDecoder {
     mft: IMFTransform,
+    codec: VideoCodec,
+    name: String,
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     /// Mantido vivo enquanto o MFT usa o device.
@@ -133,9 +148,15 @@ pub struct VideoDecoder {
 }
 
 impl VideoDecoder {
-    /// Cria o decoder sobre `device` (de preferência criado por
+    /// Decoder H.264 sobre `device` (de preferência criado por
     /// [`create_device`]). O tamanho do vídeo é descoberto no primeiro keyframe.
     pub fn new(device: &ID3D11Device) -> Result<Self, DecodeError> {
+        Self::with_codec(device, VideoCodec::H264)
+    }
+
+    /// Decoder de `codec`. HEVC e AV1 falham se o Windows não tiver o
+    /// decoder instalado (ver [`decodable_codecs`]).
+    pub fn with_codec(device: &ID3D11Device, codec: VideoCodec) -> Result<Self, DecodeError> {
         // SAFETY: sequência padrão de configuração de um MFT síncrono.
         unsafe {
             // COM pode já estar iniciado na thread com outro modelo: tudo bem.
@@ -145,8 +166,28 @@ impl VideoDecoder {
             }
             MFStartup(MF_VERSION, MFSTARTUP_LITE).map_err(win_err("MFStartup"))?;
 
-            let mft: IMFTransform = CoCreateInstance(&CLSID_MSH264DecoderMFT, None, CLSCTX_INPROC_SERVER)
-                .map_err(win_err("criar o decoder H.264 da Microsoft"))?;
+            let (mft, nome): (IMFTransform, String) = if codec == VideoCodec::H264 {
+                let mft = CoCreateInstance(&CLSID_MSH264DecoderMFT, None, CLSCTX_INPROC_SERVER)
+                    .map_err(win_err("criar o decoder H.264 da Microsoft"))?;
+                (mft, "H.264 Microsoft".into())
+            } else {
+                let activate = decoders_sincronos(&subtipo(codec))
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| DecodeError::Windows {
+                        context: "procurar o decoder",
+                        hresult: MF_E_TOPO_CODEC_NOT_FOUND.0,
+                        message: format!(
+                            "nenhum decoder {} instalado (extensão da Microsoft Store)",
+                            codec.name()
+                        ),
+                    })?;
+                let nome = nome_do_mft(&activate);
+                let mft = activate
+                    .ActivateObject()
+                    .map_err(win_err("IMFActivate::ActivateObject"))?;
+                (mft, format!("{} {nome}", codec.name()))
+            };
             let attrs = mft
                 .GetAttributes()
                 .map_err(win_err("IMFTransform::GetAttributes"))?;
@@ -159,13 +200,18 @@ impl VideoDecoder {
             let t = MFCreateMediaType().map_err(win_err("MFCreateMediaType"))?;
             t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
                 .map_err(win_err("MF_MT_MAJOR_TYPE"))?;
-            t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)
+            t.SetGUID(&MF_MT_SUBTYPE, &subtipo(codec))
                 .map_err(win_err("MF_MT_SUBTYPE"))?;
-            mft.SetInputType(0, &t, 0)
-                .map_err(win_err("SetInputType (H.264)"))?;
+            mft.SetInputType(0, &t, 0).map_err(win_err("SetInputType"))?;
 
             let mut me = Self {
                 mft,
+                codec,
+                name: if hardware {
+                    format!("{nome}, acelerado pela GPU (DXVA)")
+                } else {
+                    format!("{nome} por software (sem DXVA neste driver)")
+                },
                 device: device.clone(),
                 context: device
                     .GetImmediateContext()
@@ -211,19 +257,20 @@ impl VideoDecoder {
     }
 
     /// Descrição para o usuário.
-    pub fn name(&self) -> &'static str {
-        if self.hardware {
-            "H.264 Microsoft, acelerado pela GPU (DXVA)"
-        } else {
-            "H.264 Microsoft por software (sem DXVA neste driver)"
-        }
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    /// Entrega um frame H.264 completo (como chega do `fluxo-net`) e devolve
-    /// o frame decodificado mais recente, se houver. `Ok(None)` no começo do
+    /// O codec que este decoder entende.
+    pub fn codec(&self) -> VideoCodec {
+        self.codec
+    }
+
+    /// Entrega um frame completo (como chega do `fluxo-net`) e devolve o
+    /// frame decodificado mais recente, se houver. `Ok(None)` no começo do
     /// vídeo, antes do primeiro keyframe.
-    pub fn decode(&mut self, h264: &[u8]) -> Result<Option<DecodedFrame>, DecodeError> {
-        let sample = memory_sample(h264)?;
+    pub fn decode(&mut self, bitstream: &[u8]) -> Result<Option<DecodedFrame>, DecodeError> {
+        let sample = memory_sample(bitstream)?;
         // SAFETY: entrega da amostra ao MFT, que copia o que precisar.
         let mut entregue = unsafe { self.mft.ProcessInput(0, &sample, 0) };
         let mut newest = None;
@@ -444,5 +491,109 @@ fn missing(context: &'static str) -> DecodeError {
         context,
         hresult: 0,
         message: "a chamada não devolveu o objeto".into(),
+    }
+}
+
+/// Decoders de vídeo registrados no Media Foundation para cada codec
+/// (`"H.264"`, `"HEVC"`, `"AV1"`): nome e se é de hardware. HEVC e AV1 só
+/// aparecem com as extensões da Microsoft Store ("HEVC Video Extensions",
+/// "AV1 Video Extension").
+pub fn available_decoders() -> Vec<(&'static str, Vec<(String, bool)>)> {
+    iniciar_mf();
+    VideoCodec::PREFERENCE
+        .into_iter()
+        .rev()
+        .map(|codec| {
+            let lista = [true, false]
+                .into_iter()
+                .flat_map(|hw| {
+                    enumerar(&subtipo(codec), hw)
+                        .iter()
+                        .map(move |a| (nome_do_mft(a), hw))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            (codec.name(), lista)
+        })
+        .collect()
+}
+
+/// Codecs que [`VideoDecoder::with_codec`] consegue abrir nesta máquina,
+/// como máscara de [`VideoCodec::bit`] (o que o cliente anuncia ao host).
+/// H.264 sempre; HEVC e AV1 se houver um decoder síncrono instalado (os de
+/// hardware assíncronos não servem para o nosso laço de decode).
+pub fn decodable_codecs() -> u8 {
+    iniciar_mf();
+    VideoCodec::PREFERENCE
+        .into_iter()
+        .filter(|&c| c == VideoCodec::H264 || !decoders_sincronos(&subtipo(c)).is_empty())
+        .fold(0, |m, c| m | c.bit())
+}
+
+fn iniciar_mf() {
+    // SAFETY: inicialização idempotente do COM e do MF nesta thread.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let _ = MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET);
+    }
+}
+
+/// Decoders síncronos de `subtipo`, o melhor primeiro.
+fn decoders_sincronos(subtipo: &windows::core::GUID) -> Vec<IMFActivate> {
+    enumerar(subtipo, false)
+}
+
+/// Decoders de `subtipo` (de hardware, assíncronos, ou os síncronos).
+fn enumerar(subtipo: &windows::core::GUID, hardware: bool) -> Vec<IMFActivate> {
+    let entrada = MFT_REGISTER_TYPE_INFO {
+        guidMajorType: MFMediaType_Video,
+        guidSubtype: *subtipo,
+    };
+    let flags = match hardware {
+        true => MFT_ENUM_FLAG_HARDWARE,
+        false => MFT_ENUM_FLAG_SYNCMFT,
+    } | MFT_ENUM_FLAG_LOCALMFT
+        | MFT_ENUM_FLAG_SORTANDFILTER;
+    let mut array: *mut Option<IMFActivate> = std::ptr::null_mut();
+    let mut count = 0u32;
+    // SAFETY: o MF aloca o array com CoTaskMemAlloc; cada elemento é tomado
+    // e o array liberado.
+    unsafe {
+        if MFTEnumEx(
+            MFT_CATEGORY_VIDEO_DECODER,
+            flags,
+            Some(&entrada),
+            None,
+            &mut array,
+            &mut count,
+        )
+        .is_err()
+        {
+            return Vec::new();
+        }
+        let lista = (0..count as usize)
+            .filter_map(|i| (*array.add(i)).take())
+            .collect();
+        if !array.is_null() {
+            windows::Win32::System::Com::CoTaskMemFree(Some(array as *const _));
+        }
+        lista
+    }
+}
+
+/// Nome amigável do MFT.
+fn nome_do_mft(a: &IMFActivate) -> String {
+    let mut p = windows::core::PWSTR::null();
+    let mut n = 0u32;
+    // SAFETY: GetAllocatedString aloca com CoTaskMemAlloc; liberamos após copiar.
+    unsafe {
+        match a.GetAllocatedString(&MFT_FRIENDLY_NAME_Attribute, &mut p, &mut n) {
+            Ok(()) => {
+                let s = p.to_string().unwrap_or_default();
+                windows::Win32::System::Com::CoTaskMemFree(Some(p.0 as *const _));
+                s
+            }
+            Err(_) => "(sem nome)".to_string(),
+        }
     }
 }

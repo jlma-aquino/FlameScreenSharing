@@ -190,6 +190,7 @@ dependencies = [
 name = "fluxo-decode"
 version = "0.1.0"
 dependencies = [
+ "fluxo-proto",
  "windows",
 ]
 
@@ -198,6 +199,7 @@ name = "fluxo-encode"
 version = "0.1.0"
 dependencies = [
  "fluxo-capture",
+ "fluxo-proto",
  "windows",
 ]
 

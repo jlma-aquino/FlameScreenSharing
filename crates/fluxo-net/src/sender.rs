@@ -358,6 +358,9 @@ pub(crate) struct Shared {
     pub(crate) stop: AtomicBool,
     keyframe_requested: AtomicBool,
     refresh_requested: AtomicBool,
+    /// Codecs que o cliente decodifica (máscara de `VideoCodec::bit`; 0 =
+    /// ainda não disse).
+    codecs_cliente: std::sync::atomic::AtomicU8,
     /// Pacotes de vídeo/paridade que tentamos mandar (inclui os descartados
     /// pelas simulações), contados um a um na hora em que saem: base da
     /// conta de perda.
@@ -537,6 +540,7 @@ impl VideoSender {
             stop: AtomicBool::new(false),
             keyframe_requested: AtomicBool::new(false),
             refresh_requested: AtomicBool::new(false),
+            codecs_cliente: std::sync::atomic::AtomicU8::new(0),
             sent_history: Mutex::new(SentHistory::default()),
             loss_window: Mutex::new(LossWindow::default()),
             report: Mutex::new(None),
@@ -632,6 +636,21 @@ impl VideoSender {
     /// decoder falhou). Vários pedidos seguidos contam como um só.
     pub fn take_keyframe_request(&self) -> bool {
         self.shared.keyframe_requested.swap(false, Ordering::Relaxed)
+    }
+
+    /// Codecs que o cliente disse decodificar (máscara de
+    /// [`VideoCodec::bit`](fluxo_proto::VideoCodec::bit)), esperando até
+    /// `prazo` pela primeira notícia. `None`: nada chegou no prazo (os Caps
+    /// se perderam) — use H.264, que todo cliente decodifica.
+    pub fn wait_client_codecs(&self, prazo: Duration) -> Option<u8> {
+        let limite = Instant::now() + prazo;
+        loop {
+            match self.shared.codecs_cliente.load(Ordering::Relaxed) {
+                0 if Instant::now() < limite => thread::sleep(Duration::from_millis(5)),
+                0 => return None,
+                m => return Some(m),
+            }
+        }
     }
 
     /// `true` (uma vez) se o cliente perdeu algo e pediu para limpar a
@@ -1113,6 +1132,12 @@ fn on_packet(
         | PacketKind::Signal
         | PacketKind::Punch
         | PacketKind::Audio => {}
+        PacketKind::Caps => {
+            if let Some(&m) = payload.first() {
+                // Bit 0 (H.264) sempre: um cliente sem nenhum codec não existe.
+                shared.codecs_cliente.store(m | 1, Ordering::Relaxed);
+            }
+        }
     }
 }
 

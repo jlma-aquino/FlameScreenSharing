@@ -999,3 +999,27 @@ fn audio_chega_cifrado_em_ordem_e_sem_atrapalhar_o_video() {
     let (c, h) = (rx.stats(), tx.stats());
     assert_eq!((c.audio_packets, c.audio_dropped, h.audio_packets), (50, 0, 50));
 }
+
+#[test]
+fn host_fica_sabendo_os_codecs_do_cliente() {
+    use fluxo_net::VideoCodec;
+
+    let rx = VideoReceiver::bind(
+        "127.0.0.1:0",
+        ReceiverConfig {
+            ping_interval: Duration::from_millis(50),
+            codecs: VideoCodec::H264.bit() | VideoCodec::Av1.bit(),
+            ..ReceiverConfig::default()
+        },
+    )
+    .unwrap();
+    let tx = VideoSender::connect(
+        "127.0.0.1:0",
+        rx.local_addr(),
+        SenderConfig::for_bitrate(20_000_000),
+    )
+    .unwrap();
+    // O cliente só conhece o host depois do primeiro pacote dele.
+    tx.send_frame(frame(0, 1000), true, clock_us()).unwrap();
+    assert_eq!(tx.wait_client_codecs(Duration::from_secs(2)), Some(0b101));
+}

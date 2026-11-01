@@ -6,6 +6,21 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **HEVC e AV1** (protocolo v12, fase 6, ADR-012): o cliente diz que codecs
+  decodifica (novo pacote Caps, junto com cada Ping) e o host abre o encoder
+  com o melhor que a GPU dele também codifica, na ordem AV1, HEVC, H.264;
+  cada frame leva o codec nos bits 4–5 de `flags`. `fluxo-host --codec
+  auto|h264|hevc|av1`; `fluxo-bench encode/decode --codec`. NVENC e Media
+  Foundation nos três codecs (o gerador do layout do NVENC ganhou os campos
+  de HEVC e AV1). O decoder usa o MFT instalado para HEVC/AV1 (extensões da
+  Microsoft Store). RTX 5050 → AV1 Video Extension na mesma máquina: 302 de
+  302 frames decodificados, decode ~0,4 ms; com 1% de perda simulada, 60
+  ondas de intra-refresh e nenhum erro de decode.
+- `fluxo-encode`: `EncoderConfig::codec`, `VideoCodec`; `fluxo-decode`:
+  `VideoDecoder::with_codec`/`codec`, `decodable_codecs`, `available_decoders`;
+  `fluxo-net`: `ReceiverConfig::codecs`, `VideoSender::wait_client_codecs`,
+  `CompletedFrame::codec`; `fluxo-proto`: `VideoCodec`, `PacketKind::Caps`,
+  `FLAG_CODEC_MASK`.
 - **Áudio** (protocolo v11, fase 6, ADR-011): o host captura o que o PC toca
   (WASAPI loopback) e manda em Opus 48 kHz estéreo, 128 kbps, um quadro de
   10 ms por pacote, cifrado, fora da fila do vídeo; o cliente toca com buffer

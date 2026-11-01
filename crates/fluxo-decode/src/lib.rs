@@ -1,9 +1,12 @@
 //! # fluxo-decode
 //!
-//! Decodifica o H.264 que chega da rede em **texturas D3D11 na GPU**, prontas
-//! para a tela. Usa o decoder H.264 do próprio Windows (MFT da Microsoft) com
-//! aceleração DXVA: funciona com NVIDIA, AMD e Intel sem dependências extras.
-//! Por que esse caminho: ADR-007 em `docs/DECISOES.md`.
+//! Decodifica o vídeo que chega da rede (H.264, HEVC ou AV1) em **texturas
+//! D3D11 na GPU**, prontas para a tela. Usa os decoders do próprio Windows
+//! (MFTs do Media Foundation) com aceleração DXVA: o H.264 da Microsoft vem
+//! em todo Windows; HEVC e AV1 dependem das extensões da Microsoft Store
+//! ([`decodable_codecs`] diz quais existem). Funciona com NVIDIA, AMD e
+//! Intel sem dependências extras. Por que esse caminho: ADR-007 em
+//! `docs/DECISOES.md`.
 //!
 //! ## Uso
 //!
@@ -34,7 +37,9 @@ use std::fmt;
 mod mf;
 
 #[cfg(windows)]
-pub use mf::{create_device, DecodedFrame, VideoDecoder};
+pub use mf::{available_decoders, create_device, decodable_codecs, DecodedFrame, VideoDecoder};
+
+pub use fluxo_proto::VideoCodec;
 
 /// Erros do decoder.
 #[derive(Debug, Clone, PartialEq, Eq)]

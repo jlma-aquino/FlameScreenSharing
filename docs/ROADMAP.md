@@ -116,7 +116,12 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] Cursor desenhado no cliente (protocolo v10): posição e forma à parte do vídeo, redesenho sem esperar
       frame novo; forma perdida é pedida de novo. Antes o ponteiro nem aparecia (o Desktop Duplication não o
       desenha na imagem)
-- [ ] HEVC/AV1, 1440p/4K, 120 fps
-- [ ] H.264 4:4:4 (NVENC) para texto colorido nítido — o 4:2:0 limita o PSNR RGB a ~32 dB em área de trabalho
+- [x] HEVC e AV1 (protocolo v12): o host usa o melhor codec que a GPU codifica e o cliente decodifica (AV1 >
+      HEVC > H.264; `--codec` força um), NVENC e Media Foundation. AV1 da RTX 5050 → AV1 Video Extension: 0
+      perdas, decode ~0,4 ms, intra-refresh ok. HEVC só codificado aqui (este PC não tem o decoder HEVC)
+- [ ] 1440p/4K, 120 fps
+- [ ] ~~H.264 4:4:4 (NVENC) para texto colorido nítido~~ — pulado por enquanto: o decoder H.264 do Windows só
+      decodifica 4:2:0, então o cliente precisaria de um decoder próprio. O 4:2:0 limita o PSNR RGB a ~32 dB
+      em área de trabalho
 - [ ] Encoder por software (fallback para VMs/PCs sem encoder de hardware)
 - [ ] Interface gráfica

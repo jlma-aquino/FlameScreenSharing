@@ -103,6 +103,10 @@ int main(void) {
     printf("\n// --- GUIDs ---\n");
     guid("CODEC_H264_GUID", &NV_ENC_CODEC_H264_GUID);
     guid("H264_PROFILE_HIGH_GUID", &NV_ENC_H264_PROFILE_HIGH_GUID);
+    guid("CODEC_HEVC_GUID", &NV_ENC_CODEC_HEVC_GUID);
+    guid("HEVC_PROFILE_MAIN_GUID", &NV_ENC_HEVC_PROFILE_MAIN_GUID);
+    guid("CODEC_AV1_GUID", &NV_ENC_CODEC_AV1_GUID);
+    guid("AV1_PROFILE_MAIN_GUID", &NV_ENC_AV1_PROFILE_MAIN_GUID);
     guid("PRESET_P1_GUID", &NV_ENC_PRESET_P1_GUID);
     guid("PRESET_P2_GUID", &NV_ENC_PRESET_P2_GUID);
     guid("PRESET_P3_GUID", &NV_ENC_PRESET_P3_GUID);
@@ -182,6 +186,44 @@ int main(void) {
     OFF("CFG_H264_VUI_COLOUR_MATRIX", NV_ENC_CONFIG,
         encodeCodecConfig.h264Config.h264VUIParameters.colourMatrix);
 
+    /* HEVC: os mesmos campos, outra posição na union. */
+    OFF("CFG_HEVC_IDR_PERIOD", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.idrPeriod);
+    BIT("CFG_HEVC_REPEAT_SPSPPS", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.repeatSPSPPS);
+    BIT("CFG_HEVC_ENABLE_INTRA_REFRESH", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.enableIntraRefresh);
+    BIT("CFG_HEVC_RECOVERY_POINT_SEI", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.outputRecoveryPointSEI);
+    OFF("CFG_HEVC_INTRA_REFRESH_PERIOD", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.intraRefreshPeriod);
+    OFF("CFG_HEVC_INTRA_REFRESH_CNT", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.intraRefreshCnt);
+    OFF("CFG_HEVC_MAX_NUM_REF_FRAMES", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.maxNumRefFramesInDPB);
+    OFF("CFG_HEVC_NUM_REF_L0", NV_ENC_CONFIG, encodeCodecConfig.hevcConfig.numRefL0);
+    OFF("CFG_HEVC_VUI_SIGNAL_TYPE_PRESENT", NV_ENC_CONFIG,
+        encodeCodecConfig.hevcConfig.hevcVUIParameters.videoSignalTypePresentFlag);
+    OFF("CFG_HEVC_VUI_VIDEO_FORMAT", NV_ENC_CONFIG,
+        encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFormat);
+    OFF("CFG_HEVC_VUI_FULL_RANGE", NV_ENC_CONFIG,
+        encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFullRangeFlag);
+    OFF("CFG_HEVC_VUI_COLOUR_DESC_PRESENT", NV_ENC_CONFIG,
+        encodeCodecConfig.hevcConfig.hevcVUIParameters.colourDescriptionPresentFlag);
+    OFF("CFG_HEVC_VUI_COLOUR_PRIMARIES", NV_ENC_CONFIG,
+        encodeCodecConfig.hevcConfig.hevcVUIParameters.colourPrimaries);
+    OFF("CFG_HEVC_VUI_TRANSFER", NV_ENC_CONFIG,
+        encodeCodecConfig.hevcConfig.hevcVUIParameters.transferCharacteristics);
+    OFF("CFG_HEVC_VUI_COLOUR_MATRIX", NV_ENC_CONFIG,
+        encodeCodecConfig.hevcConfig.hevcVUIParameters.colourMatrix);
+
+    /* AV1: cabeçalho de sequência no lugar de SPS/PPS, cor sem VUI. */
+    OFF("CFG_AV1_IDR_PERIOD", NV_ENC_CONFIG, encodeCodecConfig.av1Config.idrPeriod);
+    BIT("CFG_AV1_REPEAT_SEQ_HDR", NV_ENC_CONFIG, encodeCodecConfig.av1Config.repeatSeqHdr);
+    BIT("CFG_AV1_ENABLE_INTRA_REFRESH", NV_ENC_CONFIG, encodeCodecConfig.av1Config.enableIntraRefresh);
+    BIT("CFG_AV1_OUTPUT_ANNEXB", NV_ENC_CONFIG, encodeCodecConfig.av1Config.outputAnnexBFormat);
+    OFF("CFG_AV1_INTRA_REFRESH_PERIOD", NV_ENC_CONFIG, encodeCodecConfig.av1Config.intraRefreshPeriod);
+    OFF("CFG_AV1_INTRA_REFRESH_CNT", NV_ENC_CONFIG, encodeCodecConfig.av1Config.intraRefreshCnt);
+    OFF("CFG_AV1_MAX_NUM_REF_FRAMES", NV_ENC_CONFIG, encodeCodecConfig.av1Config.maxNumRefFramesInDPB);
+    OFF("CFG_AV1_NUM_FWD_REFS", NV_ENC_CONFIG, encodeCodecConfig.av1Config.numFwdRefs);
+    OFF("CFG_AV1_COLOR_PRIMARIES", NV_ENC_CONFIG, encodeCodecConfig.av1Config.colorPrimaries);
+    OFF("CFG_AV1_TRANSFER", NV_ENC_CONFIG, encodeCodecConfig.av1Config.transferCharacteristics);
+    OFF("CFG_AV1_MATRIX", NV_ENC_CONFIG, encodeCodecConfig.av1Config.matrixCoefficients);
+    OFF("CFG_AV1_COLOR_RANGE", NV_ENC_CONFIG, encodeCodecConfig.av1Config.colorRange);
+
     printf("\n// --- NV_ENC_INITIALIZE_PARAMS ---\n");
     SIZE("INITIALIZE_PARAMS_SIZE", NV_ENC_INITIALIZE_PARAMS);
     OFF("IP_VERSION", NV_ENC_INITIALIZE_PARAMS, version);
@@ -247,6 +289,10 @@ int main(void) {
     OFF("PP_PICTURE_STRUCT", NV_ENC_PIC_PARAMS, pictureStruct);
     OFF("PP_H264_FORCE_INTRA_REFRESH", NV_ENC_PIC_PARAMS,
         codecPicParams.h264PicParams.forceIntraRefreshWithFrameCnt);
+    OFF("PP_HEVC_FORCE_INTRA_REFRESH", NV_ENC_PIC_PARAMS,
+        codecPicParams.hevcPicParams.forceIntraRefreshWithFrameCnt);
+    OFF("PP_AV1_FORCE_INTRA_REFRESH", NV_ENC_PIC_PARAMS,
+        codecPicParams.av1PicParams.forceIntraRefreshWithFrameCnt);
 
     printf("\n// --- NV_ENC_LOCK_BITSTREAM ---\n");
     SIZE("LOCK_BITSTREAM_SIZE", NV_ENC_LOCK_BITSTREAM);

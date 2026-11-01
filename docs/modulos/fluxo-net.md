@@ -352,6 +352,16 @@ os quadros vão para uma fila própria (`recv_audio`, ou `take_audio` para
 tocar em outra thread); fila cheia (ninguém tocando) descarta e conta
 (`ReceiverStats::audio_dropped`). Formato: PROTOCOLO.md, seção 2.5.
 
+## Codec (Caps)
+
+`ReceiverConfig::codecs` (máscara de `VideoCodec::bit`, padrão só H.264) vai
+ao host num pacote Caps junto com cada Ping. No host,
+`VideoSender::wait_client_codecs(prazo)` espera a primeira notícia (`None`
+se não chegou: use H.264). O codec de cada frame vem em
+`CompletedFrame::codec`. Escolha do codec: ADR-012; formato: PROTOCOLO.md,
+seção 2.6. Testado em `tests/loopback.rs`
+(`host_fica_sabendo_os_codecs_do_cliente`).
+
 ## Cursor
 
 O host manda posição e forma do ponteiro à parte do vídeo (PROTOCOLO.md,

@@ -134,6 +134,14 @@ ritmo da placa (sem esperar o vídeo). `--volume V` (0 a 100) muda só o
 volume do Fluxo; `--sem-audio` não toca. O resumo ao fechar mostra quadros
 tocados, perdidos (e quantos o FEC refez) e quantas vezes faltou som.
 
+## Codec
+
+O cliente anuncia ao host os codecs que este Windows decodifica
+(`fluxo_decode::decodable_codecs`: H.264 sempre; HEVC e AV1 com as extensões
+da Microsoft Store) e troca de decoder quando os frames chegam noutro codec
+(na prática, só no primeiro). A linha "vídeo em AV1 | decoder: ..." mostra
+o escolhido.
+
 ## Cursor
 
 O ponteiro do host é desenhado por cima do vídeo (Direct2D, antes do
