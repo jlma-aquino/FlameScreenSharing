@@ -24,7 +24,7 @@ que falharam e por quê — mostre ao usuário.
 diferente de `width` × `height` (o vídeo): o Video Processor que converte
 para NV12 redimensiona na mesma passada. `scaled_size(captura, linhas)`
 calcula o tamanho com a mesma proporção; `suggested_bitrate_kbps(w, h, fps)`,
-o bitrate padrão do host (20 Mbps em 1080p60, proporcional, até 100).
+o bitrate padrão do host (20 Mbps em 1080p60, proporcional, de 6 a 100).
 
 ## Encoder por software (OpenH264)
 

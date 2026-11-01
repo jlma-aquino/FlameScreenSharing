@@ -14,7 +14,8 @@
    ```
 4. *(Opcional)* **NASM** (<https://nasm.us>), no PATH: o OpenH264 (encoder
    por software) compila do fonte com o compilador C++ do item 1; com o
-   NASM ele inclui as rotinas em assembly e fica várias vezes mais rápido.
+   NASM ele inclui as rotinas em assembly e fica mais rápido (no decode, 25–40%
+   a menos de tempo por frame no notebook de teste).
    Sem ele compila igual, só em C.
 5. *(Opcional)* Editor: VS Code com a extensão **rust-analyzer** — mostra
    erros, tipos e a documentação ao passar o mouse.
@@ -32,7 +33,7 @@ ficam em `target\release\`.
 
 ### No Linux (para assistir)
 
-Precisa de Rust e `g++`; o `nasm` é opcional e deixa o decode bem mais rápido.
+Precisa de Rust e `g++`; o `nasm` é recomendado (25–40% a menos de tempo por frame).
 
 ```bash
 cargo build --release -p fluxo-client --features portatil

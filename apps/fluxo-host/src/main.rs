@@ -55,7 +55,7 @@ Opções:
                         (padrão nativa). O redimensionamento é na GPU, junto da
                         conversão de cor
   --mbps M              bitrate máximo do vídeo (padrão: 20 em 1080p60,
-                        proporcional a resolução × fps, até 100). O bitrate adaptativo
+                        proporcional a resolução × fps, de 6 a 100). O bitrate adaptativo
                         começa em até 20 Mbps, sobe até este valor se a rede
                         deixar e desce quando ela reclama
   --mbps-min M          piso do bitrate adaptativo (padrão mbps/8, mínimo 1)

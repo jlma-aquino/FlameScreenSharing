@@ -304,7 +304,9 @@ pub fn scaled_size(origem: (u32, u32), altura: u32) -> (u32, u32) {
 }
 
 /// Bitrate sugerido (kbit/s) para um tamanho e fps: 20 Mbps em 1080p60,
-/// proporcional aos pixels por segundo, entre 20 e 100 Mbps.
+/// proporcional aos pixels por segundo, entre 6 e 100 Mbps. Bitrate a mais também
+/// custa no decode de quem assiste: num PC fraco, 720p30 a 18 Mbps levou o dobro
+/// do tempo por frame que a 5 Mbps.
 ///
 /// ```
 /// use fluxo_encode::suggested_bitrate_kbps;
@@ -313,12 +315,13 @@ pub fn scaled_size(origem: (u32, u32), altura: u32) -> (u32, u32) {
 /// assert_eq!(suggested_bitrate_kbps(1920, 1080, 120), 40_000);
 /// assert_eq!(suggested_bitrate_kbps(3840, 2160, 60), 80_000);
 /// assert_eq!(suggested_bitrate_kbps(3840, 2160, 120), 100_000); // teto
-/// assert_eq!(suggested_bitrate_kbps(1280, 720, 60), 20_000); // piso
+/// assert_eq!(suggested_bitrate_kbps(1280, 720, 60), 8_888);
+/// assert_eq!(suggested_bitrate_kbps(1280, 720, 30), 6_000); // piso
 /// ```
 pub fn suggested_bitrate_kbps(width: u32, height: u32, fps: u32) -> u32 {
     let base = 1920u64 * 1080 * 60;
     let pixels = width as u64 * height as u64 * fps as u64;
-    (20_000 * pixels / base).clamp(20_000, 100_000) as u32
+    (20_000 * pixels / base).clamp(6_000, 100_000) as u32
 }
 
 /// Um frame comprimido.

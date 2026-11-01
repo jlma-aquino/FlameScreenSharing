@@ -230,6 +230,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - `fluxo-bench decode`: captura → encode → decode, mede o decoder isolado.
 
 ### Alterado
+- Bitrate padrão do host com piso de 6 Mbps (era 20): resolução baixa não pesa à toa
+  no decode de quem assiste. 1080p60 segue em 20.
 - Rust mínimo 1.85 (era 1.80): o `openh264` pede 1.85. Com isso,
   `map_or(true, …)` virou `is_none_or`.
 - Com `--encoder` explícito, o erro do backend volta sem embrulho (antes

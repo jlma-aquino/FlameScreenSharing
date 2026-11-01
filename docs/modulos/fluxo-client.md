@@ -60,13 +60,19 @@ painel) e `som.rs` (buffer de jitter e Opus, com o PCM indo por pipe ao tocador)
 Mesmas opções, teclas e saída no terminal. No Windows, `--portatil` usa este caminho,
 para teste.
 
-| Teste (host RTX 5050, Wi-Fi) | Mostrados | Decode (média) | Captura→tela p50 |
-|---|---|---|---|
-| Windows, 16 núcleos, 1080p60 | 52 fps | 4,6 ms | 11,2 ms |
-| Notebook Linux, 2 núcleos, sem NASM, 720p30 | 24,5 fps | 18,9 ms | 22,9 ms |
-| Notebook Linux, 2 núcleos, sem NASM, 1080p30 | 17 fps | 58,6 ms | ~3,7 s: não acompanha |
+Notebook Linux (2 núcleos, Intel HD, Wi-Fi, OpenH264 com NASM), vídeo em tela cheia
+no host:
 
-A primeira linha foi na mesma máquina, sem Wi-Fi.
+| Transmissão | Mostrados | Decode (média) | Captura→tela p50 |
+|---|---|---|---|
+| 720p60, ~5 Mbps | 32,6 fps | 15,5 ms | 21,0 ms |
+| 720p30, ~5 Mbps | 27,9 fps | 18,9 ms | 28,7 ms |
+| 720p30, ~18 Mbps | 25,7 fps | 38,8 ms | ~1,3 s: não acompanha |
+| 1080p30, ~6 Mbps | 24,4 fps | 34,7 ms | ~0,8 s: não acompanha |
+| 1080p60, ~12 Mbps | 20,4 fps | 25,7 ms | ~1,5 s: não acompanha |
+
+O custo do decode segue o bitrate. Sem NASM, 1080p custou 42–59 ms por frame, e com
+ele 26–45 ms (25–40% a menos, em conteúdo parecido).
 
 ## Arquivos
 

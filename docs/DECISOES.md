@@ -445,13 +445,15 @@ para o som, e o protocolo não muda.
 **Consequências.**
 - ➕ O cliente do Windows não engorda, e o `fluxo-bench` no Linux segue sem C++.
 - ➕ Compila no Windows (`--portatil`), então quase tudo se testa lá também.
-- ➖ CPU fraca não acompanha 1080p: no notebook de teste (2 núcleos, sem NASM), 42–58
-  ms por frame. Em 720p30 fica utilizável (captura→tela p50 ~23 ms). Atrasado, o
-  vídeo acumula segundos de fila até descartar.
+- ➖ CPU fraca não acompanha 1080p: no notebook de teste (2 núcleos), 26–45 ms por
+  frame com NASM. O custo segue o bitrate: em 720p a ~5 Mbps, 16–19 ms e captura→
+  tela p50 de 21–29 ms. Atrasado, o vídeo acumula segundos de fila até descartar, e
+  o bitrate adaptativo não percebe, porque a rede está bem.
 - ➖ Um espectador no Linux leva todos os outros da transmissão para H.264.
 - ➖ O OpenH264 não esconde erros: depois de uma perda não recuperada pelo FEC, a
   imagem espera um keyframe.
-- 🔁 Mais velocidade: NASM no build; depois, decode na GPU (VAAPI).
+- 🔁 Host ajustar o bitrate quando o decode de quem assiste não acompanha; decode
+  na GPU (VAAPI).
 
 ---
 

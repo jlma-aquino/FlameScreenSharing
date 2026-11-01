@@ -113,7 +113,8 @@ tela, mantendo a proporção: a conversão BGRA→NV12 do encoder redimensiona
 na mesma passada da GPU (`EncoderConfig::input_size`). A linha
 "Transmitindo" mostra `1920x1080 → 3840x2160`. Sem `--mbps`, o bitrate
 máximo acompanha resolução × fps: 20 Mbps em 1080p60, 40 em 1080p120 ou
-1440p60 (35,6), 80 em 4K60, até 100. `--fps 120` só gera 120 frames por
+1440p60 (35,6), 80 em 4K60, até 100; e menos em resolução baixa: 8,9 em 720p60, 6
+em 720p30 (o piso). Bitrate alto também pesa no decode de quem assiste. `--fps 120` só gera 120 frames por
 segundo se a tela atualizar nesse ritmo (monitor de 120 Hz+ e conteúdo
 rápido).
 
