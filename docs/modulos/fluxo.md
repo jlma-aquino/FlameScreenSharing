@@ -44,6 +44,18 @@ derruba a janela. O custo é o texto impresso virar contrato: ao mudar um
 - As opções não ficam salvas entre uma abertura e outra.
 - Só as opções mais comuns; o resto (`--codec`, `--mbps`, `--fec`…) continua
   na linha de comando.
+- Testar no mesmo PC com som nos dois lados faz eco: o host captura o que o
+  cliente toca. Entre dois PCs não acontece.
+- Cliques simulados por uma ferramenta de automação não foram aceitos pela
+  janela (cliques de verdade, sim). Causa não encontrada; não é o nível de
+  permissão do processo.
+
+## Teste com a janela aberta
+
+Código de conexão copiado e colado entre duas janelas no mesmo PC, com cliques
+de verdade: transmissão a 60 fps, 15,5 Mbps, captura→tela 11,6 ms, 0 perdidos,
+cifrada. Esse teste mostrou que a janela de quem assiste ficava em "Esperando"
+com o vídeo já chegando; agora o cliente avisa no primeiro frame.
 
 ## Testes
 
@@ -51,6 +63,6 @@ derruba a janela. O custo é o texto impresso virar contrato: ao mudar um
 cargo test -p fluxo
 ```
 
-14 testes, sem abrir janela: leitura das linhas, montagem dos argumentos,
+16 testes, sem abrir janela: leitura das linhas, montagem dos argumentos,
 mensagens de código errado, e o processo de verdade (entrada e saída por pipe,
 erro, fim, soltar encerra). Telas: só conferindo com a janela aberta.

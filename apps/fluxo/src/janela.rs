@@ -33,6 +33,8 @@ struct Sessao {
     /// Host, redes diferentes.
     resposta: Option<String>,
     transmitindo: bool,
+    /// Cliente: o vídeo chegou (codec e decoder).
+    recebendo: Option<String>,
     relatorio: Option<String>,
     erro: Option<String>,
     registro: VecDeque<String>,
@@ -49,6 +51,7 @@ impl Sessao {
             conexao: None,
             resposta: None,
             transmitindo: false,
+            recebendo: None,
             relatorio: None,
             erro: None,
             registro: VecDeque::new(),
@@ -67,6 +70,7 @@ impl Sessao {
                 Evento::Conexao(c) => self.conexao = Some(c),
                 Evento::Resposta(c) => self.resposta = Some(c),
                 Evento::Transmitindo => self.transmitindo = true,
+                Evento::Recebendo(v) => self.recebendo = Some(v),
                 Evento::Relatorio(r) => self.relatorio = Some(r),
                 Evento::Erro(e) => self.erro = Some(e),
                 Evento::Outra => {}
@@ -250,24 +254,27 @@ impl Janela {
         };
         let mut enviar_resposta = false;
 
-        // Quem vai assistir: os códigos para mandar a quem compartilha.
-        if let Some(c) = &s.conexao {
-            codigo(ui, "Mande este código para quem vai compartilhar:", c);
-            ui.add_space(8.0);
-            ui.label("Depois cole aqui o código de resposta que ele mandar de volta:");
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.resposta_colada)
-                        .desired_width(ui.available_width() - 70.0)
-                        .hint_text("código de resposta"),
-                );
-                enviar_resposta = ui.button("Enviar").clicked();
-            });
-        }
-        if let Some(c) = &s.pareamento {
-            codigo(ui, "Mande este código para quem vai compartilhar:", c);
-            if let Some(d) = &s.destino {
-                codigo(ui, "E este endereço:", d);
+        // Quem vai assistir: os códigos para mandar a quem compartilha (com o
+        // vídeo chegando, já serviram).
+        if s.recebendo.is_none() {
+            if let Some(c) = &s.conexao {
+                codigo(ui, "Mande este código para quem vai compartilhar:", c);
+                ui.add_space(8.0);
+                ui.label("Depois cole aqui o código de resposta que ele mandar de volta:");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.resposta_colada)
+                            .desired_width(ui.available_width() - 70.0)
+                            .hint_text("código de resposta"),
+                    );
+                    enviar_resposta = ui.button("Enviar").clicked();
+                });
+            }
+            if let Some(c) = &s.pareamento {
+                codigo(ui, "Mande este código para quem vai compartilhar:", c);
+                if let Some(d) = &s.destino {
+                    codigo(ui, "E este endereço:", d);
+                }
             }
         }
         // Quem compartilha, pela internet: a resposta para mandar de volta.
@@ -290,20 +297,25 @@ impl Janela {
         }
 
         ui.add_space(8.0);
-        match (&s.erro, s.fim, s.transmitindo) {
+        let verde = Color32::from_rgb(80, 180, 100);
+        match (&s.erro, s.fim, s.transmitindo, &s.recebendo) {
             (Some(e), ..) => {
                 ui.colored_label(Color32::from_rgb(220, 80, 80), e);
             }
-            (None, Some(_), _) => {
+            (None, Some(_), ..) => {
                 ui.label("Terminou.");
             }
-            (None, None, true) => {
-                ui.colored_label(Color32::from_rgb(80, 180, 100), "Transmitindo");
+            (None, None, true, _) => {
+                ui.colored_label(verde, "Transmitindo");
                 if let Some(r) = &s.relatorio {
                     ui.small(r);
                 }
             }
-            (None, None, false) => {
+            (None, None, false, Some(video)) => {
+                ui.colored_label(verde, "Recebendo: o vídeo está na outra janela");
+                ui.small(video);
+            }
+            (None, None, false, None) => {
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label("Esperando o outro lado…");
@@ -342,6 +354,11 @@ fn codigo(ui: &mut egui::Ui, titulo: &str, texto: &str) {
 }
 
 impl eframe::App for Janela {
+    /// Fechar a janela encerra o host ou o cliente que estiver rodando.
+    fn on_exit(&mut self, _: Option<&eframe::glow::Context>) {
+        self.sessao = None;
+    }
+
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         if let Some(s) = self.sessao.as_mut() {
             s.atualizar();
@@ -353,7 +370,7 @@ impl eframe::App for Janela {
                 if self.sessao.is_some() {
                     self.painel_sessao(ui);
                 } else {
-                    if self.tela != Tela::Inicio && ui.small_button("← Voltar").clicked() {
+                    if self.tela != Tela::Inicio && ui.small_button("Voltar").clicked() {
                         self.tela = Tela::Inicio;
                         self.aviso = None;
                     }

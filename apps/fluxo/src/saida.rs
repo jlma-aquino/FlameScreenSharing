@@ -14,7 +14,9 @@ pub enum Evento {
     Resposta(String),
     /// Host: a transmissão começou.
     Transmitindo,
-    /// Host: relatório de um segundo (`  12 s: 60 fps, …`).
+    /// Cliente: o vídeo chegou (`vídeo em AV1 | decoder: …`).
+    Recebendo(String),
+    /// Host: relatório de um segundo, resumido para quem lê a janela.
     Relatorio(String),
     /// Erro fatal do programa.
     Erro(String),
@@ -53,16 +55,31 @@ pub fn ler(linha: &str) -> Evento {
     if t.starts_with("Transmitindo monitor") {
         return Evento::Transmitindo;
     }
+    if let Some(v) = t.strip_prefix("vídeo em ") {
+        return Evento::Recebendo(v.to_string());
+    }
     if let Some(e) = t.strip_prefix("erro: ") {
         return Evento::Erro(e.to_string());
     }
-    let relatorio = t
-        .split_once(" s: ")
-        .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-    if relatorio {
-        return Evento::Relatorio(t.to_string());
+    if let Some((n, resto)) = t.split_once(" s: ") {
+        if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) {
+            return Evento::Relatorio(resumo(resto));
+        }
     }
     Evento::Outra
+}
+
+/// De `60 fps, 18.2 Mbps (alvo 20.0), perda 0.0%, fila 0 ms, …` deixa só o que
+/// interessa a quem compartilha: `60 fps · 18.2 Mbps · perda 0.0% · RTT 1.89 ms`.
+fn resumo(relatorio: &str) -> String {
+    relatorio
+        .split(", ")
+        .filter(|p| {
+            p.ends_with(" fps") || p.contains(" Mbps") || p.starts_with("perda ") || p.starts_with("RTT ")
+        })
+        .map(|p| p.split(" (").next().unwrap_or(p).trim())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 #[cfg(test)]
@@ -118,11 +135,30 @@ mod tests {
         );
         assert_eq!(
             ler("    12 s: 60 fps, 18.2 Mbps (alvo 20.0), perda 0.0%"),
-            Evento::Relatorio("12 s: 60 fps, 18.2 Mbps (alvo 20.0), perda 0.0%".into())
+            Evento::Relatorio("60 fps · 18.2 Mbps · perda 0.0%".into())
         );
         assert_eq!(
             ler("erro: o código não confere"),
             Evento::Erro("o código não confere".into())
+        );
+    }
+
+    #[test]
+    fn relatorio_de_verdade_fica_curto() {
+        // Linha copiada do host em execução.
+        let linha = "     6 s: 60 fps, 15.8 Mbps (alvo 20.0), perda 0.0%, fila 0 ms, encode 2.2 ms, \
+                     envio 3.0 ms (fila de envio 1), RTT 1.89 ms, 141 capturas adiadas, 0 pedidos de recuperação";
+        assert_eq!(
+            ler(linha),
+            Evento::Relatorio("60 fps · 15.8 Mbps · perda 0.0% · RTT 1.89 ms".into())
+        );
+    }
+
+    #[test]
+    fn video_chegando_no_cliente() {
+        assert_eq!(
+            ler("  vídeo em AV1 | decoder: AV1 AV1VideoExtension, acelerado pela GPU (DXVA)"),
+            Evento::Recebendo("AV1 | decoder: AV1 AV1VideoExtension, acelerado pela GPU (DXVA)".into())
         );
     }
 

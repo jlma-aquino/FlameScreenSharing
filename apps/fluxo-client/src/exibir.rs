@@ -95,6 +95,8 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
     // Quanto a imagem ficou congelada em cada recuperação (fora a largada).
     let mut recuperacoes = Serie::default();
     let mut ja_mostrou = false;
+    // Último codec avisado no terminal.
+    let mut anunciado = None;
     let mut escondidos = 0u64;
     let mut proximo_titulo = Instant::now() + Duration::from_secs(1);
 
@@ -186,7 +188,12 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
                     let codec = f.frame.codec.unwrap_or_default();
                     if codec != decoder.codec() {
                         decoder = VideoDecoder::with_codec(&device, codec)?;
+                    }
+                    // Também no primeiro frame: é assim que a janela do
+                    // Fluxo sabe que o vídeo chegou (ver apps/fluxo/src/saida.rs).
+                    if anunciado != Some(codec) {
                         println!("  vídeo em {} | decoder: {}", codec.name(), decoder.name());
+                        anunciado = Some(codec);
                     }
                     let t = Instant::now();
                     match decoder.decode(&f.frame.data) {
