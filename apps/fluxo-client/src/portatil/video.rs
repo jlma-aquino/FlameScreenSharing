@@ -139,92 +139,94 @@ pub fn laco(
             ctx.request_repaint();
         }
 
-        let Some(primeiro) = rx.recv_frame(Duration::from_millis(5))? else {
-            continue;
-        };
-        inicio.get_or_insert_with(Instant::now);
+        // Tela parada do outro lado não manda frame: o título segue
+        // atualizando mesmo assim (abaixo).
+        if let Some(primeiro) = rx.recv_frame(Duration::from_millis(5))? {
+            inicio.get_or_insert_with(Instant::now);
 
-        // Decodifica tudo o que chegou (cada P-frame depende do anterior),
-        // mas só copia e mostra o mais novo.
-        // Com limite de tempo: numa CPU que decodifica mais devagar do que os
-        // frames chegam, a fila nunca esvazia, e sem ele nada aparecia na tela.
-        let lote = Instant::now();
-        let mut chegou = Some(primeiro);
-        let mut para_mostrar = None;
-        while let Some(f) = chegou.take() {
-            recebidos += 1;
-            bytes_seg += f.frame.data.len() as u64;
-            // Esperando desde que chegou pela rede: passou do limite, alcança.
-            let espera_ms = clock_diff_us(clock_us(), f.received_us) as f64 / 1000.0;
-            atraso_fila_ms += (espera_ms - atraso_fila_ms) * 0.1;
-            let pode_descartar = ultimo_descarte.is_none_or(|t| t.elapsed() >= ENTRE_DESCARTES);
-            if espera_ms > ATRASO_MAXIMO_MS && pode_descartar {
-                while rx.recv_frame(Duration::ZERO)?.is_some() {
-                    frames_descartados += 1;
-                }
-                frames_descartados += 1;
-                descartes += 1;
-                ultimo_descarte = Some(Instant::now());
-                atraso_fila_ms = 0.0;
-                decoder = Decoder::new().map_err(erro_decode)?;
-                recuperacao.on_decode_error(Instant::now());
-                para_mostrar = None;
-                continue;
-            }
-            let codec = f.frame.codec.unwrap_or_default();
-            if codec != VideoCodec::H264 {
-                // Só acontece se o host forçou o codec com --codec.
-                if !outro_codec {
-                    eprintln!(
-                        "(o host mandou {}; este cliente só decodifica H.264)",
-                        codec.name()
-                    );
-                    outro_codec = true;
-                }
-                chegou = rx.recv_frame(Duration::ZERO)?;
-                continue;
-            }
-            if !anunciado {
-                println!("  vídeo em H.264 | decoder: OpenH264, na CPU");
-                anunciado = true;
-            }
-            match recuperacao.on_frame(&f.frame, Instant::now()) {
-                FrameAction::Skip => pulados += 1,
-                FrameAction::Decode { show } => {
-                    let t = Instant::now();
-                    match decoder.decode(&f.frame.data) {
-                        Ok(Some(d)) if show => {
-                            let dif = rx.stats().clock_offset_ms;
-                            para_mostrar = Some(copiar(&d, f.frame.timestamp_us, dif));
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            erros += 1;
-                            eprintln!("(decode falhou: {e}; pedindo keyframe)");
-                            decoder = Decoder::new().map_err(erro_decode)?;
-                            recuperacao.on_decode_error(Instant::now());
-                        }
+            // Decodifica tudo o que chegou (cada P-frame depende do anterior),
+            // mas só copia e mostra o mais novo.
+            // Com limite de tempo: numa CPU que decodifica mais devagar do que os
+            // frames chegam, a fila nunca esvazia, e sem ele nada aparecia na tela.
+            let lote = Instant::now();
+            let mut chegou = Some(primeiro);
+            let mut para_mostrar = None;
+            while let Some(f) = chegou.take() {
+                recebidos += 1;
+                bytes_seg += f.frame.data.len() as u64;
+                // Esperando desde que chegou pela rede: passou do limite, alcança.
+                let espera_ms = clock_diff_us(clock_us(), f.received_us) as f64 / 1000.0;
+                atraso_fila_ms += (espera_ms - atraso_fila_ms) * 0.1;
+                let pode_descartar = ultimo_descarte.is_none_or(|t| t.elapsed() >= ENTRE_DESCARTES);
+                if espera_ms > ATRASO_MAXIMO_MS && pode_descartar {
+                    while rx.recv_frame(Duration::ZERO)?.is_some() {
+                        frames_descartados += 1;
                     }
-                    let decode_ms = t.elapsed().as_secs_f64() * 1000.0;
-                    decodes.0.push(decode_ms);
-                    carga.frame(f.frame.timestamp_us, decode_ms);
-                    // A fila já formada pesa mais do que a previsão.
-                    let atraso = carga.atraso_ms().max(atraso_fila_ms);
-                    rx.set_processing_delay(Duration::from_secs_f64(atraso / 1000.0));
+                    frames_descartados += 1;
+                    descartes += 1;
+                    ultimo_descarte = Some(Instant::now());
+                    atraso_fila_ms = 0.0;
+                    decoder = Decoder::new().map_err(erro_decode)?;
+                    recuperacao.on_decode_error(Instant::now());
+                    para_mostrar = None;
+                    continue;
+                }
+                let codec = f.frame.codec.unwrap_or_default();
+                if codec != VideoCodec::H264 {
+                    // Só acontece se o host forçou o codec com --codec.
+                    if !outro_codec {
+                        eprintln!(
+                            "(o host mandou {}; este cliente só decodifica H.264)",
+                            codec.name()
+                        );
+                        outro_codec = true;
+                    }
+                    chegou = rx.recv_frame(Duration::ZERO)?;
+                    continue;
+                }
+                if !anunciado {
+                    println!("  vídeo em H.264 | decoder: OpenH264, na CPU");
+                    anunciado = true;
+                }
+                match recuperacao.on_frame(&f.frame, Instant::now()) {
+                    FrameAction::Skip => pulados += 1,
+                    FrameAction::Decode { show } => {
+                        let t = Instant::now();
+                        match decoder.decode(&f.frame.data) {
+                            Ok(Some(d)) if show => {
+                                let dif = rx.stats().clock_offset_ms;
+                                para_mostrar = Some(copiar(&d, f.frame.timestamp_us, dif));
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                erros += 1;
+                                eprintln!("(decode falhou: {e}; pedindo keyframe)");
+                                decoder = Decoder::new().map_err(erro_decode)?;
+                                recuperacao.on_decode_error(Instant::now());
+                            }
+                        }
+                        let decode_ms = t.elapsed().as_secs_f64() * 1000.0;
+                        decodes.0.push(decode_ms);
+                        carga.frame(f.frame.timestamp_us, decode_ms);
+                        // A fila já formada pesa mais do que a previsão.
+                        let atraso = carga.atraso_ms().max(atraso_fila_ms);
+                        rx.set_processing_delay(Duration::from_secs_f64(atraso / 1000.0));
+                    }
+                }
+                if lote.elapsed() < Duration::from_millis(33) {
+                    chegou = rx.recv_frame(Duration::ZERO)?;
                 }
             }
-            if lote.elapsed() < Duration::from_millis(33) {
-                chegou = rx.recv_frame(Duration::ZERO)?;
+            if let Some(q) = para_mostrar {
+                *c.quadro.lock().unwrap_or_else(|e| e.into_inner()) = Some(q);
+                ctx.request_repaint();
+                mostrados += 1;
+                frames_seg += 1;
             }
         }
-        if let Some(q) = para_mostrar {
-            *c.quadro.lock().unwrap_or_else(|e| e.into_inner()) = Some(q);
-            ctx.request_repaint();
-            mostrados += 1;
-            frames_seg += 1;
-        }
 
-        if Instant::now() >= proximo_titulo {
+        // Antes do primeiro frame fica o texto de espera (código, sala).
+        if inicio.is_some() && Instant::now() >= proximo_titulo {
             let novas = std::mem::take(&mut *c.latencias.lock().unwrap_or_else(|e| e.into_inner()));
             let mut seg = Serie(novas);
             let latencia = match seg.0.is_empty() {
