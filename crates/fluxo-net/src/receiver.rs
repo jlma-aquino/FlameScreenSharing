@@ -518,7 +518,7 @@ impl Sinalizacao {
     fn new(servidor: SocketAddr, codigo: &PairingCode, socket: &Portas) -> Self {
         let msg = SignalMessage::Register {
             room: codigo.room(),
-            locals: crate::local_candidates(socket.v4()),
+            locals: crate::local_candidates(socket.v4(), socket.v6()),
         };
         let registro = PacketKind::Signal
             .control(0, clock_us())

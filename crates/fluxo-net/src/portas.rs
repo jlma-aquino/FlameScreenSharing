@@ -134,6 +134,10 @@ impl Portas {
         self.v4.as_ref()
     }
 
+    pub(crate) fn v6(&self) -> Option<&UdpSocket> {
+        self.v6.as_ref()
+    }
+
     pub(crate) fn has_v6(&self) -> bool {
         self.v6.is_some()
     }

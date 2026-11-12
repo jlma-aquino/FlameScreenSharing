@@ -233,7 +233,13 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
             i.v6.as_ref().map(std::net::UdpSocket::try_clone).transpose()?,
             Some(i.public.server),
         ),
-        None => (std::net::UdpSocket::bind(("0.0.0.0", o.porta))?, None, None),
+        // Pela sinalização, IPv6 também: o endereço dele vai ao host pelo
+        // servidor, e costuma passar onde o IPv4 trava.
+        None => (
+            std::net::UdpSocket::bind(("0.0.0.0", o.porta))?,
+            servidor.and(fluxo_net::ipv6_socket_for_signal()),
+            None,
+        ),
     };
     let rx = VideoReceiver::with_sockets(
         v4,

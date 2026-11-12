@@ -172,7 +172,7 @@ fn parear(
                 .encode_with_payload(
                     &SignalMessage::Lookup {
                         room: codigo.room(),
-                        locals: crate::local_candidates(socket.v4()),
+                        locals: crate::local_candidates(socket.v4(), socket.v6()),
                     }
                     .to_bytes(),
                 )
@@ -461,7 +461,9 @@ impl VideoSender {
             ));
         }
         let socket = UdpSocket::bind(bind).map_err(NetError::io("abrir socket UDP"))?;
-        let portas = Portas::one(socket).map_err(NetError::io("abrir socket UDP"))?;
+        // IPv6 também, se houver: o endereço dele vai ao cliente pelo servidor.
+        let portas = Portas::new(Some(socket), crate::ipv6_socket_for_signal())
+            .map_err(NetError::io("abrir socket UDP"))?;
         Self::start(portas, Rota::Sinal(server), cfg)
     }
 

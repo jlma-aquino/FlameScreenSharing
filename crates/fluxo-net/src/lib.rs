@@ -164,16 +164,42 @@ pub fn local_ip() -> Option<std::net::IpAddr> {
     Some(s.local_addr().ok()?.ip()).filter(|ip| !ip.is_unspecified())
 }
 
-/// Endereços locais para informar ao servidor de sinalização: o IP da rede
-/// local com a porta do socket (o outro lado tenta direto, se estiver na
-/// mesma rede).
-pub(crate) fn local_candidates(socket: Option<&std::net::UdpSocket>) -> Vec<std::net::SocketAddr> {
-    let porta = socket.and_then(|s| s.local_addr().ok()).map_or(0, |a| a.port());
-    local_ip()
-        .filter(|_| porta != 0)
-        .map(|ip| std::net::SocketAddr::new(ip, porta))
-        .into_iter()
-        .collect()
+/// Endereços para informar ao servidor de sinalização além do público IPv4
+/// que ele vê: o IP da rede local com a porta do socket IPv4 (o outro lado
+/// tenta direto, se estiver na mesma rede) e o IPv6 global com a porta do
+/// socket IPv6. O servidor só fala IPv4, mas o IPv6 não tem NAT: é por ele
+/// que costuma passar quando o IPv4 trava (internet de celular).
+pub(crate) fn local_candidates(
+    v4: Option<&std::net::UdpSocket>,
+    v6: Option<&std::net::UdpSocket>,
+) -> Vec<std::net::SocketAddr> {
+    let porta = |s: Option<&std::net::UdpSocket>| s.and_then(|s| s.local_addr().ok()).map_or(0, |a| a.port());
+    let (p4, p6) = (porta(v4), porta(v6));
+    let local = local_ip()
+        .filter(|ip| ip.is_ipv4() && p4 != 0)
+        .map(|ip| std::net::SocketAddr::new(ip, p4));
+    let global = global_ipv6()
+        .filter(|_| p6 != 0)
+        .map(|ip| std::net::SocketAddr::new(ip.into(), p6));
+    local.into_iter().chain(global).collect()
+}
+
+/// O IPv6 global por onde esta máquina sai para a internet, se tiver (sem
+/// mandar nada: só pergunta a rota ao sistema).
+pub(crate) fn global_ipv6() -> Option<std::net::Ipv6Addr> {
+    let s = std::net::UdpSocket::bind("[::]:0").ok()?;
+    s.connect("[2001:4860:4860::8888]:53").ok()?;
+    match s.local_addr().ok()?.ip() {
+        // Global unicast (2000::/3): nem link-local, nem ULA, nem loopback.
+        std::net::IpAddr::V6(ip) if ip.segments()[0] & 0xe000 == 0x2000 => Some(ip),
+        _ => None,
+    }
+}
+
+/// Socket IPv6 para a sinalização, se esta máquina tem IPv6 global.
+pub fn ipv6_socket_for_signal() -> Option<std::net::UdpSocket> {
+    global_ipv6()?;
+    std::net::UdpSocket::bind("[::]:0").ok()
 }
 
 /// Porta padrão do servidor de sinalização (`fluxo-sinal`).
