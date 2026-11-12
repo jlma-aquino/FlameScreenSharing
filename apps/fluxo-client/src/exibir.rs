@@ -156,92 +156,95 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
         }
 
         // Espera curta para ver `fechar` e o tamanho novo logo.
-        let Some(primeiro) = rx.recv_frame(Duration::from_millis(5))? else {
-            // Sem frame novo, mas o cursor mexeu: redesenha a última imagem
-            // com ele no lugar novo (não espera o próximo frame).
-            if cursor_mudou && tela.has_image() && recuperacao.is_clean() {
-                tela.present_again()?;
-                cursor_redesenhos += 1;
-            }
-            continue;
-        };
-        inicio.get_or_insert_with(Instant::now);
+        let recebido = rx.recv_frame(Duration::from_millis(5))?;
+        // Sem frame novo, mas o cursor mexeu: redesenha a última imagem com
+        // ele no lugar novo (não espera o próximo frame).
+        if recebido.is_none() && cursor_mudou && tela.has_image() && recuperacao.is_clean() {
+            tela.present_again()?;
+            cursor_redesenhos += 1;
+        }
+        // Tela parada do outro lado não manda frame: o título e o painel
+        // seguem atualizando mesmo assim (abaixo).
+        if let Some(primeiro) = recebido {
+            inicio.get_or_insert_with(Instant::now);
 
-        // Decodifica tudo o que chegou (cada P-frame depende do anterior),
-        // mas só mostra o mais novo: se o cliente atrasou, ele alcança. Com
-        // limite de tempo: se a fila nunca esvazia, a tela ainda atualiza.
-        let lote = Instant::now();
-        let mut chegou = Some(primeiro);
-        let mut para_mostrar = None;
-        while let Some(f) = chegou.take() {
-            recebidos += 1;
-            esperas.push(clock_diff_us(clock_us(), f.received_us) as f64 / 1000.0);
-            bytes_seg += f.frame.data.len() as u64;
-            // Depois de uma perda os P-frames apontam para uma imagem que o
-            // decoder não tem: continua decodificando (para o decoder
-            // acompanhar a onda de limpeza), mas congela a última imagem boa
-            // na tela até a recuperação terminar.
-            let sujo_desde = recuperacao.dirty_since();
-            match recuperacao.on_frame(&f.frame, Instant::now()) {
-                FrameAction::Skip => pulados += 1,
-                FrameAction::Decode { show } => {
-                    // O codec vem marcado em cada frame; troca o decoder se
-                    // mudou (na prática só no primeiro, que é keyframe).
-                    let codec = f.frame.codec.unwrap_or_default();
-                    if codec != decoder.codec() {
-                        decoder = VideoDecoder::with_codec(&device, codec)?;
-                    }
-                    // Também no primeiro frame: é assim que a janela do
-                    // Fluxo sabe que o vídeo chegou (ver apps/fluxo/src/saida.rs).
-                    if anunciado != Some(codec) {
-                        println!("  vídeo em {} | decoder: {}", codec.name(), decoder.name());
-                        anunciado = Some(codec);
-                    }
-                    let t = Instant::now();
-                    match decoder.decode(&f.frame.data) {
-                        Ok(Some(d)) if show => para_mostrar = Some((d, f.frame.timestamp_us)),
-                        Ok(_) => escondidos += !show as u64,
-                        Err(e) => {
-                            // Bitstream estragado: recomeça no próximo
-                            // keyframe com um decoder limpo.
-                            erros_decode += 1;
-                            eprintln!("(decode falhou: {e}; pedindo keyframe)");
-                            decoder = VideoDecoder::with_codec(&device, decoder.codec())?;
-                            recuperacao.on_decode_error(Instant::now());
+            // Decodifica tudo o que chegou (cada P-frame depende do anterior),
+            // mas só mostra o mais novo: se o cliente atrasou, ele alcança. Com
+            // limite de tempo: se a fila nunca esvazia, a tela ainda atualiza.
+            let lote = Instant::now();
+            let mut chegou = Some(primeiro);
+            let mut para_mostrar = None;
+            while let Some(f) = chegou.take() {
+                recebidos += 1;
+                esperas.push(clock_diff_us(clock_us(), f.received_us) as f64 / 1000.0);
+                bytes_seg += f.frame.data.len() as u64;
+                // Depois de uma perda os P-frames apontam para uma imagem que o
+                // decoder não tem: continua decodificando (para o decoder
+                // acompanhar a onda de limpeza), mas congela a última imagem boa
+                // na tela até a recuperação terminar.
+                let sujo_desde = recuperacao.dirty_since();
+                match recuperacao.on_frame(&f.frame, Instant::now()) {
+                    FrameAction::Skip => pulados += 1,
+                    FrameAction::Decode { show } => {
+                        // O codec vem marcado em cada frame; troca o decoder se
+                        // mudou (na prática só no primeiro, que é keyframe).
+                        let codec = f.frame.codec.unwrap_or_default();
+                        if codec != decoder.codec() {
+                            decoder = VideoDecoder::with_codec(&device, codec)?;
                         }
+                        // Também no primeiro frame: é assim que a janela do
+                        // Fluxo sabe que o vídeo chegou (ver apps/fluxo/src/saida.rs).
+                        if anunciado != Some(codec) {
+                            println!("  vídeo em {} | decoder: {}", codec.name(), decoder.name());
+                            anunciado = Some(codec);
+                        }
+                        let t = Instant::now();
+                        match decoder.decode(&f.frame.data) {
+                            Ok(Some(d)) if show => para_mostrar = Some((d, f.frame.timestamp_us)),
+                            Ok(_) => escondidos += !show as u64,
+                            Err(e) => {
+                                // Bitstream estragado: recomeça no próximo
+                                // keyframe com um decoder limpo.
+                                erros_decode += 1;
+                                eprintln!("(decode falhou: {e}; pedindo keyframe)");
+                                decoder = VideoDecoder::with_codec(&device, decoder.codec())?;
+                                recuperacao.on_decode_error(Instant::now());
+                            }
+                        }
+                        decodes.push(t.elapsed().as_secs_f64() * 1000.0);
                     }
-                    decodes.push(t.elapsed().as_secs_f64() * 1000.0);
+                }
+                if let (Some(t), true) = (sujo_desde, recuperacao.is_clean()) {
+                    if ja_mostrou {
+                        recuperacoes.push(t.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    ja_mostrou = true;
+                }
+                if lote.elapsed() < Duration::from_millis(33) {
+                    chegou = rx.recv_frame(Duration::ZERO)?;
                 }
             }
-            if let (Some(t), true) = (sujo_desde, recuperacao.is_clean()) {
-                if ja_mostrou {
-                    recuperacoes.push(t.elapsed().as_secs_f64() * 1000.0);
+
+            if let Some((d, capturado_us)) = para_mostrar {
+                let t = Instant::now();
+                tela.present(&d)?;
+                apresentacoes.push(t.elapsed().as_secs_f64() * 1000.0);
+                drop(d); // devolve a superfície ao decoder
+                mostrados += 1;
+                frames_seg += 1;
+                // Captura no host → frame entregue ao monitor aqui. A captura vem
+                // no relógio do host; somando a diferença entre os relógios
+                // (medida pelos pings) ela vira o nosso relógio.
+                if let Some(dif_ms) = rx.stats().clock_offset_ms {
+                    let ms = clock_diff_us(clock_us(), capturado_us) as f64 / 1000.0 + dif_ms;
+                    latencia_seg.push(ms);
+                    latencias.push(ms);
                 }
-                ja_mostrou = true;
-            }
-            if lote.elapsed() < Duration::from_millis(33) {
-                chegou = rx.recv_frame(Duration::ZERO)?;
             }
         }
 
-        if let Some((d, capturado_us)) = para_mostrar {
-            let t = Instant::now();
-            tela.present(&d)?;
-            apresentacoes.push(t.elapsed().as_secs_f64() * 1000.0);
-            drop(d); // devolve a superfície ao decoder
-            mostrados += 1;
-            frames_seg += 1;
-            // Captura no host → frame entregue ao monitor aqui. A captura vem
-            // no relógio do host; somando a diferença entre os relógios
-            // (medida pelos pings) ela vira o nosso relógio.
-            if let Some(dif_ms) = rx.stats().clock_offset_ms {
-                let ms = clock_diff_us(clock_us(), capturado_us) as f64 / 1000.0 + dif_ms;
-                latencia_seg.push(ms);
-                latencias.push(ms);
-            }
-        }
-
-        if Instant::now() >= proximo_titulo {
+        // Antes do primeiro frame fica o texto de espera (código, sala).
+        if inicio.is_some() && Instant::now() >= proximo_titulo {
             let s = rx.stats();
             let latencia = match latencia_seg.0.is_empty() {
                 true => "sincronizando relógios".to_string(),
