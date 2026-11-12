@@ -19,6 +19,7 @@ members = [
     "apps/fluxo-client",
     "apps/fluxo-sinal",
     "apps/fluxo",
+    "apps/fss-assinatura",
 ]
 
 [workspace.package]

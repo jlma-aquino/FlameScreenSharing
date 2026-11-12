@@ -1,7 +1,9 @@
 //! Atualizações pelo GitHub: ao abrir, a janela pergunta à API do GitHub qual
 //! é a versão mais nova publicada (Releases). Se for mais nova que esta, baixa
-//! o zip, confere o SHA-256 com o `SHA256SUMS.txt` publicado junto, troca os
-//! arquivos da pasta do programa e abre a versão nova.
+//! o `MANIFESTO.txt` e o zip, confere a assinatura do manifesto (Ed25519, com a
+//! chave pública embutida aqui), a versão e o SHA-256 do zip, confere os
+//! caminhos dentro do zip, troca os arquivos da pasta do programa e abre a
+//! versão nova.
 //!
 //! Para baixar e abrir o zip, usa o `curl.exe` e o `tar.exe` que vêm com o
 //! Windows 10 (1803+) e 11, pelo caminho completo da pasta do sistema; nada de
@@ -9,8 +11,11 @@
 //! Windows deixa renomear um .exe em uso, então cada arquivo antigo vira
 //! `*.antigo` (apagado na próxima abertura) e o novo entra no lugar.
 //!
-//! O SHA-256 garante que o zip chegou inteiro e é o da página da versão; não
-//! protege se a conta do GitHub for invadida (para isso, assinatura digital).
+//! Quem tem a chave privada (só o PC de quem publica, ver `fss-assinatura`) é
+//! o único que faz o programa aceitar uma versão: uma conta do GitHub invadida
+//! não basta. A versão vai dentro do que é assinado e precisa ser maior que a
+//! deste programa: um zip antigo e assinado não volta como "atualização".
+//! Decisão: ADR-020.
 //!
 //! Só a versão empacotada (`FlameScreenSharing.exe`) se atualiza: rodando da
 //! compilação (`fluxo.exe`), a janela só avisa.
@@ -23,9 +28,13 @@ pub const REPOSITORIO: &str = "jlma-aquino/FlameScreenSharing";
 /// A versão deste programa.
 pub const VERSAO: &str = env!("CARGO_PKG_VERSION");
 
-/// Nome do zip e da lista de SHA-256 anexados a cada versão.
+/// Nome do zip e do manifesto assinado anexados a cada versão.
 pub const ZIP: &str = "FlameScreenSharing.zip";
-pub const SOMAS: &str = "SHA256SUMS.txt";
+pub const MANIFESTO: &str = "MANIFESTO.txt";
+
+/// Chave pública que assina as versões (a privada fica em `.secrets\`, no PC
+/// de quem publica; ver `fss-assinatura`).
+const CHAVE_PUBLICA: &str = "e306537cbd241240e78d58e423e6b294843bc4671bfa7c3513e63c5ae02bc571";
 
 /// Nome do programa empacotado (o que se atualiza).
 pub const PROGRAMA: &str = "FlameScreenSharing.exe";
@@ -71,7 +80,7 @@ pub struct Lancamento {
     /// Página da versão no GitHub.
     pub pagina: String,
     pub zip: Option<String>,
-    pub somas: Option<String>,
+    pub manifesto: Option<String>,
 }
 
 /// Lê a resposta de `GET /repos/{dono}/{repo}/releases/latest`.
@@ -95,24 +104,40 @@ pub fn ler_lancamento(json: &str) -> Result<Lancamento, String> {
         notas: v["body"].as_str().unwrap_or_default().trim().to_string(),
         pagina: v["html_url"].as_str().unwrap_or_default().to_string(),
         zip: anexo(ZIP),
-        somas: anexo(SOMAS),
+        manifesto: anexo(MANIFESTO),
     })
 }
 
-/// O SHA-256 de `arquivo` numa lista no formato do `sha256sum`
-/// (`<hex>  <nome>`, um por linha; `*` antes do nome também vale).
-pub fn soma_esperada(lista: &str, arquivo: &str) -> Option<[u8; 32]> {
-    lista.lines().find_map(|l| {
-        let (hex, nome) = l.trim().split_once(char::is_whitespace)?;
-        if nome.trim().trim_start_matches('*') != arquivo {
-            return None;
-        }
-        let bytes: Vec<u8> = (0..hex.len())
-            .step_by(2)
-            .map(|i| hex.get(i..i + 2).and_then(|h| u8::from_str_radix(h, 16).ok()))
-            .collect::<Option<_>>()?;
-        bytes.try_into().ok()
-    })
+/// Confere o manifesto assinado contra a versão anunciada e esta: a
+/// assinatura, o nome do arquivo e versão nova (nunca igual ou mais velha).
+pub fn conferir_manifesto(texto: &str, anunciada: Versao) -> Result<fluxo_crypto::UpdateManifest, String> {
+    let publica: [u8; 32] = fluxo_crypto::de_hex(CHAVE_PUBLICA)
+        .and_then(|b| b.try_into().ok())
+        .ok_or("chave pública do programa estragada")?;
+    let m = fluxo_crypto::UpdateManifest::verify(texto, &publica).map_err(|_| {
+        "a assinatura da versão não confere: não é de quem publica o FSS. Nada foi trocado".to_string()
+    })?;
+    let versao = Versao::ler(&m.version).ok_or("versão estranha no manifesto")?;
+    if versao != anunciada {
+        return Err(format!("o manifesto é da versão {versao}, não da {anunciada}"));
+    }
+    if versao <= Versao::desta() {
+        return Err(format!("a versão {versao} não é mais nova que esta ({VERSAO})"));
+    }
+    if m.file != ZIP {
+        return Err(format!("o manifesto é de {}, não de {ZIP}", m.file));
+    }
+    Ok(m)
+}
+
+/// Um caminho de dentro do zip é seguro para extrair: relativo, sem `..`,
+/// sem letra de unidade nem `:` (fluxo alternativo do NTFS).
+pub fn caminho_seguro(entrada: &str) -> bool {
+    let e = entrada.trim_end_matches(['\r', '\n']);
+    !e.is_empty()
+        && !e.starts_with(['/', '\\'])
+        && !e.contains(':')
+        && e.split(['/', '\\']).all(|parte| parte != "..")
 }
 
 pub fn sha256(dados: &[u8]) -> [u8; 32] {
@@ -169,19 +194,23 @@ pub fn verificar_e_baixar() -> Result<Resultado, String> {
     if programa_empacotado().is_none() {
         return Ok(Resultado::Disponivel(l));
     }
-    let (Some(url_zip), Some(url_somas)) = (&l.zip, &l.somas) else {
-        return Err(format!("a versão {} não tem {ZIP} e {SOMAS} anexados", l.versao));
+    let (Some(url_zip), Some(url_manifesto)) = (&l.zip, &l.manifesto) else {
+        return Err(format!(
+            "a versão {} não tem {ZIP} e {MANIFESTO} anexados",
+            l.versao
+        ));
     };
 
+    // Primeiro o manifesto: sem assinatura que confira, nem baixa o zip.
+    let manifesto = pasta.join(MANIFESTO);
+    baixar(url_manifesto, &manifesto)?;
+    let texto = std::fs::read_to_string(&manifesto).map_err(|e| e.to_string())?;
+    let m = conferir_manifesto(&texto, l.versao)?;
     let zip = pasta.join(ZIP);
-    let somas = pasta.join(SOMAS);
-    baixar(url_somas, &somas)?;
     baixar(url_zip, &zip)?;
-    let lista = std::fs::read_to_string(&somas).map_err(|e| e.to_string())?;
-    let esperada = soma_esperada(&lista, ZIP).ok_or(format!("{SOMAS} não tem a soma do {ZIP}"))?;
     let dados = std::fs::read(&zip).map_err(|e| e.to_string())?;
-    if sha256(&dados) != esperada {
-        return Err("o zip baixado não confere com o SHA-256 publicado; nada foi trocado".into());
+    if sha256(&dados) != m.sha256 {
+        return Err("o zip baixado não confere com o SHA-256 assinado; nada foi trocado".into());
     }
     let extraido = pasta.join("extraido");
     std::fs::create_dir_all(&extraido).map_err(|e| e.to_string())?;
@@ -282,6 +311,11 @@ fn do_sistema(nome: &str) -> PathBuf {
 }
 
 fn rodar(programa: &Path, args: &[&std::ffi::OsStr]) -> Result<(), String> {
+    rodar_saida(programa, args).map(|_| ())
+}
+
+/// Roda e devolve a saída padrão.
+fn rodar_saida(programa: &Path, args: &[&std::ffi::OsStr]) -> Result<String, String> {
     let mut c = std::process::Command::new(programa);
     c.args(args);
     #[cfg(windows)]
@@ -293,7 +327,7 @@ fn rodar(programa: &Path, args: &[&std::ffi::OsStr]) -> Result<(), String> {
         .output()
         .map_err(|e| format!("não consegui rodar {}: {e}", programa.display()))?;
     match saida.status.success() {
-        true => Ok(()),
+        true => Ok(String::from_utf8_lossy(&saida.stdout).into_owned()),
         false => Err(String::from_utf8_lossy(&saida.stderr).trim().to_string()),
     }
 }
@@ -323,6 +357,14 @@ fn baixar(url: &str, arquivo: &Path) -> Result<(), String> {
 }
 
 fn extrair(zip: &Path, pasta: &Path) -> Result<(), String> {
+    // Antes de extrair: nenhum caminho pode sair da pasta ("zip slip").
+    let lista = rodar_saida(&do_sistema("tar.exe"), &["-tf".as_ref(), zip.as_os_str()])
+        .map_err(|e| format!("não consegui ler o zip: {e}"))?;
+    if let Some(ruim) = lista.lines().find(|l| !caminho_seguro(l)) {
+        return Err(format!(
+            "o zip tem um caminho perigoso ({ruim}); nada foi trocado"
+        ));
+    }
     rodar(
         &do_sistema("tar.exe"),
         &["-xf".as_ref(), zip.as_os_str(), "-C".as_ref(), pasta.as_os_str()],
@@ -353,7 +395,7 @@ mod tests {
             "html_url": "https://github.com/x/y/releases/tag/v0.3.0",
             "body": "  Barra nova.\r\n",
             "assets": [
-                {"name": "SHA256SUMS.txt", "browser_download_url": "https://a/SHA256SUMS.txt"},
+                {"name": "MANIFESTO.txt", "browser_download_url": "https://a/MANIFESTO.txt"},
                 {"name": "FlameScreenSharing.zip", "browser_download_url": "https://a/FlameScreenSharing.zip"}
             ]
         }"#;
@@ -361,7 +403,7 @@ mod tests {
         assert_eq!(l.versao, Versao(0, 3, 0));
         assert_eq!(l.notas, "Barra nova.");
         assert_eq!(l.zip.as_deref(), Some("https://a/FlameScreenSharing.zip"));
-        assert_eq!(l.somas.as_deref(), Some("https://a/SHA256SUMS.txt"));
+        assert_eq!(l.manifesto.as_deref(), Some("https://a/MANIFESTO.txt"));
         let sem_anexos = ler_lancamento(r#"{"tag_name": "0.3.0"}"#).unwrap();
         assert_eq!(sem_anexos.zip, None);
         assert!(ler_lancamento(r#"{"message": "Not Found"}"#).is_err());
@@ -369,15 +411,38 @@ mod tests {
     }
 
     #[test]
-    fn soma_da_lista() {
-        let soma = sha256(b"abc");
-        let hex: String = soma.iter().map(|b| format!("{b:02x}")).collect();
-        assert!(hex.starts_with("ba7816bf"));
-        let lista = format!("0000  outro.zip\n{hex}  {ZIP}\n");
-        assert_eq!(soma_esperada(&lista, ZIP), Some(soma));
-        let com_asterisco = format!("{}  *{ZIP}", hex.to_uppercase());
-        assert_eq!(soma_esperada(&com_asterisco, ZIP), Some(soma));
-        assert_eq!(soma_esperada("abc  FlameScreenSharing.zip", ZIP), None);
-        assert_eq!(soma_esperada("", ZIP), None);
+    fn caminhos_do_zip() {
+        for bom in [
+            "FlameScreenSharing/",
+            "FlameScreenSharing/FSS-host.exe",
+            "a/b..c/d.txt",
+            "x\r",
+        ] {
+            assert!(caminho_seguro(bom), "{bom}");
+        }
+        for ruim in [
+            "../fora.exe",
+            "a/../../b",
+            "/etc/x",
+            "\\\\servidor\\x",
+            "C:\\Windows\\x.exe",
+            "a\\..\\b",
+            "x.txt:fluxo",
+            "",
+        ] {
+            assert!(!caminho_seguro(ruim), "{ruim}");
+        }
+    }
+
+    #[test]
+    fn chave_publica_embutida_e_valida() {
+        let b = fluxo_crypto::de_hex(CHAVE_PUBLICA).unwrap();
+        assert_eq!(b.len(), 32);
+        // Um manifesto qualquer é recusado pela assinatura, não por chave estragada.
+        let e = conferir_manifesto(
+            "FlameScreenSharing atualizacao v1\nversao = 9.0.0\narquivo = x\nsha256 = 00\nassinatura = 00",
+            Versao(9, 0, 0),
+        );
+        assert!(e.unwrap_err().contains("assinatura"));
     }
 }

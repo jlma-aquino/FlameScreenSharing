@@ -10,6 +10,8 @@ license.workspace = true
 # Atualizações: ler a resposta da API do GitHub e conferir o SHA-256 do zip.
 serde_json = "1"
 sha2 = "0.10"
+# Conferir o manifesto assinado (Ed25519) de cada versão.
+fluxo-crypto = { workspace = true }
 # Só para conferir os códigos colados antes de mandar ao host/cliente.
 fluxo-net = { workspace = true }
 # A lista de monitores (fora do Windows, vazia).

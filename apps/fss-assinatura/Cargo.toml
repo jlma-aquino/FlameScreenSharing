@@ -1,0 +1,11 @@
+[package]
+name = "fss-assinatura"
+description = "Gera a chave de assinatura das atualizações e assina cada versão publicada (MANIFESTO.txt)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fluxo-crypto = { workspace = true }
+sha2 = "0.10"
