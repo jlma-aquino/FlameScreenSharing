@@ -98,6 +98,10 @@ Opções:
                   código), pelo servidor da --chave
   --chave FSS1-…  chave de acesso ao servidor de sinalização (a mesma de quem
                   compartilha): o endereço dele e o segredo que assina os pedidos
+  --segredos-pela-entrada
+                        lê da entrada, antes de tudo, linhas --opcao valor até a linha fim
+                        (a chave e os códigos fora da linha de comando, que outros
+                        programas do PC conseguem ler)
   --porta P       porta UDP onde escutar (padrão 9000)
   --vsync         sincroniza com o monitor (sem tearing; até 1 quadro a mais de atraso)
   --segundos S    fecha sozinho depois de S segundos do primeiro frame (padrão 0 = não)
@@ -227,7 +231,14 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Segredos (chave, códigos) pela entrada, fora da linha de comando (fluxo-net, segredos.rs).
+    let args = match fluxo_net::args_with_secrets(std::env::args().skip(1).collect()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("erro: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let opts = match parse_opts(&args) {
         Ok(o) => o,
         Err(e) if e.is_empty() => {

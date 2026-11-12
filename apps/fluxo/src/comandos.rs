@@ -210,6 +210,38 @@ pub fn linha_espectador_rede(destino: &str, codigo: &str) -> Result<String, Stri
     Ok(format!("destino {} {c}", com_porta(d)))
 }
 
+/// Opções com segredo (chave do servidor, códigos), que não vão na linha de
+/// comando: qualquer programa do PC lê a linha de comando dos outros. Do
+/// host, `--sala` não tem valor (o código é ele quem sorteia).
+fn secreta(programa: &str, opcao: &str) -> bool {
+    match programa {
+        "client" => matches!(opcao, "--chave" | "--sala" | "--codigo"),
+        _ => matches!(opcao, "--chave" | "--codigo" | "--conexao"),
+    }
+}
+
+/// Separa as opções: as comuns ficam na linha de comando (com
+/// `--segredos-pela-entrada`, se houver segredo) e as secretas viram linhas
+/// para a entrada padrão, terminadas em `fim`.
+pub fn separar_segredos(programa: &str, args: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let (mut comuns, mut linhas) = (Vec::new(), Vec::new());
+    let mut i = args.into_iter();
+    while let Some(a) = i.next() {
+        if secreta(programa, &a) {
+            if let Some(valor) = i.next() {
+                linhas.push(format!("{a} {valor}"));
+                continue;
+            }
+        }
+        comuns.push(a);
+    }
+    if !linhas.is_empty() {
+        comuns.push(fluxo_net::SECRETS_FROM_STDIN.to_string());
+        linhas.push("fim".to_string());
+    }
+    (comuns, linhas)
+}
+
 /// Confere o código de resposta colado e devolve a linha para o cliente.
 pub fn linha_de_resposta(texto: &str) -> Result<String, String> {
     let t = texto.trim();
@@ -416,6 +448,41 @@ mod tests {
             ..Default::default()
         };
         assert!(!r.args(&cfg).unwrap().iter().any(|x| x == "--chave"));
+    }
+
+    #[test]
+    fn segredos_saem_da_linha_de_comando() {
+        let k = chave();
+        let cfg = Configuracoes {
+            chave: k.clone(),
+            ..padrao()
+        };
+        let codigo = codigo_valido();
+        let a = Assistir {
+            sala: codigo.clone(),
+            ..Default::default()
+        };
+        let (comuns, linhas) = separar_segredos("client", a.args(&cfg).unwrap());
+        assert!(!comuns.iter().any(|x| x.contains(&k) || x.contains(&codigo)));
+        assert_eq!(comuns, ["--volume", "100", "--segredos-pela-entrada"]);
+        assert_eq!(
+            linhas,
+            [format!("--sala {codigo}"), format!("--chave {k}"), "fim".into()]
+        );
+        // Host: --sala sem valor fica; a chave sai.
+        let (comuns, linhas) = separar_segredos("host", Compartilhar::default().args(&cfg).unwrap());
+        assert_eq!(comuns[0], "--sala");
+        assert!(comuns.iter().any(|x| x == "--segredos-pela-entrada"));
+        assert_eq!(linhas, [format!("--chave {k}"), "fim".into()]);
+        // Sem segredo, nada muda.
+        let i = Assistir {
+            modo: Modo::Internet,
+            ..Default::default()
+        };
+        assert_eq!(
+            separar_segredos("client", i.args(&padrao()).unwrap()).1,
+            Vec::<String>::new()
+        );
     }
 
     #[test]

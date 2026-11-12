@@ -41,6 +41,10 @@ Opções:
   --chave FSS1-…        chave de acesso ao servidor de sinalização (quem roda o
                         fluxo-sinal gera com --nova-chave): o endereço dele e o
                         segredo que assina os pedidos
+  --segredos-pela-entrada
+                        lê da entrada, antes de tudo, linhas --opcao valor até a linha fim
+                        (a chave e os códigos fora da linha de comando, que outros
+                        programas do PC conseguem ler)
   --destino IP:PORTA    para onde enviar, ex.: 192.168.0.20:9000 (mesma rede)
   --sinal SERVIDOR      acha o cliente pelo servidor de sinalização (fluxo-sinal),
                         ex.: meu-servidor.com ou 203.0.113.5:7000 (redes diferentes)
@@ -300,7 +304,14 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Segredos (chave, códigos) pela entrada, fora da linha de comando (fluxo-net, segredos.rs).
+    let args = match fluxo_net::args_with_secrets(std::env::args().skip(1).collect()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("erro: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let opts = match parse_opts(&args) {
         Ok(o) => o,
         Err(e) if e.is_empty() => {

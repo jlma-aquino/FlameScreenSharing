@@ -361,8 +361,16 @@ impl Janela {
             }
             ctx.request_repaint();
         });
-        let aberto =
-            caminho_do_programa(programa).and_then(|caminho| Processo::iniciar(&caminho, &args, avisar));
+        // Chave e códigos pela entrada padrão, não pela linha de comando.
+        let (args, segredos) = crate::comandos::separar_segredos(programa, args);
+        let aberto = caminho_do_programa(programa)
+            .and_then(|caminho| Processo::iniciar(&caminho, &args, avisar))
+            .and_then(|mut p| {
+                for linha in &segredos {
+                    p.enviar(linha)?;
+                }
+                Ok(p)
+            });
         match aberto {
             Ok(p) => {
                 let mut sessao = Sessao::new(p, programa == "host", modo, &self.cfg);

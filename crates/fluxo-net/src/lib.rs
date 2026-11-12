@@ -60,6 +60,7 @@ mod portas;
 mod receiver;
 mod recovery;
 mod rtt;
+mod segredos;
 mod sender;
 mod signal;
 mod sim;
@@ -81,6 +82,7 @@ pub use receiver::{
 };
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
+pub use segredos::{args_with_secrets, read_secret_args, SECRETS_FROM_STDIN};
 pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL};
 pub use signal::{SignalEvent, SignalServer, MAX_PER_ROOM, ROOM_TTL};
 pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
