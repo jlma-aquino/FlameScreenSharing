@@ -46,7 +46,7 @@ que já funciona. No lugar:
 
 | Função | Com o FSS | Estado |
 |---|---|---|
-| Encontro dos PCs (sem código de resposta) | `fluxo-sinal`, UDP 3478, sem domínio nem HTTPS | Instalado e testado |
+| Encontro dos PCs (sem código de resposta) | `fluxo-sinal`, UDP 3478, sem domínio nem HTTPS, só com chave de acesso (ADR-019) | Instalado e testado |
 | Sessões de 3 a 5 espectadores e reserva quando o furo do NAT falha | Repassador próprio: o host manda uma vez, o servidor copia para cada espectador | A escrever (precisa de chave de grupo) |
 
 Sem LiveKit e sem coturn, não é preciso domínio.
@@ -128,6 +128,43 @@ sudo netfilter-persistent save
    `fluxo-bench receber --sinal ... --codigo <código da sala>`, entrando com 4 s de diferença. Os dois
    receberam o vídeo, sem perda (604 e 363 frames), e o servidor entregou cada
    um a um socket diferente do host. Mesma rede: o vídeo foi pela rede local.
+
+### 2026-11-12: chave de acesso (ADR-019)
+
+1. Código novo copiado (passo 3 acima), testes da sinalização e da chave
+   rodados no servidor, `fluxo-sinal` compilado e instalado.
+2. Arquivo de chaves só do root, e a primeira chave:
+   ```bash
+   sudo mkdir -p /etc/fluxo-sinal
+   sudo touch /etc/fluxo-sinal/chaves
+   sudo chmod 600 /etc/fluxo-sinal/chaves
+   sudo /usr/local/bin/fluxo-sinal --nova-chave 137.131.152.250:3478 --chaves /etc/fluxo-sinal/chaves
+   ```
+   A chave (id `4c0684dd`) ficou guardada no PC de casa em
+   `.secrets\chave-servidor.txt`, fora do git.
+3. O serviço recebe o arquivo pelo systemd, sem abrir a permissão dele para o
+   usuário temporário (`LoadCredential`):
+   ```ini
+   LoadCredential=chaves:/etc/fluxo-sinal/chaves
+   ExecStart=/usr/local/bin/fluxo-sinal --porta 3478 --chaves ${CREDENTIALS_DIRECTORY}/chaves
+   ```
+   `daemon-reload` e `restart`: subiu com "1 chave(s) aceita(s): 4c0684dd".
+4. Teste do PC de casa: sala com `--chave`; um cliente sem chave (`--sinal`)
+   foi ignorado ("pacote sem chave válida … (ignorado)") e não recebeu nada; com
+   a chave, o servidor apresentou os dois e o vídeo chegou a 59 fps.
+
+## Chaves
+
+```bash
+# Mais uma chave (uma para cada amigo, se quiser saber quem vazou)
+sudo /usr/local/bin/fluxo-sinal --nova-chave 137.131.152.250:3478 --chaves /etc/fluxo-sinal/chaves
+sudo systemctl restart fluxo-sinal
+# Tirar o acesso: apagar a linha da chave (e o comentário acima dela) e reiniciar
+sudo nano /etc/fluxo-sinal/chaves
+sudo systemctl restart fluxo-sinal
+```
+
+O registro mostra só o id de cada chave, nunca a chave.
 
 ## Operar o `fluxo-sinal`
 
