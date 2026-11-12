@@ -115,6 +115,19 @@ sudo netfilter-persistent save
    endereço ao enviar em 0,1 s; 481 frames chegaram, sem perda. Os dois
    estavam na mesma rede, então o vídeo foi pela rede local: o furo de NAT
    entre redes diferentes ainda não foi testado com este servidor.
+6. Teste pelo 4G (notebook no celular, `FSS-client --sinal`; PC de casa,
+   `FSS-host --sinal --codigo`): o servidor apresentou os dois em 17 s, mas o
+   vídeo não passou. O caminho pelo servidor ainda não usava TTL baixo.
+
+### 2026-11-12: salas (ADR-016)
+
+1. Código novo copiado, compilado e testado no servidor (6 testes da
+   sinalização), instalado com `sudo install` e serviço reiniciado
+   (`sudo systemctl restart fluxo-sinal`, ~2 s fora do ar).
+2. Teste do PC de casa pelo servidor: `fluxo-host --sala` e dois
+   `fluxo-bench receber --sinal ... --codigo <código da sala>`, entrando com 4 s de diferença. Os dois
+   receberam o vídeo, sem perda (604 e 363 frames), e o servidor entregou cada
+   um a um socket diferente do host. Mesma rede: o vídeo foi pela rede local.
 
 ## Operar o `fluxo-sinal`
 
