@@ -11,7 +11,7 @@
 //! Cores e formas vêm só do [`Tema`] (ver `tema.rs`).
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke};
@@ -21,7 +21,8 @@ use crate::comandos::{
     RESOLUCOES,
 };
 use crate::config::{self, Configuracoes, CODECS, ENCODERS, MBPS};
-use crate::processo::{caminho_do_programa, Processo};
+use crate::lugar;
+use crate::processo::{caminho_do_programa, Aviso, Processo};
 use crate::saida::{ler, Evento};
 use crate::tema::{Aparencia, Paleta, Tema};
 
@@ -122,6 +123,8 @@ struct Sessao {
     mudo: bool,
     /// Cliente: último volume mandado ao programa.
     volume_enviado: u32,
+    /// Cliente: o vídeo abriu no lugar desta janela, que está escondida.
+    video_no_lugar: bool,
 }
 
 impl Sessao {
@@ -152,6 +155,7 @@ impl Sessao {
             volume: cfg.volume,
             mudo: false,
             volume_enviado: cfg.volume,
+            video_no_lugar: false,
         }
     }
 
@@ -214,6 +218,8 @@ impl Sessao {
 }
 
 pub struct Janela {
+    /// HWND desta janela (Windows), para dar o lugar ao vídeo de quem assiste.
+    hwnd: Option<isize>,
     tema: Tema,
     cfg: Configuracoes,
     /// O que está no arquivo: quando `cfg` muda, grava.
@@ -244,7 +250,7 @@ pub struct Janela {
 }
 
 impl Janela {
-    pub fn new() -> Self {
+    pub fn new(hwnd: Option<isize>) -> Self {
         let monitores = fluxo_capture::list_monitors()
             .map(|l| {
                 l.iter()
@@ -255,6 +261,7 @@ impl Janela {
         let cfg = Configuracoes::carregar();
         let (tema, erro_tema) = crate::tema::carregar();
         Self {
+            hwnd,
             tema,
             erro_tema,
             cfg_salva: cfg.clone(),
@@ -299,14 +306,43 @@ impl Janela {
         }
     }
 
-    fn iniciar(&mut self, ctx: &egui::Context, programa: &str, args: Vec<String>, modo: Modo) {
+    fn iniciar(&mut self, ctx: &egui::Context, programa: &str, mut args: Vec<String>, modo: Modo) {
+        // Quem assiste: o vídeo abre no lugar desta janela (ver lugar.rs).
+        let lugar_do_video = match (programa, self.hwnd) {
+            ("client", Some(h)) => lugar::retangulo(h).map(|r| (h, r)),
+            _ => None,
+        };
+        if let Some((_, (x, y, l, a))) = lugar_do_video {
+            args.extend(["--janela".to_string(), format!("{x},{y},{l},{a}")]);
+        }
         let ctx = ctx.clone();
-        let avisar = Arc::new(move || ctx.request_repaint());
+        // Onde o vídeo estava ao fechar: a janela volta ali.
+        let onde: Arc<Mutex<Option<(i32, i32, i32, i32)>>> = Arc::default();
+        let avisar: Aviso = Arc::new(move |linha| {
+            match (linha, lugar_do_video) {
+                (Some(l), _) => {
+                    if let Some(r) = lugar::ler_retangulo(l) {
+                        *onde.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+                    }
+                }
+                // O cliente fechou: esta janela volta (com ela escondida, o
+                // egui não se redesenharia para perceber).
+                (None, Some((h, _))) => lugar::mostrar(h, *onde.lock().unwrap_or_else(|e| e.into_inner())),
+                (None, None) => {}
+            }
+            ctx.request_repaint();
+        });
         let aberto =
             caminho_do_programa(programa).and_then(|caminho| Processo::iniciar(&caminho, &args, avisar));
         match aberto {
             Ok(p) => {
-                self.sessao = Some(Sessao::new(p, programa == "host", modo, &self.cfg));
+                let mut sessao = Sessao::new(p, programa == "host", modo, &self.cfg);
+                if let Some((h, _)) = lugar_do_video {
+                    lugar::permitir_foco(sessao.processo.pid());
+                    lugar::esconder(h);
+                    sessao.video_no_lugar = true;
+                }
+                self.sessao = Some(sessao);
                 self.aviso = None;
                 self.resposta_colada.clear();
             }
@@ -1369,6 +1405,13 @@ impl eframe::App for Janela {
         }
         if let Some(s) = self.sessao.as_mut() {
             s.atualizar();
+            // Quem assiste saiu (Sair ou fechou o vídeo): de volta ao início.
+            // Com erro, a sessão fica, para mostrar o que houve.
+            if s.video_no_lugar && s.fim == Some(true) && s.erro.is_none() {
+                self.sessao = None;
+            }
+        }
+        if self.sessao.is_some() {
             // O programa pode terminar sem imprimir nada.
             ctx.request_repaint_after(Duration::from_millis(250));
         }

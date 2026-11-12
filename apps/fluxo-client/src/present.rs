@@ -39,6 +39,7 @@ use fluxo_decode::DecodedFrame;
 use fluxo_net::CursorView;
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 
+use crate::controles::Desenho;
 use crate::overlay::Overlay;
 
 type Resultado<T> = windows::core::Result<T>;
@@ -72,6 +73,8 @@ pub struct Presenter {
     copia: Option<(ID3D11Texture2D, (u32, u32))>,
     /// Cursor visível do host, com a forma.
     cursor: Option<CursorView>,
+    /// Barra de controles, quando visível.
+    controles: Option<Desenho>,
 }
 
 impl Presenter {
@@ -130,6 +133,7 @@ impl Presenter {
                 mostrar_overlay: false,
                 copia: None,
                 cursor: None,
+                controles: None,
             };
             me.create_output_view()?;
             Ok(me)
@@ -148,6 +152,30 @@ impl Presenter {
             (Some(t), Some(o)) => o.set_text(t),
             _ => Ok(()),
         }
+    }
+
+    /// Barra de controles por cima do vídeo (`None`: escondida). Vale do
+    /// próximo desenho em diante; para aparecer já, chame [`Self::redraw`].
+    pub fn set_controles(&mut self, d: Option<Desenho>) {
+        self.controles = d;
+    }
+
+    /// Desenha de novo agora: a última imagem, ou fundo preto antes da
+    /// primeira (com o texto de espera e a barra por cima).
+    pub fn redraw(&mut self) -> Resultado<()> {
+        if self.copia.is_some() {
+            return self.present_again();
+        }
+        if let Some(o) = &mut self.overlay {
+            o.draw(
+                &self.swapchain,
+                self.mostrar_overlay,
+                None,
+                self.controles.as_ref(),
+                true,
+            )?;
+        }
+        self.present_now()
     }
 
     /// A janela mudou de tamanho.
@@ -401,7 +429,7 @@ impl Presenter {
                 bottom: y + f.height as f32 * escala,
             })
         });
-        if self.mostrar_overlay || cursor.is_some() {
+        if self.mostrar_overlay || cursor.is_some() || self.controles.is_some() {
             if let Some(o) = &mut self.overlay {
                 let recorte = D2D_RECT_F {
                     left: area.left as f32,
@@ -413,10 +441,16 @@ impl Presenter {
                     &self.swapchain,
                     self.mostrar_overlay,
                     cursor.map(|c| (c, recorte)),
+                    self.controles.as_ref(),
+                    false,
                 )?;
             }
         }
 
+        self.present_now()
+    }
+
+    fn present_now(&self) -> Resultado<()> {
         let (sync, flags) = match (self.vsync, self.tearing) {
             (true, _) => (1, DXGI_PRESENT(0)),
             (false, true) => (0, DXGI_PRESENT_ALLOW_TEARING),

@@ -17,3 +17,7 @@ eframe = { version = "0.32", default-features = false, features = ["default_font
 # As saídas de som, para escolher nas configurações (só existe no Windows).
 [target.'cfg(windows)'.dependencies]
 fluxo-audio = { workspace = true }
+# Esconder a janela enquanto o vídeo de quem assiste ocupa o lugar dela, e
+# trazê-la de volta quando ele fecha (por HWND, de qualquer thread).
+windows = { workspace = true }
+raw-window-handle = "0.6"

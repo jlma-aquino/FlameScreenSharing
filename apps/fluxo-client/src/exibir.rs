@@ -18,6 +18,7 @@ use fluxo_decode::{create_device, VideoDecoder};
 use fluxo_net::{clock_diff_us, clock_us, FrameAction, Recovery, RecoveryRequest, VideoReceiver};
 use windows::Win32::Foundation::HWND;
 
+use crate::controles::Desenho;
 use crate::present::Presenter;
 
 /// O que as duas threads trocam.
@@ -31,6 +32,13 @@ pub struct Compartilhado {
     pub titulo: Mutex<Option<String>>,
     /// Janela → exibição: mostrar o painel de estatísticas sobre a imagem (F2).
     pub painel: AtomicBool,
+    /// Janela → exibição: a barra de controles a desenhar (`None`: escondida).
+    pub controles: Mutex<Option<Desenho>>,
+    /// Janela → exibição: desenhar de novo já (a barra mudou), mesmo sem
+    /// frame novo.
+    pub redesenhar: AtomicBool,
+    /// Exibição → janela: a primeira imagem já apareceu.
+    pub tem_imagem: AtomicBool,
 }
 
 /// Parâmetros da thread de exibição.
@@ -127,7 +135,11 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
         if quer_painel != painel_ligado {
             painel_ligado = quer_painel;
             tela.set_overlay(painel_ligado.then_some(texto_painel.as_str()))?;
+            c.redesenhar.store(true, Ordering::Relaxed);
         }
+        tela.set_controles(*c.controles.lock().unwrap_or_else(|e| e.into_inner()));
+        // Já desenhou nesta volta (frame novo ou cursor): a barra foi junto.
+        let mut desenhou = false;
         if let (Some(t0), Some(d)) = (inicio, duracao) {
             if t0.elapsed() >= d {
                 break;
@@ -163,6 +175,7 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
         // ele no lugar novo (não espera o próximo frame).
         if recebido.is_none() && cursor_mudou && tela.has_image() && recuperacao.is_clean() {
             tela.present_again()?;
+            desenhou = true;
             cursor_redesenhos += 1;
         }
         // Tela parada do outro lado não manda frame: o título e o painel
@@ -230,6 +243,8 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
             if let Some((d, capturado_us)) = para_mostrar {
                 let t = Instant::now();
                 tela.present(&d)?;
+                desenhou = true;
+                c.tem_imagem.store(true, Ordering::Relaxed);
                 apresentacoes.push(t.elapsed().as_secs_f64() * 1000.0);
                 drop(d); // devolve a superfície ao decoder
                 mostrados += 1;
@@ -257,6 +272,7 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
                 texto_painel = "conectado\nesperando a\nprimeira imagem".to_string();
                 if painel_ligado {
                     tela.set_overlay(Some(&texto_painel))?;
+                    c.redesenhar.store(true, Ordering::Relaxed);
                 }
             }
         }
@@ -288,6 +304,12 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
             (frames_seg, bytes_seg) = (0, 0);
             latencia_seg = Serie::default();
             proximo_titulo = Instant::now() + Duration::from_secs(1);
+        }
+
+        // A barra mudou (mouse, volume) ou o texto de espera mudou: desenha já,
+        // sem esperar o próximo frame (com a tela parada, ele pode demorar).
+        if c.redesenhar.swap(false, Ordering::Relaxed) && !desenhou {
+            tela.redraw()?;
         }
     }
 

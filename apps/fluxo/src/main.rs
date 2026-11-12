@@ -10,6 +10,7 @@
 mod comandos;
 mod config;
 mod janela;
+mod lugar;
 mod processo;
 mod saida;
 mod tema;
@@ -25,5 +26,9 @@ fn main() -> eframe::Result {
             .with_min_inner_size([520.0, 460.0]),
         ..Default::default()
     };
-    eframe::run_native(NOME, opcoes, Box::new(|_| Ok(Box::new(janela::Janela::new()))))
+    eframe::run_native(
+        NOME,
+        opcoes,
+        Box::new(|cc| Ok(Box::new(janela::Janela::new(lugar::hwnd_de(cc))))),
+    )
 }

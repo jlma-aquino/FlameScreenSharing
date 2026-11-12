@@ -18,6 +18,9 @@
 // No Linux, sem a opção `portatil`, só avisa como compilar.
 #![cfg_attr(not(any(windows, feature = "portatil")), allow(dead_code))]
 
+// A barra de controles: lógica pura (testada em qualquer sistema), usada no Windows.
+#[cfg(any(windows, test))]
+mod controles;
 #[cfg(windows)]
 mod exibir;
 #[cfg(windows)]
@@ -30,16 +33,34 @@ mod present;
 mod window;
 
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU32, Ordering as Ordem};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as Ordem};
 
 /// Volume do som do host, 0 a 100. Começa no `--volume` e muda com o vídeo
 /// rodando, quando chega `volume N` pela entrada padrão (é assim que a
 /// janela do FSS mexe nele, sem reiniciar nada).
 static VOLUME: AtomicU32 = AtomicU32::new(100);
 
-/// O volume agora, de 0 a 1.
+/// Mudo (botão da barra sobre o vídeo, ou M): o volume escolhido fica guardado.
+static MUDO: AtomicBool = AtomicBool::new(false);
+
+/// O volume que toca agora, de 0 a 1 (0 no mudo).
 pub(crate) fn volume() -> f32 {
-    VOLUME.load(Ordem::Relaxed) as f32 / 100.0
+    match MUDO.load(Ordem::Relaxed) {
+        true => 0.0,
+        false => VOLUME.load(Ordem::Relaxed) as f32 / 100.0,
+    }
+}
+
+/// O volume escolhido, 0 a 100 (o mudo não mexe nele).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn volume_pct() -> u32 {
+    VOLUME.load(Ordem::Relaxed)
+}
+
+/// Muda o volume (limitado a 0..=100).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn mudar_volume(v: i64) {
+    VOLUME.store(v.clamp(0, 100) as u32, Ordem::Relaxed);
 }
 
 /// `volume N` → `Some(Ok(N))`; outra linha → `None`.
@@ -49,6 +70,20 @@ fn ler_volume(linha: &str) -> Option<Result<u32, String>> {
         Ok(v) if v <= 100 => Ok(v),
         _ => Err("volume: use um número de 0 a 100".to_string()),
     })
+}
+
+/// `X,Y,L,A` (posição e tamanho da janela).
+fn ler_janela(s: &str) -> Result<(i32, i32, i32, i32), String> {
+    let n: Vec<i32> = s
+        .split(',')
+        .map(|p| p.trim().parse())
+        .collect::<Result<_, _>>()
+        .map_err(|_| "janela: use X,Y,LARGURA,ALTURA")?;
+    match n[..] {
+        [x, y, l, a] if l >= 200 && a >= 150 => Ok((x, y, l, a)),
+        [_, _, _, _] => Err("janela: no mínimo 200 x 150".into()),
+        _ => Err("janela: use X,Y,LARGURA,ALTURA".into()),
+    }
 }
 
 const AJUDA: &str = "\
@@ -79,9 +114,13 @@ Opções:
   --volume V      volume do som do host, 0 a 100 (padrão 100; só do Fluxo)
   --saida-som N   toca na saída de som N (padrão: a do Windows; lista em fluxo-bench audio)
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
+  --janela X,Y,L,A  posição e tamanho da janela (externos, em pixels de tela); ao
+                  fechar, imprime Janela: X,Y,L,A (a janela do FSS volta ali)
 
-Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
-F2 mostra/esconde o painel de estatísticas.
+Na janela: F11, F, Alt+Enter ou clique duplo alterna tela cheia; Esc sai da tela
+cheia; F2 mostra/esconde o painel de estatísticas; M liga e desliga o som; setas
+para cima e para baixo (ou a roda do mouse) mudam o volume. Com o mouse em
+cima, aparece a barra de controles embaixo; parado, ela some (o cursor junto).
 No terminal, com o vídeo rodando:  volume N  (0 a 100) muda o volume na hora.
 No PC que compartilha:  fluxo-host --destino <IP deste PC>:9000 --codigo <código>
   (redes diferentes:    fluxo-host --sinal <servidor> --codigo <código>)";
@@ -106,6 +145,8 @@ struct Opts {
     /// Saída de som onde tocar (`None`: a padrão do Windows).
     saida_som: Option<usize>,
     sem_painel: bool,
+    /// Retângulo externo da janela (x, y, largura, altura).
+    janela: Option<(i32, i32, i32, i32)>,
     /// TESTE no Windows: usa o cliente do Linux (`--features portatil`).
     portatil: bool,
 }
@@ -129,6 +170,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         saida_som: None,
         sem_painel: false,
         portatil: false,
+        janela: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -151,6 +193,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--saida-som" => o.saida_som = Some(valor()?.parse().map_err(|_| "saida-som inválida")?),
             "--sem-painel" => o.sem_painel = true,
             "--portatil" => o.portatil = true,
+            "--janela" => o.janela = Some(ler_janela(valor()?)?),
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
@@ -334,7 +377,7 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
 fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use crate::exibir::{exibir, Compartilhado, Config};
     use crate::window::Window;
@@ -348,10 +391,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     if o.portatil {
         return Err("compile com --features portatil".into());
     }
+    crate::window::enable_dpi_awareness();
     let Preparado { rx, titulo, espera } = preparar(o)?;
-    let mut janela = Window::new(&titulo, o.largura, o.altura, o.no_topo)?;
+    let mut janela = Window::new(&titulo, o.largura, o.altura, o.no_topo, o.janela)?;
     let comp = Arc::new(Compartilhado::default());
     comp.painel.store(!o.sem_painel, Ordering::Relaxed);
+    // Primeiro desenho já: texto de espera e barra, antes de qualquer imagem.
+    comp.redesenhar.store(true, Ordering::Relaxed);
     let cfg = Config {
         hwnd: janela.hwnd().0 as isize,
         tamanho: janela.client_size(),
@@ -376,24 +422,89 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .name("fluxo-exibicao".into())
         .spawn(move || exibir(rx, cfg, &c).map_err(|e| e.to_string()))?;
 
+    // Barra de controles sobre o vídeo (controles.rs): estado aqui, desenho
+    // na thread de exibição a partir do `Desenho` mais recente.
+    let layout = |j: &Window| {
+        let (w, h) = j.client_size();
+        controles::Layout::new(w, h, j.escala())
+    };
+    let mut barra = controles::Controles::new(layout(&janela), Instant::now());
+    let mut desenhado: Option<controles::Desenho> = None;
+
     while !exibicao.is_finished() {
         janela.wait_messages(Duration::from_millis(10));
+        let agora = Instant::now();
         if janela.closed() {
             comp.fechar.store(true, Ordering::Relaxed);
         }
-        if janela.take_painel_toggle() {
+        let mut alternar_tela_cheia = janela.take_fullscreen_toggle();
+        let mut alternar_painel = janela.take_painel_toggle();
+        if janela.take_mudo_toggle() {
+            MUDO.fetch_xor(true, Ordering::Relaxed);
+        }
+        let passos = janela.take_volume_passos();
+        if passos != 0 {
+            mudar_volume(volume_pct() as i64 + passos as i64 * controles::PASSO_VOLUME as i64);
+        }
+        for e in janela.take_entradas() {
+            match barra.entrada(e, volume_pct(), agora) {
+                Some(controles::Acao::AlternarMudo) => {
+                    MUDO.fetch_xor(true, Ordering::Relaxed);
+                }
+                Some(controles::Acao::Volume(v)) => {
+                    MUDO.store(false, Ordering::Relaxed);
+                    mudar_volume(v as i64);
+                }
+                Some(controles::Acao::AlternarEstatisticas) => alternar_painel = !alternar_painel,
+                Some(controles::Acao::AlternarTelaCheia) => alternar_tela_cheia = !alternar_tela_cheia,
+                Some(controles::Acao::Sair) => {
+                    janela.close();
+                    comp.fechar.store(true, Ordering::Relaxed);
+                }
+                None => {}
+            }
+        }
+        if alternar_painel {
             comp.painel.fetch_xor(true, Ordering::Relaxed);
         }
-        if janela.take_fullscreen_toggle() {
+        if alternar_tela_cheia {
             janela.toggle_fullscreen();
         }
         if janela.take_resized() {
             *comp.tamanho.lock().unwrap_or_else(|e| e.into_inner()) = Some(janela.client_size());
+            barra.layout = layout(&janela);
+        }
+        // Antes da primeira imagem, a barra fica (é por ela que dá para sair).
+        barra.tempo(agora, !comp.tem_imagem.load(Ordering::Relaxed));
+        janela.set_esconder_cursor(barra.esconder_cursor());
+        let desenho = barra.visivel.then(|| controles::Desenho {
+            layout: barra.layout,
+            sob_o_mouse: barra.sob_o_mouse,
+            volume: volume_pct(),
+            mudo: MUDO.load(Ordering::Relaxed),
+            estatisticas: comp.painel.load(Ordering::Relaxed),
+            tela_cheia: janela.is_fullscreen(),
+        });
+        if desenho != desenhado {
+            desenhado = desenho;
+            *comp.controles.lock().unwrap_or_else(|e| e.into_inner()) = desenho;
+            comp.redesenhar.store(true, Ordering::Relaxed);
         }
         if let Some(t) = comp.titulo.lock().unwrap_or_else(|e| e.into_inner()).take() {
             janela.set_title(&t);
         }
     }
+    // Para a janela do FSS voltar onde o vídeo estava (fora da tela cheia).
+    let (x, y, w, h) = janela.retangulo_normal();
+    println!("Janela: {x},{y},{w},{h}");
+    // A janela do FSS (que nos abriu) pode voltar para a frente: o Windows só
+    // deixa quem está em primeiro plano passar o foco adiante.
+    // SAFETY: só muda a permissão de foco.
+    let _ = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+            windows::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+        )
+    };
     // A swapchain (na outra thread) já foi solta; agora a janela pode fechar.
     exibicao
         .join()
@@ -492,7 +603,15 @@ fn tocar_audio(
 
 #[cfg(test)]
 mod tests {
-    use super::ler_volume;
+    use super::{ler_janela, ler_volume};
+
+    #[test]
+    fn janela_pela_linha_de_comando() {
+        assert_eq!(ler_janela("-8,0,1296,739"), Ok((-8, 0, 1296, 739)));
+        assert!(ler_janela("1,2,3").is_err());
+        assert!(ler_janela("0,0,100,100").is_err());
+        assert!(ler_janela("a,b,c,d").is_err());
+    }
 
     #[test]
     fn volume_pela_entrada() {

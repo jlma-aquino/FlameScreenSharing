@@ -41,13 +41,11 @@ pub fn caminho_do_programa(nome: &str) -> io::Result<PathBuf> {
 }
 
 impl Processo {
-    /// Inicia `programa`. `avisar` é chamado a cada linha nova (para a janela
-    /// se redesenhar).
-    pub fn iniciar(
-        programa: &Path,
-        args: &[String],
-        avisar: Arc<dyn Fn() + Send + Sync>,
-    ) -> io::Result<Self> {
+    /// Inicia `programa`. `avisar` é chamado com cada linha nova (para a janela
+    /// se redesenhar) e com `None` quando a saída padrão fecha (o programa
+    /// terminou), da thread que lê: serve para reagir mesmo com a janela
+    /// escondida, quando ela não se redesenha.
+    pub fn iniciar(programa: &Path, args: &[String], avisar: Aviso) -> io::Result<Self> {
         let mut comando = Command::new(programa);
         comando
             .args(args)
@@ -60,16 +58,22 @@ impl Processo {
         let entrada = filho.stdin.take();
         let (tx, linhas) = channel();
         if let Some(saida) = filho.stdout.take() {
-            ler_em_thread(saida, tx.clone(), avisar.clone());
+            ler_em_thread(saida, tx.clone(), avisar.clone(), true);
         }
         if let Some(erros) = filho.stderr.take() {
-            ler_em_thread(erros, tx, avisar);
+            ler_em_thread(erros, tx, avisar, false);
         }
         Ok(Self {
             filho,
             entrada,
             linhas,
         })
+    }
+
+    /// Número do processo (para deixar a janela dele tomar o foco).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn pid(&self) -> u32 {
+        self.filho.id()
     }
 
     /// As linhas que chegaram desde a última chamada.
@@ -100,23 +104,32 @@ impl Drop for Processo {
     }
 }
 
+/// Chamado com cada linha e com `None` no fim (ver [`Processo::iniciar`]).
+pub type Aviso = Arc<dyn Fn(Option<&str>) + Send + Sync>;
+
 /// Uma thread por saída (stdout e stderr), até o programa fechar. Sem
-/// `lines()`: um byte fora do UTF-8 não pode calar o resto.
-fn ler_em_thread(saida: impl Read + Send + 'static, tx: Sender<String>, avisar: Arc<dyn Fn() + Send + Sync>) {
+/// `lines()`: um byte fora do UTF-8 não pode calar o resto. `fim`: avisa
+/// quando esta saída fecha.
+fn ler_em_thread(saida: impl Read + Send + 'static, tx: Sender<String>, avisar: Aviso, fim: bool) {
     std::thread::spawn(move || {
         let mut leitor = BufReader::new(saida);
         let mut bytes = Vec::new();
         loop {
             bytes.clear();
             match leitor.read_until(b'\n', &mut bytes) {
-                Ok(0) | Err(_) => return,
+                Ok(0) | Err(_) => {
+                    if fim {
+                        avisar(None);
+                    }
+                    return;
+                }
                 Ok(_) => {}
             }
             let linha = String::from_utf8_lossy(&bytes).trim_end().to_string();
+            avisar(Some(&linha));
             if tx.send(linha).is_err() {
                 return;
             }
-            avisar();
         }
     });
 }
@@ -147,7 +160,7 @@ mod tests {
         let sistema = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
         let exe = Path::new(&sistema).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
         let args = ["-NoProfile", "-NonInteractive", "-Command", comando].map(String::from);
-        Processo::iniciar(&exe, &args, Arc::new(|| {})).unwrap()
+        Processo::iniciar(&exe, &args, Arc::new(|_| {})).unwrap()
     }
 
     #[test]
