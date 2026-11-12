@@ -20,17 +20,26 @@ ANTES DE COMEÇAR
 COMO USAR (cada um na sua casa)
 -------------------------------
 Quem vai COMPARTILHAR:
-  1. Clique em Compartilhar minha tela, deixe "Abrir uma sala" e clique em
-     Começar.
-  2. Copie o código da sala e mande para quem vai assistir (Discord,
+  1. No cartão "Compartilhar a tela", clique em Compartilhar.
+  2. Clique em Copiar código e mande para quem vai assistir (Discord,
      WhatsApp...).
 
 Quem vai ASSISTIR:
-  3. Clique em Assistir, deixe "Entrar numa sala", cole o código e clique em
-     Começar. Uma janela de vídeo abre e a imagem aparece em alguns segundos.
+  3. No cartão "Entrar numa sala", digite ou cole o código e clique em Entrar.
+     Uma janela de vídeo abre e a imagem aparece em alguns segundos
+     (F11: tela cheia).
 
-Mais gente pode entrar com o mesmo código, até 4 pessoas. Para terminar, clique
-em Parar ou feche a janela; quem compartilha encerra a sala para todos.
+Mais gente pode entrar com o mesmo código, até 4 pessoas.
+
+Durante a transmissão, a barra de baixo muda tudo na hora, sem derrubar
+ninguém:
+  - quem compartilha: Tela (qual monitor), Som (liga e desliga o som do PC),
+    Pausar, Qualidade (resolução e quadros por segundo) e Encerrar, que fecha
+    a sala para todos;
+  - quem assiste: mudo, volume e Sair.
+
+Em Configurações (canto de cima) ficam o tema claro ou escuro e os padrões:
+qualidade, codec, de onde vem o som e onde ele toca.
 
 Importante: quem tem o código vê a tela inteira e ouve o som do PC de quem
 compartilha. Mande o código só para quem você quer, e feche o que não quiser
@@ -39,10 +48,11 @@ mostrar antes de começar.
 
 SEM A SALA (troca de códigos)
 -----------------------------
-Se a sala não conectar, use "Pela internet, trocando códigos":
-  1. Quem vai assistir: Assistir > Começar, e mande o código de conexão.
-  2. Quem vai compartilhar: cole o código e clique em Começar. Se aparecer um
-     código de resposta, mande de volta.
+Se a sala não conectar, clique em "Outras formas de conectar" e use "Pela
+internet, trocando códigos":
+  1. Quem vai assistir: "Vou assistir" > Começar, e mande o código de conexão.
+  2. Quem vai compartilhar: "Vou compartilhar", cole o código e clique em
+     Começar. Se aparecer um código de resposta, mande de volta.
   3. Quem vai assistir: cole o código de resposta e clique em Enviar.
 
 
@@ -57,7 +67,7 @@ rede ruim pode baixar a qualidade de todos.
 SE NÃO CONECTAR
 ---------------
 - Confira o firewall e o antivírus nos dois PCs.
-- Tente de novo: clique em Parar e depois em Começar.
+- Tente de novo: clique em Encerrar (ou Sair) e comece outra vez.
 - Algumas redes (internet de celular, certos provedores) bloqueiam a conexão
   direta. Tente trocando a rede de um dos lados. Ainda não há como passar o
   vídeo pelo servidor nesses casos.
