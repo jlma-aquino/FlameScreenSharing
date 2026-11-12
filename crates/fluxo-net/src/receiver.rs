@@ -608,6 +608,8 @@ fn recv_loop(
     let mut ativa: Option<Opener> = None;
     let mut candidata: Option<Candidata> = None;
     let mut respondido: Option<Respondido> = None;
+    // Palpites do código por IP (cada PairInit novo é um).
+    let mut limite = crate::limite::LimitePareamento::default();
     let mut sinal = match (cfg.signal_server, &cfg.pairing_code) {
         (Some(servidor), Some(codigo)) => Some(Sinalizacao::new(
             servidor,
@@ -747,6 +749,7 @@ fn recv_loop(
                         from,
                         &mut candidata,
                         &mut respondido,
+                        &mut limite,
                     );
                     continue;
                 }
@@ -1027,9 +1030,15 @@ fn responder_pareamento(
     from: SocketAddr,
     candidata: &mut Option<Candidata>,
     respondido: &mut Option<Respondido>,
+    limite: &mut crate::limite::LimitePareamento,
 ) {
     if let Some(r) = respondido.as_ref().filter(|r| r.init == payload) {
         let _ = socket.send_to(&r.pacote, from);
+        return;
+    }
+    // PairInit novo é um palpite do código: poucos por IP (ver limite.rs).
+    if !limite.permitir(from.ip(), Instant::now()) {
+        shared.with_stats(|s| s.invalid_packets += 1);
         return;
     }
     let Ok((sessao, resposta)) = fluxo_crypto::respond(codigo, payload) else {

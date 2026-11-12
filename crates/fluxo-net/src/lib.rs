@@ -53,6 +53,7 @@ mod conexao;
 mod delay;
 mod history;
 mod internet;
+mod limite;
 mod observar;
 mod pacer;
 mod portas;
