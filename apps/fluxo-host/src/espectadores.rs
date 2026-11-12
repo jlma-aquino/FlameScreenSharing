@@ -6,7 +6,8 @@
 //! O que é um só para todos (o bitrate do encoder, os keyframes) segue o
 //! espectador em pior situação.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -300,8 +301,13 @@ pub struct Novo {
 /// Lê pedidos da entrada padrão até ela fechar, cada um pareando em thread
 /// própria (pode levar minutos). `ocupados` conta quem assiste e quem está
 /// pareando; quem sair desconta lá no laço do vídeo.
-pub fn atender_pedidos(cfg: SenderConfig, ttl_furo: u32, novos: Sender<Novo>, ocupados: Arc<AtomicUsize>) {
-    let mut numero = 1;
+pub fn atender_pedidos(
+    cfg: SenderConfig,
+    ttl_furo: u32,
+    numeros: Arc<AtomicU32>,
+    novos: Sender<Novo>,
+    ocupados: Arc<AtomicUsize>,
+) {
     for linha in std::io::stdin().lines() {
         let Ok(linha) = linha else { return };
         if linha.trim().is_empty() {
@@ -319,8 +325,8 @@ pub fn atender_pedidos(cfg: SenderConfig, ttl_furo: u32, novos: Sender<Novo>, oc
             continue;
         }
         ocupados.fetch_add(1, Ordering::Relaxed);
-        numero += 1;
-        let (cfg, novos, ocupados, n) = (cfg.clone(), novos.clone(), ocupados.clone(), numero);
+        let n = numeros.fetch_add(1, Ordering::Relaxed) + 1;
+        let (cfg, novos, ocupados) = (cfg.clone(), novos.clone(), ocupados.clone());
         std::thread::spawn(move || match conectar(n, pedido, cfg, ttl_furo) {
             Ok(tx) => {
                 let codecs = tx
@@ -337,6 +343,59 @@ pub fn atender_pedidos(cfg: SenderConfig, ttl_furo: u32, novos: Sender<Novo>, oc
                 println!("Espectador {n} não conectou: {e}");
             }
         });
+    }
+}
+
+/// Prazo de cada procura na sala: sem ninguém para entrar, termina e outra
+/// começa (num socket novo).
+pub const PRAZO_SALA: Duration = Duration::from_secs(30);
+
+/// Sala: pede ao servidor, um de cada vez, quem entrou com o código, e pareia
+/// cada um num socket só dele, até o limite. Roda até o laço do vídeo fechar
+/// `novos`.
+pub fn atender_sala(
+    servidor: SocketAddr,
+    cfg: SenderConfig,
+    numeros: Arc<AtomicU32>,
+    novos: Sender<Novo>,
+    ocupados: Arc<AtomicUsize>,
+) {
+    let mut avisou_limite = false;
+    loop {
+        if ocupados.load(Ordering::Relaxed) >= MAX_ESPECTADORES {
+            if !avisou_limite {
+                println!("(sala cheia: {MAX_ESPECTADORES} espectadores; quem chegar espera uma vaga)");
+                avisou_limite = true;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+        avisou_limite = false;
+        // A vaga fica reservada enquanto procura.
+        ocupados.fetch_add(1, Ordering::Relaxed);
+        match VideoSender::connect_via_signal(("0.0.0.0", 0), servidor, cfg.clone()) {
+            Ok(tx) => {
+                let codecs = tx
+                    .wait_client_codecs(PRAZO_CODECS)
+                    .unwrap_or(fluxo_net::VideoCodec::H264.bit());
+                let numero = numeros.fetch_add(1, Ordering::Relaxed) + 1;
+                if novos.send(Novo { numero, tx, codecs }).is_err() {
+                    return;
+                }
+            }
+            Err(e) => {
+                ocupados.fetch_sub(1, Ordering::Relaxed);
+                match e.to_string() {
+                    // Ninguém entrou nesse prazo: procura de novo, quieto.
+                    t if t.contains("nenhum cliente") => {}
+                    t if t.contains("o servidor de sinalização") => {
+                        println!("(o servidor da sala não respondeu; tentando de novo)");
+                        std::thread::sleep(Duration::from_secs(5));
+                    }
+                    t => println!("Alguém tentou entrar e não conectou: {t}"),
+                }
+            }
+        }
     }
 }
 

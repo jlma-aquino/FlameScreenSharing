@@ -195,7 +195,19 @@ fn parear(
         // Erro de envio (porta do outro lado ainda fechada, por exemplo):
         // tenta de novo na próxima volta.
         if let (Some(s), Some(p)) = (servidor, &procura) {
+            // O pedido ao servidor vai com o TTL normal: o baixo, que serve
+            // para furar o nosso NAT sem chegar ao do cliente, morreria antes
+            // do servidor.
+            let baixo = ttl_normal.and_then(|normal| {
+                let v4 = socket.v4()?;
+                let baixo = v4.ttl().ok()?;
+                v4.set_ttl(normal).ok()?;
+                Some(baixo)
+            });
             let _ = socket.send_to(p, s);
+            if let (Some(b), Some(v4)) = (baixo, socket.v4()) {
+                let _ = v4.set_ttl(b);
+            }
         }
         for c in &candidatos {
             enviados += socket.send_to(&t.init, *c).is_ok() as u64;

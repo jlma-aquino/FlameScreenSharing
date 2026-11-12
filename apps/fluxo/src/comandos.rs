@@ -19,11 +19,22 @@ pub const RESOLUCOES: [(&str, &str); 5] = [
 /// Opções de fps.
 pub const FPS: [u32; 3] = [30, 60, 120];
 
+/// Como os dois lados se acham.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modo {
+    /// Quem compartilha abre uma sala; quem assiste entra com o código, pelo
+    /// servidor do FSS.
+    Sala,
+    /// Redes diferentes, sem servidor: código de conexão e de resposta.
+    Internet,
+    /// Mesma rede: endereço e código.
+    Rede,
+}
+
 /// O que a pessoa preencheu para compartilhar a tela.
 #[derive(Debug, Clone)]
 pub struct Compartilhar {
-    /// Redes diferentes (código de conexão) ou mesma rede (endereço + código).
-    pub internet: bool,
+    pub modo: Modo,
     pub conexao: String,
     pub destino: String,
     pub codigo: String,
@@ -37,7 +48,7 @@ pub struct Compartilhar {
 impl Default for Compartilhar {
     fn default() -> Self {
         Self {
-            internet: true,
+            modo: Modo::Sala,
             conexao: String::new(),
             destino: String::new(),
             codigo: String::new(),
@@ -53,7 +64,9 @@ impl Compartilhar {
     /// Argumentos do `fluxo-host`, ou o que falta arrumar.
     pub fn args(&self) -> Result<Vec<String>, String> {
         let mut a = Vec::new();
-        if self.internet {
+        if self.modo == Modo::Sala {
+            a.push("--sala".to_string());
+        } else if self.modo == Modo::Internet {
             let c = self.conexao.trim();
             if c.is_empty() {
                 return Err("Cole o código de conexão de quem vai assistir.".into());
@@ -101,7 +114,9 @@ fn com_porta(destino: &str) -> String {
 /// O que a pessoa escolheu para assistir.
 #[derive(Debug, Clone)]
 pub struct Assistir {
-    pub internet: bool,
+    pub modo: Modo,
+    /// Código da sala de quem compartilha.
+    pub sala: String,
     pub audio: bool,
     /// Volume do Fluxo, 0 a 100.
     pub volume: u32,
@@ -110,7 +125,8 @@ pub struct Assistir {
 impl Default for Assistir {
     fn default() -> Self {
         Self {
-            internet: true,
+            modo: Modo::Sala,
+            sala: String::new(),
             audio: true,
             volume: 100,
         }
@@ -118,17 +134,26 @@ impl Default for Assistir {
 }
 
 impl Assistir {
-    /// Argumentos do `fluxo-client`.
-    pub fn args(&self) -> Vec<String> {
+    /// Argumentos do `fluxo-client`, ou o que falta arrumar.
+    pub fn args(&self) -> Result<Vec<String>, String> {
         let mut a = Vec::new();
-        if self.internet {
-            a.push("--internet".to_string());
+        match self.modo {
+            Modo::Sala => {
+                let c = self.sala.trim();
+                if c.is_empty() {
+                    return Err("Digite o código da sala de quem compartilha.".into());
+                }
+                PairingCode::parse(c).map_err(|e| format!("Código da sala: {e}"))?;
+                a.extend(["--sala".to_string(), c.to_string()]);
+            }
+            Modo::Internet => a.push("--internet".to_string()),
+            Modo::Rede => {}
         }
         match self.audio {
             true => a.extend(["--volume".to_string(), self.volume.min(100).to_string()]),
             false => a.push("--sem-audio".to_string()),
         }
-        a
+        Ok(a)
     }
 }
 
@@ -175,7 +200,7 @@ mod tests {
     fn mesma_rede_vira_destino_e_codigo() {
         let codigo = codigo_valido();
         let c = Compartilhar {
-            internet: false,
+            modo: Modo::Rede,
             destino: " 192.168.0.5 ".into(),
             codigo: codigo.clone(),
             ..Default::default()
@@ -192,7 +217,7 @@ mod tests {
     #[test]
     fn opcoes_viram_argumentos() {
         let c = Compartilhar {
-            internet: false,
+            modo: Modo::Rede,
             destino: "192.168.0.5:9100".into(),
             codigo: codigo_valido(),
             monitor: 1,
@@ -211,15 +236,19 @@ mod tests {
 
     #[test]
     fn campo_vazio_ou_codigo_errado_explica_o_que_falta() {
-        let vazio = Compartilhar::default();
+        let vazio = Compartilhar {
+            modo: Modo::Internet,
+            ..Default::default()
+        };
         assert!(vazio.args().unwrap_err().contains("código de conexão"));
         let errado = Compartilhar {
+            modo: Modo::Internet,
             conexao: "AAAA-BBBB".into(),
             ..Default::default()
         };
         assert!(errado.args().unwrap_err().starts_with("Código de conexão:"));
         let sem_destino = Compartilhar {
-            internet: false,
+            modo: Modo::Rede,
             codigo: codigo_valido(),
             ..Default::default()
         };
@@ -252,13 +281,31 @@ mod tests {
 
     #[test]
     fn assistir() {
-        let a = Assistir::default().args();
-        assert_eq!(a, ["--internet", "--volume", "100"]);
+        let codigo = codigo_valido();
+        let a = Assistir {
+            sala: format!(" {codigo} "),
+            ..Default::default()
+        };
+        assert_eq!(a.args().unwrap(), ["--sala", codigo.as_str(), "--volume", "100"]);
+        assert!(Assistir::default().args().unwrap_err().contains("código da sala"));
+        let i = Assistir {
+            modo: Modo::Internet,
+            ..Default::default()
+        };
+        assert_eq!(i.args().unwrap(), ["--internet", "--volume", "100"]);
         let b = Assistir {
-            internet: false,
+            modo: Modo::Rede,
             audio: false,
             volume: 30,
+            ..Default::default()
         };
-        assert_eq!(b.args(), ["--sem-audio"]);
+        assert_eq!(b.args().unwrap(), ["--sem-audio"]);
+    }
+
+    #[test]
+    fn sala_nao_pede_nada() {
+        let a = Compartilhar::default().args().unwrap();
+        assert_eq!(a[0], "--sala");
+        assert!(!a.iter().any(|x| x == "--codigo" || x == "--conexao"));
     }
 }

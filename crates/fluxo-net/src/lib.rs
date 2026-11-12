@@ -80,7 +80,7 @@ pub use receiver::{
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL};
-pub use signal::{SignalEvent, SignalServer, ROOM_TTL};
+pub use signal::{SignalEvent, SignalServer, MAX_PER_ROOM, ROOM_TTL};
 pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
 pub use upnp::{find_gateway, is_private_v4, open_port, Gateway, PortMapping, UpnpOutcome, UPNP_LEASE};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).
@@ -178,6 +178,10 @@ pub(crate) fn local_candidates(socket: Option<&std::net::UdpSocket>) -> Vec<std:
 
 /// Porta padrão do servidor de sinalização (`fluxo-sinal`).
 pub const SIGNAL_PORT: u16 = 7000;
+
+/// Servidor de sinalização do FSS (Oracle Cloud, ver `docs/SERVIDOR.md`):
+/// o das salas quando ninguém diz outro.
+pub const DEFAULT_SIGNAL_SERVER: &str = "137.131.152.250:3478";
 
 /// Lê o endereço de um servidor de sinalização como digitado: `host:porta`,
 /// ou só `host` (porta [`SIGNAL_PORT`]); nomes são resolvidos (DNS),

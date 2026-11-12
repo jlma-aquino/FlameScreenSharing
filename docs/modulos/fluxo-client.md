@@ -22,6 +22,10 @@ esse código consegue transmitir, e tudo vai cifrado; o painel e o título
 mostram "cifrado" durante a transmissão. `--codigo` fixa um código (útil em
 scripts); `--sem-cifra` desliga o pareamento, só para teste.
 
+Numa sala, `--sala CÓDIGO` usa o código de quem compartilha (`fluxo-host
+--sala`) e entra pelo servidor do FSS (outro com `--sinal`): nada a mandar de
+volta. Pareado, o cliente sai da sala, e a vaga fica para outro.
+
 Em redes diferentes, `--sinal SERVIDOR` registra o código num servidor de
 sinalização ([fluxo-sinal](fluxo-sinal.md)) e o comando mostrado vira
 `fluxo-host --sinal SERVIDOR --codigo ...`: o host acha este PC pelo

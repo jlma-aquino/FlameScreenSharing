@@ -8,6 +8,7 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 ## Uso
 
 ```text
+fluxo-host --sala [--sinal SERVIDOR] [opções]
 fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
            [--codec auto|h264|hevc|av1] [--resolucao R]
 fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
@@ -15,7 +16,21 @@ fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
            [--segundos S] [--porta-local P] [--sem-cifra]
 ```
 
-O receptor ([fluxo-client](fluxo-client.md), ou o `fluxo-bench receber`
+Com `--sala`, o host sorteia um código e mostra; quem assiste entra com ele,
+sem responder nada, e mais gente pode entrar depois (até 4):
+
+```powershell
+.\target\release\fluxo-host.exe --sala
+# Código da sala: K7M4-QX9P
+.\target\release\fluxo-client.exe --sala K7M4-QX9P   # em cada PC que assiste
+```
+
+O host espera a primeira pessoa antes de abrir o encoder (o codec depende dela).
+Cada entrada é procurada no servidor ([fluxo-sinal](fluxo-sinal.md), o do FSS
+salvo `--sinal`) e pareada num socket próprio, uma de cada vez. Quem tenta e não
+pareia aparece como "Alguém tentou entrar e não conectou"; a transmissão segue.
+
+Sem sala, o receptor ([fluxo-client](fluxo-client.md), ou o `fluxo-bench receber`
 sem janela) mostra um **código de pareamento** e o comando pronto:
 
 ```powershell

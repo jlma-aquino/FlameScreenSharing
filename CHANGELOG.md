@@ -6,6 +6,12 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Sala** (ADR-016): quem compartilha abre uma sala (`fluxo-host --sala`, ou
+  "Abrir uma sala" na janela) e passa o código; quem assiste entra com ele
+  (`fluxo-client --sala CÓDIGO`), sem código de resposta, até 4 pessoas. Usa o
+  `fluxo-sinal` na Oracle Cloud (`DEFAULT_SIGNAL_SERVER`, `docs/SERVIDOR.md`), que
+  agora guarda vários clientes por sala e registra cada acontecimento uma vez por
+  minuto. Pedidos com TTL baixo até o furo do cliente, como no código de conexão.
 - **O host se ajusta à CPU de quem assiste no Linux**: o cliente portátil mede a carga
   do decode e informa no relatório de rede, e o bitrate cai ou para de subir, sem
   mudar o protocolo. Com mais de 300 ms de atraso, descarta a fila e pede keyframe.

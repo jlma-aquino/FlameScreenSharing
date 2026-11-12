@@ -1,8 +1,11 @@
 //! Servidor de sinalização: [`SignalServer`].
 //!
-//! Apresenta host e cliente que estão em redes diferentes. O cliente se
-//! registra na sala do seu código ([`PairingCode::room`]); o host procura a
-//! sala; o servidor conta a cada um os endereços do outro. O endereço
+//! Apresenta host e clientes que estão em redes diferentes. Cada cliente se
+//! registra na sala do código ([`PairingCode::room`]); o host procura a sala
+//! e recebe um cliente que ainda ninguém pegou; o servidor conta a cada um os
+//! endereços do outro. Vários clientes cabem numa sala (todos com o mesmo
+//! código, o da transmissão), e o host pede um de cada vez, cada um num
+//! socket próprio. O endereço
 //! público é o de onde o pedido chegou — o servidor faz o papel de STUN pelo
 //! mesmo socket que depois leva o vídeo, então é exatamente o mapeamento do
 //! NAT que interessa. Depois disso os dois furam os NATs mandando pacotes um
@@ -19,9 +22,18 @@ use fluxo_proto::{PacketHeader, PacketKind, SignalMessage};
 
 use crate::{clock_us, is_transient};
 
-/// Sem novo registro por este tempo, a sala do cliente some (o cliente
-/// renova o registro a cada 5 s).
+/// Sem novo registro por este tempo, o cliente sai da sala (ele renova o
+/// registro a cada 5 s enquanto espera, e para quando pareia).
 pub const ROOM_TTL: Duration = Duration::from_secs(30);
+
+/// Clientes esperando numa sala, no máximo.
+pub const MAX_PER_ROOM: usize = 8;
+
+/// Um cliente entregue a um host fica com ele enquanto o host procura e por
+/// este tempo depois. É mais que [`ROOM_TTL`]: quem pareou para de se
+/// registrar e some antes de ficar livre; quem continua se registrando sem
+/// parear (pareamento que falhou) volta a ficar disponível.
+const POSSE: Duration = Duration::from_secs(35);
 
 /// O que aconteceu num pedido, para quem roda o servidor mostrar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,20 +48,22 @@ pub enum SignalEvent {
     },
     /// Host procurou uma sala vazia.
     NotFound { room: u32, host: SocketAddr },
-    /// Cliente tentou uma sala ocupada por outro.
+    /// Cliente tentou uma sala cheia ([`MAX_PER_ROOM`]).
     RoomTaken { room: u32, client: SocketAddr },
 }
 
-struct Sala {
-    cliente: SocketAddr,
+struct Cliente {
+    endereco: SocketAddr,
     locais: Vec<SocketAddr>,
     visto: Instant,
+    /// Host (socket) a quem foi entregue e quando ele procurou por último.
+    host: Option<(SocketAddr, Instant)>,
 }
 
-/// Estado do servidor: as salas com cliente esperando.
+/// Estado do servidor: as salas com clientes esperando.
 #[derive(Default)]
 pub struct SignalServer {
-    salas: HashMap<u32, Sala>,
+    salas: HashMap<u32, Vec<Cliente>>,
 }
 
 impl SignalServer {
@@ -61,7 +75,10 @@ impl SignalServer {
         de: SocketAddr,
         agora: Instant,
     ) -> (Vec<(SocketAddr, Vec<u8>)>, Option<SignalEvent>) {
-        self.salas.retain(|_, s| agora.duration_since(s.visto) < ROOM_TTL);
+        for sala in self.salas.values_mut() {
+            sala.retain(|c| agora.duration_since(c.visto) < ROOM_TTL);
+        }
+        self.salas.retain(|_, sala| !sala.is_empty());
         let Ok((h, payload)) = PacketHeader::decode(datagrama) else {
             return (Vec::new(), None);
         };
@@ -79,50 +96,67 @@ impl SignalServer {
         };
         match msg {
             SignalMessage::Register { room, locals } => {
-                // Outro cliente na sala: só toma o lugar se for do mesmo IP
-                // (o mesmo PC reabriu numa porta nova).
-                if let Some(s) = self.salas.get(&room) {
-                    if s.cliente != de && s.cliente.ip() != de.ip() {
+                let sala = self.salas.entry(room).or_default();
+                let novo = match sala.iter().position(|c| c.endereco == de) {
+                    Some(i) => {
+                        sala[i].locais = locals;
+                        sala[i].visto = agora;
+                        false
+                    }
+                    None if sala.len() >= MAX_PER_ROOM => {
                         let r = resposta(h.frame_id, &SignalMessage::RoomTaken);
                         return (vec![(de, r)], Some(SignalEvent::RoomTaken { room, client: de }));
                     }
-                }
-                let novo = self.salas.get(&room).is_none_or(|s| s.cliente != de);
-                self.salas.insert(
-                    room,
-                    Sala {
-                        cliente: de,
-                        locais: locals,
-                        visto: agora,
-                    },
-                );
+                    None => {
+                        sala.push(Cliente {
+                            endereco: de,
+                            locais: locals,
+                            visto: agora,
+                            host: None,
+                        });
+                        true
+                    }
+                };
                 let r = resposta(h.frame_id, &SignalMessage::Registered { public: de });
                 let evento = novo.then_some(SignalEvent::Registered { room, client: de });
                 (vec![(de, r)], evento)
             }
-            SignalMessage::Lookup { room, locals } => match self.salas.get(&room) {
-                Some(s) => {
-                    let para_host = SignalMessage::Found {
-                        public: s.cliente,
-                        locals: s.locais.clone(),
-                    };
-                    let para_cliente = SignalMessage::Found { public: de, locals };
-                    let envios = vec![
-                        (de, resposta(h.frame_id, &para_host)),
-                        (s.cliente, resposta(0, &para_cliente)),
-                    ];
-                    let evento = SignalEvent::Found {
-                        room,
-                        host: de,
-                        client: s.cliente,
-                    };
-                    (envios, Some(evento))
+            SignalMessage::Lookup { room, locals } => {
+                // O que já é deste host; senão, o mais antigo sem dono (ou
+                // cujo dono sumiu).
+                let livre = |c: &Cliente| c.host.is_none_or(|(_, t)| agora.duration_since(t) >= POSSE);
+                let escolhido = self.salas.get_mut(&room).and_then(|sala| {
+                    let i = sala
+                        .iter()
+                        .position(|c| c.host.is_some_and(|(h, _)| h == de))
+                        .or_else(|| sala.iter().position(livre))?;
+                    Some(&mut sala[i])
+                });
+                match escolhido {
+                    Some(c) => {
+                        c.host = Some((de, agora));
+                        let para_host = SignalMessage::Found {
+                            public: c.endereco,
+                            locals: c.locais.clone(),
+                        };
+                        let para_cliente = SignalMessage::Found { public: de, locals };
+                        let envios = vec![
+                            (de, resposta(h.frame_id, &para_host)),
+                            (c.endereco, resposta(0, &para_cliente)),
+                        ];
+                        let evento = SignalEvent::Found {
+                            room,
+                            host: de,
+                            client: c.endereco,
+                        };
+                        (envios, Some(evento))
+                    }
+                    None => {
+                        let r = resposta(h.frame_id, &SignalMessage::NotFound);
+                        (vec![(de, r)], Some(SignalEvent::NotFound { room, host: de }))
+                    }
                 }
-                None => {
-                    let r = resposta(h.frame_id, &SignalMessage::NotFound);
-                    (vec![(de, r)], Some(SignalEvent::NotFound { room, host: de }))
-                }
-            },
+            }
             // Respostas não são pedidos: alguém mandando coisa errada.
             SignalMessage::Registered { .. }
             | SignalMessage::Found { .. }
@@ -134,6 +168,11 @@ impl SignalServer {
     /// Salas com cliente esperando.
     pub fn rooms(&self) -> usize {
         self.salas.len()
+    }
+
+    /// Clientes esperando, em todas as salas.
+    pub fn clients(&self) -> usize {
+        self.salas.values().map(Vec::len).sum()
     }
 
     /// Atende pedidos em `socket` até `stop` virar `true` (conferido a cada
@@ -249,46 +288,103 @@ mod tests {
         );
     }
 
+    fn registrar(s: &mut SignalServer, room: u32, de: SocketAddr, t: Instant) -> Option<SignalEvent> {
+        s.handle(
+            &pedido(1, SignalMessage::Register { room, locals: vec![] }),
+            de,
+            t,
+        )
+        .1
+    }
+
+    /// O cliente que o servidor entregou ao host `de`, se algum.
+    fn procurar(s: &mut SignalServer, room: u32, de: SocketAddr, t: Instant) -> Option<SocketAddr> {
+        let (r, _) = s.handle(&pedido(1, SignalMessage::Lookup { room, locals: vec![] }), de, t);
+        match ler(&r[0].1).1 {
+            SignalMessage::Found { public, .. } => Some(public),
+            _ => None,
+        }
+    }
+
     #[test]
-    fn sala_vazia_ocupada_e_expirada() {
+    fn sala_vazia_e_expirada() {
         let mut s = SignalServer::default();
         let t = Instant::now();
         let host = a("201.0.0.2:52000");
-        let (r, _) = s.handle(
+        assert_eq!(procurar(&mut s, 7, host, t), None);
+        assert!(registrar(&mut s, 7, a("200.0.0.1:1000"), t).is_some());
+        // Renovar não gera evento.
+        assert_eq!(registrar(&mut s, 7, a("200.0.0.1:1000"), t), None);
+        // Sem renovar, o cliente sai da sala.
+        let depois = t + ROOM_TTL + Duration::from_secs(1);
+        assert_eq!(procurar(&mut s, 7, host, depois), None);
+        assert_eq!(s.rooms(), 0);
+    }
+
+    #[test]
+    fn varios_clientes_cada_um_para_um_host() {
+        let mut s = SignalServer::default();
+        let t = Instant::now();
+        // Dois da mesma casa (mesmo IP) e um de fora, todos com o mesmo código.
+        let (c1, c2, c3) = (a("200.0.0.1:1000"), a("200.0.0.1:1001"), a("203.0.0.3:1000"));
+        for c in [c1, c2, c3] {
+            assert!(matches!(
+                registrar(&mut s, 7, c, t),
+                Some(SignalEvent::Registered { .. })
+            ));
+        }
+        assert_eq!(s.clients(), 3);
+        // Cada socket do host recebe um cliente diferente, na ordem de chegada,
+        // e o mesmo socket continua recebendo o mesmo enquanto procura.
+        let (h1, h2, h3, h4) = (
+            a("201.0.0.2:5001"),
+            a("201.0.0.2:5002"),
+            a("201.0.0.2:5003"),
+            a("201.0.0.2:5004"),
+        );
+        assert_eq!(procurar(&mut s, 7, h1, t), Some(c1));
+        assert_eq!(procurar(&mut s, 7, h2, t), Some(c2));
+        assert_eq!(procurar(&mut s, 7, h1, t), Some(c1));
+        assert_eq!(procurar(&mut s, 7, h3, t), Some(c3));
+        assert_eq!(procurar(&mut s, 7, h4, t), None);
+    }
+
+    #[test]
+    fn quem_nao_pareou_volta_a_ficar_livre() {
+        let mut s = SignalServer::default();
+        let t = Instant::now();
+        let (c1, h1, h2) = (a("200.0.0.1:1000"), a("201.0.0.2:5001"), a("201.0.0.2:5002"));
+        registrar(&mut s, 7, c1, t);
+        assert_eq!(procurar(&mut s, 7, h1, t), Some(c1));
+        // O cliente continua se registrando (não pareou) e o host desistiu.
+        let mut agora = t;
+        while agora < t + POSSE {
+            agora += Duration::from_secs(5);
+            registrar(&mut s, 7, c1, agora);
+        }
+        assert_eq!(procurar(&mut s, 7, h2, agora), Some(c1));
+    }
+
+    #[test]
+    fn sala_cheia_recusa() {
+        let mut s = SignalServer::default();
+        let t = Instant::now();
+        for porta in 0..MAX_PER_ROOM as u16 {
+            registrar(&mut s, 7, a(&format!("200.0.0.1:{}", 1000 + porta)), t);
+        }
+        let (r, ev) = s.handle(
             &pedido(
                 1,
-                SignalMessage::Lookup {
+                SignalMessage::Register {
                     room: 7,
                     locals: vec![],
                 },
             ),
-            host,
+            a("203.0.0.3:1000"),
             t,
         );
-        assert_eq!(ler(&r[0].1).1, SignalMessage::NotFound);
-
-        let registro = pedido(
-            1,
-            SignalMessage::Register {
-                room: 7,
-                locals: vec![],
-            },
-        );
-        s.handle(&registro, a("200.0.0.1:1000"), t);
-        // Renovar não gera evento; outro IP é recusado; o mesmo IP em outra
-        // porta toma o lugar.
-        assert_eq!(s.handle(&registro, a("200.0.0.1:1000"), t).1, None);
-        let (r, ev) = s.handle(&registro, a("203.0.0.3:1000"), t);
         assert!(matches!(ev, Some(SignalEvent::RoomTaken { .. })));
         assert_eq!(ler(&r[0].1).1, SignalMessage::RoomTaken);
-        let (_, ev) = s.handle(&registro, a("200.0.0.1:2000"), t);
-        assert!(matches!(ev, Some(SignalEvent::Registered { .. })));
-
-        // Sem renovar, a sala expira e fica livre para outro.
-        let depois = t + ROOM_TTL + Duration::from_secs(1);
-        let (_, ev) = s.handle(&registro, a("203.0.0.3:1000"), depois);
-        assert!(matches!(ev, Some(SignalEvent::Registered { .. })));
-        assert_eq!(s.rooms(), 1);
     }
 
     #[test]

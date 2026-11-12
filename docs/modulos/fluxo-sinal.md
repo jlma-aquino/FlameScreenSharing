@@ -9,6 +9,10 @@ Formato: [PROTOCOLO.md](../PROTOCOLO.md), seção 2.2. A lógica fica no
 `fluxo-net` (`SignalServer`, ver [fluxo-net](fluxo-net.md)); o app só a roda
 num socket e mostra o que acontece.
 
+Uma sala guarda até 8 clientes, e cada pedido do host recebe um deles (ver
+[PROTOCOLO.md](../PROTOCOLO.md), seção 2.2, e ADR-016): é o que deixa várias
+pessoas entrarem com o mesmo código numa sala aberta pelo host.
+
 ## Uso
 
 ```text

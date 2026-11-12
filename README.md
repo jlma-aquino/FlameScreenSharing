@@ -98,13 +98,12 @@ código de resposta, que o cliente cola no terminal (ADR-010):
 .\target\release\fluxo-host.exe --conexao <código de conexão do cliente>
 ```
 
-Ou, com um servidor de sinalização num endereço público (uma VPS), sem os
-códigos de ida e volta: `--sinal` nos dois lados
-([fluxo-sinal](docs/modulos/fluxo-sinal.md)):
+Ou numa sala, pelo servidor do FSS ([fluxo-sinal](docs/modulos/fluxo-sinal.md)):
+quem compartilha passa um código, e quem assiste entra com ele, sem resposta:
 
 ```powershell
-.\target\release\fluxo-client.exe --sinal meu-servidor.com
-.\target\release\fluxo-host.exe --sinal meu-servidor.com --codigo <código do cliente>
+.\target\release\fluxo-host.exe --sala
+.\target\release\fluxo-client.exe --sala <código da sala>
 ```
 
 Sem janela, só medindo e gravando o que chega: troque o cliente por

@@ -6,6 +6,10 @@
 /// O que uma linha quer dizer para a janela.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Evento {
+    /// Host: código da sala, para quem vai assistir.
+    Sala(String),
+    /// Host, sala: alguém tentou entrar e não pareou; a transmissão segue.
+    TentouEntrar(String),
     /// Cliente, mesma rede: código de pareamento e o endereço para o host.
     Pareamento { codigo: String, destino: Option<String> },
     /// Cliente, redes diferentes: código de conexão para mandar a quem compartilha.
@@ -35,6 +39,12 @@ pub enum Evento {
 /// Interpreta uma linha.
 pub fn ler(linha: &str) -> Evento {
     let t = linha.trim();
+    if let Some(c) = t.strip_prefix("Código da sala: ") {
+        return Evento::Sala(c.trim().to_string());
+    }
+    if let Some(m) = t.strip_prefix("Alguém tentou entrar e não conectou: ") {
+        return Evento::TentouEntrar(m.to_string());
+    }
     if let Some(c) = t.strip_prefix("Código de conexão: ") {
         return Evento::Conexao(c.trim().to_string());
     }
@@ -226,6 +236,17 @@ mod tests {
                 motivo: "tempo esgotado".into()
             }
         );
+    }
+
+    #[test]
+    fn sala_do_host() {
+        assert_eq!(ler("Código da sala: K7M4-QX9P"), Evento::Sala("K7M4-QX9P".into()));
+        assert_eq!(
+            ler("Alguém tentou entrar e não conectou: o código não confere"),
+            Evento::TentouEntrar("o código não confere".into())
+        );
+        // A dica do terminal não é código de pareamento de cliente.
+        assert_eq!(ler("  No terminal: fluxo-client --sala K7M4-QX9P"), Evento::Outra);
     }
 
     #[test]

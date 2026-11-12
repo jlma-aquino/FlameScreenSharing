@@ -3,12 +3,14 @@
 //! Lado de quem compartilha a tela: captura → encode → rede.
 //!
 //! ```text
-//! fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf] [--codec auto|h264|hevc|av1]
+//! fluxo-host --sala | (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf] [--codec auto|h264|hevc|av1]
 //!            [--resolucao R] [--mbps M] [--fps F] [--pacing-mbps P] [--keyframe-a-cada S]
 //!            [--segundos S] [--porta-local P]
 //! ```
 //!
-//! O cliente é achado pelo endereço (`--destino`, mesma rede) ou pelo
+//! Com `--sala`, o host cria o código e quem assiste entra com ele, pelo
+//! servidor de sinalização, quantos quiserem (até o limite). Sem sala, o
+//! cliente é achado pelo endereço (`--destino`, mesma rede) ou pelo
 //! servidor de sinalização (`--sinal`, redes diferentes), e o pareamento com
 //! o código vem antes de qualquer imagem. Keyframes saem quando o cliente
 //! pede (e, de segurança, a cada `--keyframe-a-cada` segundos).
@@ -27,18 +29,22 @@ const AJUDA: &str = "\
 fluxo-host — transmite a tela para um cliente Fluxo
 
 Uso:
+  fluxo-host --sala [opções]
   fluxo-host --destino IP:PORTA --codigo XXXX-XXXX [opções]
   fluxo-host --sinal SERVIDOR --codigo XXXX-XXXX [opções]
   fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
 
 Opções:
+  --sala                abre uma sala: mostra um código, e quem assiste entra com ele
+                        (fluxo-client --sala CÓDIGO), sem responder nada. Usa o
+                        servidor do FSS (outro com --sinal); --codigo fixa o código
   --destino IP:PORTA    para onde enviar, ex.: 192.168.0.20:9000 (mesma rede)
   --sinal SERVIDOR      acha o cliente pelo servidor de sinalização (fluxo-sinal),
                         ex.: meu-servidor.com ou 203.0.113.5:7000 (redes diferentes)
   --conexao C           código de conexão mostrado pelo fluxo-client --internet (redes
                         diferentes, sem servidor): já traz o código de pareamento; o
                         host mostra um código de resposta para mandar de volta
-  --ttl-furo N          com --conexao: TTL dos pedidos até o furo do cliente chegar
+  --ttl-furo N          com --conexao ou --sala: TTL dos pedidos até o furo do cliente chegar
                         (padrão 12; 0 = TTL normal)
   --codigo XXXX-XXXX    código de pareamento mostrado pelo fluxo-client (obrigatório):
                         só o cliente com esse código recebe, e tudo vai cifrado
@@ -96,6 +102,8 @@ Para testar sem cliente, rode antes em outro terminal (ou outro PC):
 struct Opts {
     destino: String,
     sinal: Option<String>,
+    /// Sala: quem assiste entra com o código, pelo servidor.
+    sala: bool,
     /// Código de conexão do cliente (sem servidor): pareamento + endereço dele.
     conexao: Option<fluxo_net::ConnectionCode>,
     /// Sem áudio, e de qual saída de som capturar (`None`: a padrão).
@@ -152,6 +160,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         destino: String::new(),
         sinal: None,
+        sala: false,
         conexao: None,
         ttl_furo: fluxo_net::PUNCH_TTL,
         sem_audio: false,
@@ -184,6 +193,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         match a.as_str() {
             "--destino" => o.destino = valor()?.clone(),
             "--sinal" => o.sinal = Some(valor()?.clone()),
+            "--sala" => o.sala = true,
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--sem-audio" => o.sem_audio = true,
             "--audio-dispositivo" => {
@@ -228,6 +238,21 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
+    }
+    if o.sala {
+        if !o.destino.is_empty() || o.conexao.is_some() || o.sem_cifra {
+            return Err(
+                "--sala acha quem assiste pelo servidor: sem --destino, --conexao ou --sem-cifra".into(),
+            );
+        }
+        o.sinal
+            .get_or_insert_with(|| fluxo_net::DEFAULT_SIGNAL_SERVER.to_string());
+        let codigo = match &o.codigo {
+            Some(c) => fluxo_net::PairingCode::parse(c).map_err(|e| e.to_string())?,
+            None => fluxo_net::PairingCode::generate().map_err(|e| e.to_string())?,
+        };
+        o.codigo = Some(codigo.to_string());
+        return Ok(o);
     }
     if let Some(c) = &o.conexao {
         if !o.destino.is_empty() || o.sinal.is_some() || o.codigo.is_some() || o.sem_cifra {
@@ -585,6 +610,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         .map(fluxo_net::resolve_signal_server)
         .transpose()?;
     match (&net_cfg.pairing_code, servidor, &o.conexao) {
+        (Some(c), Some(_), _) if o.sala => {
+            println!("Código da sala: {c}");
+            println!(
+                "  Quem vai assistir entra com ele, sem responder nada (até {} pessoas).",
+                espectadores::MAX_ESPECTADORES
+            );
+            println!("  No terminal: fluxo-client --sala {c}");
+            println!("Esperando a primeira pessoa entrar…");
+        }
         (Some(c), Some(s), _) => {
             println!("Procurando o cliente pelo servidor de sinalização {s} (código {c})…")
         }
@@ -614,40 +648,74 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         pairing_timeout: Duration::from_secs(300),
         ..net_cfg.clone()
     };
-    let tx = match (servidor, &o.conexao) {
-        (Some(s), _) => VideoSender::connect_via_signal(("0.0.0.0", o.porta_local), s, net_cfg)?,
-        (None, Some(c)) => {
-            // Os endereços públicos valem só para estes sockets: os mesmos levam o vídeo.
-            let internet = fluxo_net::Internet::open(o.porta_local, false)?;
-            println!("\nCódigo de resposta: {}", internet.reply_code(c)?);
-            println!("  Mande para quem vai assistir: ele cola no campo de resposta (ou no terminal do fluxo-client).");
-            println!("  Esperando até 5 min…");
-            for linha in internet.summary() {
-                println!("  {linha}");
-            }
-            // Porta aberta por UPnP do outro lado: direto, sem esperar o furo.
-            let ttl = (o.ttl_furo > 0 && !c.open).then_some(o.ttl_furo);
-            match (ttl, c.open) {
-                (_, true) => println!("  O cliente abriu a porta no roteador (UPnP): conectando direto"),
-                (Some(t), _) => {
-                    println!("  Pedidos IPv4 com TTL {t} até o furo do outro lado chegar (--ttl-furo)")
-                }
-                (None, _) => {}
-            }
-            println!();
-            let net_cfg = SenderConfig {
-                on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
-                punch_ttl: ttl,
-                ..net_cfg
-            };
-            VideoSender::connect_with_sockets(internet.v4, internet.v6, c.candidates(), net_cfg)?
-        }
-        (None, None) => VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?,
+    // Na sala, cada um que entra pareia num socket próprio, um de cada vez;
+    // sem prazo total, então nada de observador imprimindo a espera.
+    // TTL baixo até o furo de quem entra chegar, como no código de conexão
+    // (é o que deixa passar pela internet de celular).
+    let cfg_sala = SenderConfig {
+        on_pairing: None,
+        pairing_timeout: espectadores::PRAZO_SALA,
+        punch_ttl: (o.ttl_furo > 0).then_some(o.ttl_furo),
+        ..net_cfg.clone()
     };
-
-    // Codec: o cliente diz o que decodifica (junto com os pings, a cada
-    // 500 ms); usamos o melhor que esta GPU também codifica.
-    let do_cliente = tx.wait_client_codecs(Duration::from_millis(1500));
+    // Quem assiste ou está pareando (para o limite) e o número do próximo.
+    let ocupados = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let numeros = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let (novos_tx, novos) = std::sync::mpsc::channel();
+    let (tx, primeiro_numero, do_cliente) = match (o.sala, servidor) {
+        (true, Some(s)) => {
+            let (ocupados, numeros, novos_tx) = (ocupados.clone(), numeros.clone(), novos_tx.clone());
+            std::thread::Builder::new()
+                .name("fluxo-sala".into())
+                .spawn(move || espectadores::atender_sala(s, cfg_sala, numeros, novos_tx, ocupados))?;
+            let n = novos.recv().map_err(|_| "a sala fechou")?;
+            (n.tx, n.numero, Some(n.codecs))
+        }
+        _ => {
+            let tx = match (servidor, &o.conexao) {
+                (Some(s), _) => VideoSender::connect_via_signal(("0.0.0.0", o.porta_local), s, net_cfg)?,
+                (None, Some(c)) => {
+                    // Os endereços públicos valem só para estes sockets: os mesmos levam o vídeo.
+                    let internet = fluxo_net::Internet::open(o.porta_local, false)?;
+                    println!("\nCódigo de resposta: {}", internet.reply_code(c)?);
+                    println!("  Mande para quem vai assistir: ele cola no campo de resposta (ou no terminal do fluxo-client).");
+                    println!("  Esperando até 5 min…");
+                    for linha in internet.summary() {
+                        println!("  {linha}");
+                    }
+                    // Porta aberta por UPnP do outro lado: direto, sem esperar o furo.
+                    let ttl = (o.ttl_furo > 0 && !c.open).then_some(o.ttl_furo);
+                    match (ttl, c.open) {
+                        (_, true) => {
+                            println!("  O cliente abriu a porta no roteador (UPnP): conectando direto")
+                        }
+                        (Some(t), _) => {
+                            println!(
+                                "  Pedidos IPv4 com TTL {t} até o furo do outro lado chegar (--ttl-furo)"
+                            )
+                        }
+                        (None, _) => {}
+                    }
+                    println!();
+                    let net_cfg = SenderConfig {
+                        on_pairing: Some(fluxo_net::PairingObserver::print_to_terminal()),
+                        punch_ttl: ttl,
+                        ..net_cfg
+                    };
+                    VideoSender::connect_with_sockets(internet.v4, internet.v6, c.candidates(), net_cfg)?
+                }
+                (None, None) => {
+                    VideoSender::connect(("0.0.0.0", o.porta_local), o.destino.as_str(), net_cfg)?
+                }
+            };
+            ocupados.store(1, std::sync::atomic::Ordering::Relaxed);
+            numeros.store(1, std::sync::atomic::Ordering::Relaxed);
+            // Codec: o cliente diz o que decodifica (junto com os pings, a
+            // cada 500 ms); usamos o melhor que esta GPU também codifica.
+            let do_cliente = tx.wait_client_codecs(Duration::from_millis(1500));
+            (tx, 1, do_cliente)
+        }
+    };
     // O encoder por software só faz H.264: nem tenta os outros.
     let codec_pedido = o
         .codec
@@ -686,19 +754,17 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let primeiro = tx;
     let tx = std::sync::Arc::new(espectadores::Espectadores::default());
     let quantos = tx.adicionar(
-        1,
+        primeiro_numero,
         primeiro,
         do_cliente.unwrap_or(fluxo_encode::VideoCodec::H264.bit()),
         adaptativo.then(novo_abr),
     );
-    println!("Espectador 1 conectou ({quantos} no total)");
-    let ocupados = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1));
-    let (novos_tx, novos) = std::sync::mpsc::channel();
+    println!("Espectador {primeiro_numero} conectou ({quantos} no total)");
     {
-        let (ocupados, ttl) = (ocupados.clone(), o.ttl_furo);
+        let (ocupados, numeros, ttl) = (ocupados.clone(), numeros.clone(), o.ttl_furo);
         std::thread::Builder::new()
             .name("fluxo-pedidos".into())
-            .spawn(move || espectadores::atender_pedidos(cfg_novos, ttl, novos_tx, ocupados))?;
+            .spawn(move || espectadores::atender_pedidos(cfg_novos, ttl, numeros, novos_tx, ocupados))?;
     }
     // Áudio numa thread própria, para todos (pacotes à parte).
     let parar_audio = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

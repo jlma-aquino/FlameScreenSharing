@@ -9,11 +9,12 @@ COMO USAR
 ---------
 1. Extraia o pacote e abra um terminal na pasta. Depois rode:
      ./FlameScreenSharing
-2. Clique em Assistir > Começar.
-3. Copie o código de conexão e mande para quem vai compartilhar. Uma janela de
-   vídeo abre e fica esperando; pode deixar aberta.
-4. Se a pessoa mandar um código de resposta de volta, cole no campo da janela e
-   clique em Enviar.
+2. Clique em Assistir, cole o código da sala que quem compartilha mandou e
+   clique em Começar. Uma janela de vídeo abre, e a imagem aparece em alguns
+   segundos.
+3. Sem sala ("Pela internet, trocando códigos"): mande o código de conexão para
+   quem vai compartilhar e, se ele mandar um código de resposta, cole no campo
+   da janela e clique em Enviar.
 
 Na janela de vídeo: F11 alterna tela cheia, F2 mostra ou esconde as estatísticas.
 

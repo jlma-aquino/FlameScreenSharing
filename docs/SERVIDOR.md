@@ -134,8 +134,7 @@ da máquina.
 
 ## Próximos passos
 
-1. Testar com um amigo em outra rede.
-2. Inverter o código: quem compartilha cria a sala, e quem assiste entra
-   só com o código, sem resposta.
-3. Escrever o repassador.
+1. Testar a sala (ADR-016) com um amigo em outra rede e de novo pelo 4G,
+   agora com TTL baixo.
+2. Escrever o repassador.
 4. Fechar na Security List as portas que eram de LiveKit e coturn.

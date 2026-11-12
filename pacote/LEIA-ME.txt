@@ -1,8 +1,9 @@
 FlameScreenSharing (FSS) - versão de teste
 ==========================================
 
-Compartilha a tela (com o som do PC) direto entre dois PCs com Windows 10 ou 11,
-sem servidor e sem criar conta. Os dois precisam usar esta mesma versão.
+Compartilha a tela (com o som do PC) com até 4 pessoas, com Windows 10 ou 11, sem
+criar conta. O vídeo vai direto de um PC para o outro. Todos precisam usar esta
+mesma versão.
 
 
 ANTES DE COMEÇAR
@@ -16,33 +17,39 @@ ANTES DE COMEÇAR
    Só faça isso se você recebeu o arquivo de alguém em quem confia.
 
 
-COMO TESTAR (cada um na sua casa, pela internet)
-------------------------------------------------
-Quem vai ASSISTIR:
-  1. Clique em Assistir > Começar.
-  2. Copie o código de conexão e mande para o outro (Discord, WhatsApp...).
-     Uma janela de vídeo abre e fica esperando; pode deixar aberta.
-
+COMO USAR (cada um na sua casa)
+-------------------------------
 Quem vai COMPARTILHAR:
-  3. Clique em Compartilhar minha tela e cole o código.
-  4. Clique em Começar. Você tem até 5 minutos para concluir os próximos passos.
-  5. Copie o código de resposta, se aparecer, e mande de volta.
+  1. Clique em Compartilhar minha tela, deixe "Abrir uma sala" e clique em
+     Começar.
+  2. Copie o código da sala e mande para quem vai assistir (Discord,
+     WhatsApp...).
 
 Quem vai ASSISTIR:
-  6. Cole o código de resposta no campo da janela e clique em Enviar.
+  3. Clique em Assistir, deixe "Entrar numa sala", cole o código e clique em
+     Começar. Uma janela de vídeo abre e a imagem aparece em alguns segundos.
 
-A imagem aparece na janela de vídeo de quem assiste. Para terminar, clique em
-Parar ou feche a janela.
+Mais gente pode entrar com o mesmo código, até 4 pessoas. Para terminar, clique
+em Parar ou feche a janela; quem compartilha encerra a sala para todos.
 
-Importante: quem assiste vê a tela inteira e ouve o som do PC de quem
-compartilha. Feche o que não quiser mostrar antes de começar.
+Importante: quem tem o código vê a tela inteira e ouve o som do PC de quem
+compartilha. Mande o código só para quem você quer, e feche o que não quiser
+mostrar antes de começar.
+
+
+SEM A SALA (troca de códigos)
+-----------------------------
+Se a sala não conectar, use "Pela internet, trocando códigos":
+  1. Quem vai assistir: Assistir > Começar, e mande o código de conexão.
+  2. Quem vai compartilhar: cole o código e clique em Começar. Se aparecer um
+     código de resposta, mande de volta.
+  3. Quem vai assistir: cole o código de resposta e clique em Enviar.
 
 
 MAIS DE UM ESPECTADOR
 ---------------------
-Quem compartilha pode adicionar até 4 pessoas: com a transmissão rodando, abra
-"Adicionar espectador", cole o código de conexão da pessoa, clique em Adicionar
-e mande de volta o código de resposta que aparecer, se houver. Cada pessoa precisa
+Na sala, cada pessoa entra sozinha com o código. Trocando códigos, abra
+"Adicionar espectador" com a transmissão rodando. Cada pessoa precisa
 de cerca de 20 Mbps no upload de quem compartilha (em 1080p60), e uma pessoa com
 rede ruim pode baixar a qualidade de todos.
 
@@ -50,10 +57,10 @@ rede ruim pode baixar a qualidade de todos.
 SE NÃO CONECTAR
 ---------------
 - Confira o firewall e o antivírus nos dois PCs.
-- Tente de novo com códigos novos: clique em Parar e depois em Começar.
+- Tente de novo: clique em Parar e depois em Começar.
 - Algumas redes (internet de celular, certos provedores) bloqueiam a conexão
-  direta. Tente trocando a rede de um dos lados. Ainda não há servidor de
-  apoio para esses casos.
+  direta. Tente trocando a rede de um dos lados. Ainda não há como passar o
+  vídeo pelo servidor nesses casos.
 
 
 PARA AJUDAR NO TESTE

@@ -9,7 +9,15 @@ pasta**, sem janela de console, e mostra os códigos com um botão de copiar.
 
 ## Como usar
 
-Pela internet (redes diferentes), sem servidor:
+Com uma sala (o padrão), pelo servidor do FSS:
+
+1. Quem vai **compartilhar** clica em Compartilhar minha tela, deixa "Abrir uma
+   sala", escolhe resolução e fps e clica em Começar. Aparece o **código da
+   sala**, com botão de copiar.
+2. Quem vai **assistir** clica em Assistir, cola o código e clica em Começar.
+   Mais gente pode entrar com o mesmo código, até 4.
+
+Pela internet sem servidor ("trocando códigos"):
 
 1. Quem vai **assistir** clica em Assistir → Começar e manda o **código de
    conexão** para quem vai compartilhar. A janela de vídeo abre esperando.

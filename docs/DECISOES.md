@@ -457,6 +457,42 @@ para o som, e o protocolo não muda.
 - ➖ Um espectador em PC fraco baixa o bitrate de todos.
 - 🔁 Decode na GPU (VAAPI), para não precisar baixar tanto a qualidade.
 
+## ADR-016 — Sala: quem compartilha cria o código, quem assiste entra
+
+**Status:** Aceito (2026-11-12)
+
+**Contexto.** Trocar código de conexão e código de resposta pelo chat funciona,
+mas tira a praticidade, e cada espectador a mais pedia outra troca. A ideia é a
+de uma reunião: quem compartilha abre e passa um código; quem tiver o código
+entra quando quiser. Testamos a DHT pública como ponto de encontro sem servidor
+(branch `fase7/sala-dht`): acha o outro lado, mas devolve endereços falsos, demorou
+mais de 2 min em casa e não achou nada pelo 4G. Já havia um servidor na Oracle
+Cloud (`fluxo-sinal`, ver `docs/SERVIDOR.md`).
+
+**Decisão.** Usar o `fluxo-sinal` com as mesmas mensagens, invertendo os papéis:
+o host sorteia o código (`--sala`) e fica pedindo ao servidor quem entrou; cada
+cliente se registra na sala do código (`--sala CÓDIGO`). O servidor guarda até 8
+clientes por sala e entrega cada um a um socket do host; o host pareia cada um
+com o SPAKE2 de sempre, num socket só dele, até 4 assistindo. O servidor padrão
+fica no código (`DEFAULT_SIGNAL_SERVER`); `--sinal` troca. A janela passa a
+oferecer a sala como primeira opção; os códigos de conexão e a mesma rede
+continuam lá, como reserva.
+
+**Consequências.**
+- ➕ Uma troca só, de um código curto, de quem compartilha para todos.
+- ➕ Sem mudar o protocolo: o `fluxo-sinal` novo atende os clientes antigos, e o
+  fluxo antigo (`--sinal` + `--codigo` do cliente) continua funcionando.
+- ➖ Depende do servidor: fora do ar, só os códigos de conexão funcionam.
+- ➖ Quem tiver o código entra, sem aprovação. O código vale enquanto o host
+  roda; para expulsar alguém, é preciso fechar e abrir outra sala.
+- ➖ Quem controla o servidor vê a sala (20 bits) e pode pôr um cliente falso nela:
+  cada tentativa do host é um palpite (1 em ~1 milhão), e uma sala aberta dá ao
+  host várias tentativas por hora. Aceito porque o servidor é nosso.
+- ➖ O servidor não melhora o furo de NAT: pelo 4G, o primeiro teste (sem TTL
+  baixo) achou os dois lados e o vídeo não passou. Com TTL baixo, falta testar.
+- 🔁 Relay pelo servidor, para as redes em que o furo falha; aprovação de quem
+  entra, se o código vazar.
+
 ---
 
 ## Modelo

@@ -192,7 +192,7 @@ cliente                       servidor                        host
   | 3 | Registered | servidor → cliente | endereço público do cliente |
   | 4 | Found | servidor → os dois | endereço público do outro lado, lista dos locais dele |
   | 5 | NotFound | servidor → host | — (sala vazia) |
-  | 6 | RoomTaken | servidor → cliente | — (outro cliente na sala) |
+  | 6 | RoomTaken | servidor → cliente | — (sala cheia: 8 esperando) |
 
   Endereço: família (1 byte, 4 ou 6), IP (4 ou 16 bytes), porta (u16).
   Lista: quantidade (1 byte, até 4) e os endereços. Pedidos com menos de 100
@@ -201,10 +201,20 @@ cliente                       servidor                        host
 - **Sala:** os 20 bits mais altos do SHA-256 de `"fluxo sala v1"` + código.
   O servidor nunca vê o código; vendo a sala, sobram ~20 bits que ele não
   deduz, e o SPAKE2 só aceita um palpite por pareamento (quem controla o
-  servidor engana 1 vez em ~800 mil). A sala expira 30 s depois do último
-  Register (o cliente renova a cada 5 s, o que também mantém vivo o
-  mapeamento do NAT). Outro IP na mesma sala recebe RoomTaken; o mesmo IP
-  em outra porta toma o lugar (o mesmo PC reabriu).
+  servidor engana 1 vez em ~800 mil). Um cliente sai da sala 30 s depois
+  do último Register (ele renova a cada 5 s enquanto espera, o que também
+  mantém vivo o mapeamento do NAT, e para quando pareia).
+- **Vários clientes por sala** (ADR-016): cabem 8 esperando, do mesmo IP ou
+  não. Cada Lookup recebe o cliente que já é daquele socket do host ou, se
+  nenhum, o mais antigo sem dono; o host abre um socket por cliente. O dono
+  vale enquanto o host procura e 35 s depois: quem pareou some antes disso
+  (parou de renovar), e quem continua renovando sem ter pareado volta a
+  ficar livre. As mensagens não mudaram; muda só o que o servidor faz.
+- **Sala aberta pelo host** (`fluxo-host --sala`): quem compartilha sorteia o
+  código e repete o Lookup, num socket novo a cada 30 s, até alguém entrar;
+  quem assiste faz o Register com esse código (`fluxo-client --sala`). Os
+  pedidos ao cliente saem com TTL baixo (12) até o furo dele chegar, como no
+  código de conexão; o Lookup vai sempre com o TTL normal.
 - **Endereço público:** o de onde o pedido chegou ao servidor, pelo mesmo
   socket que depois leva o vídeo — o servidor faz o papel de STUN, e o
   mapeamento é exatamente o que interessa.

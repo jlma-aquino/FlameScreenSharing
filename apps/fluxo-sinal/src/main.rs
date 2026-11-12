@@ -12,10 +12,11 @@
 //! Precisa ficar num endereço que os dois alcancem (IP público, porta UDP
 //! aberta). Detalhes: `docs/modulos/fluxo-sinal.md`.
 
+use std::collections::HashMap;
 use std::net::UdpSocket;
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use fluxo_net::{SignalEvent, SignalServer, SIGNAL_PORT};
 
@@ -29,8 +30,9 @@ Opções:
   --porta P   porta UDP (padrão 7000)
   --ip IP     endereço local onde escutar (padrão 0.0.0.0 = todos)
 
-No PC que assiste:      fluxo-client --sinal <endereço deste servidor>
-No PC que compartilha:  fluxo-host --sinal <endereço deste servidor> --codigo <código>";
+Sala (quem compartilha cria o código, quem assiste entra com ele):
+  No PC que compartilha:  fluxo-host --sala --sinal <endereço deste servidor>
+  No PC que assiste:      fluxo-client --sala <código> --sinal <endereço deste servidor>";
 
 fn main() -> ExitCode {
     let (mut porta, mut ip) = (SIGNAL_PORT, "0.0.0.0".to_string());
@@ -63,13 +65,26 @@ fn main() -> ExitCode {
     );
     let inicio = Instant::now();
     let nunca = AtomicBool::new(false);
-    // O host repete a procura a cada 250 ms: mostra só o que muda.
-    let mut ultimo: Option<SignalEvent> = None;
+    // O host repete a procura a cada 250 ms, e numa sala aberta procura o
+    // tempo todo (cada vez num socket novo): o mesmo acontecimento só volta
+    // ao registro depois de um minuto.
+    let mut vistos: HashMap<String, Instant> = HashMap::new();
     SignalServer::default().run(&socket, &nunca, |ev| {
-        if ultimo.as_ref() == Some(ev) {
+        let agora = Instant::now();
+        let chave = match ev {
+            SignalEvent::NotFound { room, host } => format!("vazia {room} {}", host.ip()),
+            outro => format!("{outro:?}"),
+        };
+        if vistos
+            .get(&chave)
+            .is_some_and(|t| agora.duration_since(*t) < REPETIR)
+        {
             return;
         }
-        ultimo = Some(ev.clone());
+        if vistos.len() > 10_000 {
+            vistos.retain(|_, t| agora.duration_since(*t) < REPETIR);
+        }
+        vistos.insert(chave, agora);
         let t = inicio.elapsed().as_secs_f64();
         match ev {
             SignalEvent::Registered { room, client } => {
@@ -79,15 +94,21 @@ fn main() -> ExitCode {
                 println!("[{t:8.1} s] sala {room:05X}: host {host} achou o cliente {client}")
             }
             SignalEvent::NotFound { room, host } => {
-                println!("[{t:8.1} s] sala {room:05X}: host {host} procurou, sala vazia")
+                println!(
+                    "[{t:8.1} s] sala {room:05X}: host {} procurando, sala vazia",
+                    host.ip()
+                )
             }
             SignalEvent::RoomTaken { room, client } => {
-                println!("[{t:8.1} s] sala {room:05X}: recusada para {client} (ocupada)")
+                println!("[{t:8.1} s] sala {room:05X}: recusada para {client} (cheia)")
             }
         }
     });
     ExitCode::SUCCESS
 }
+
+/// Um acontecimento igual só volta ao registro depois deste tempo.
+const REPETIR: Duration = Duration::from_secs(60);
 
 fn erro(msg: &str) -> ExitCode {
     eprintln!("erro: {msg}\n\n{AJUDA}");

@@ -608,7 +608,9 @@ fn recv_loop(
     let mut proximo_resumo = Instant::now();
 
     while !shared.stop.load(Ordering::Relaxed) {
-        if let Some(s) = sinal.as_mut() {
+        // Só enquanto espera: pareado, sai da sala e não é entregue a outro
+        // pedido do host.
+        if let Some(s) = sinal.as_mut().filter(|_| peer.is_none()) {
             s.renovar(&socket);
         }
         // Sem host ainda: furos pedidos e o mapeamento do NAT vivo.

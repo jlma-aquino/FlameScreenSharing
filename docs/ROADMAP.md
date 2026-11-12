@@ -105,6 +105,8 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       9,1 Mbps, 0% de perda, RTT 58 ms
 - [x] UPnP (abre a porta só sem CGNAT na frente; a marca no código faz o host ir direto) e IPv6 nos códigos e
       nos sockets (pareia pela família que responder primeiro)
+- [x] Sala (ADR-016): quem compartilha cria o código e quem assiste entra pelo servidor na Oracle Cloud,
+      sem código de resposta, até 4 pessoas. Testado no mesmo PC com dois espectadores; falta entre redes
 - [ ] Relay de fallback para CGNAT (exige alguém hospedando um servidor; opcional)
 
 ## Fase 6 — Interação e conforto

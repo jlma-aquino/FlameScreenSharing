@@ -9,7 +9,7 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, RichText};
 
 use crate::comandos::{
-    linha_de_resposta, linha_espectador_internet, linha_espectador_rede, Assistir, Compartilhar, FPS,
+    linha_de_resposta, linha_espectador_internet, linha_espectador_rede, Assistir, Compartilhar, Modo, FPS,
     RESOLUCOES,
 };
 use crate::processo::{caminho_do_programa, Processo};
@@ -31,6 +31,10 @@ enum Tela {
 /// Um `fluxo-host` ou `fluxo-client` rodando (ou que acabou de terminar).
 struct Sessao {
     processo: Processo,
+    /// Host: código da sala.
+    sala: Option<String>,
+    /// Cliente: entrou numa sala (espera quem compartilha, sem código para mostrar).
+    entrando_na_sala: bool,
     /// Cliente, mesma rede.
     pareamento: Option<String>,
     destino: Option<String>,
@@ -58,6 +62,8 @@ impl Sessao {
     fn new(processo: Processo) -> Self {
         Self {
             processo,
+            sala: None,
+            entrando_na_sala: false,
             pareamento: None,
             destino: None,
             conexao: None,
@@ -78,6 +84,10 @@ impl Sessao {
     fn atualizar(&mut self) {
         for linha in self.processo.linhas_novas() {
             match ler(&linha) {
+                Evento::Sala(c) => self.sala = Some(c),
+                Evento::TentouEntrar(motivo) => {
+                    self.aviso_espectador = Some(format!("Alguém tentou entrar e não conectou: {motivo}"))
+                }
                 Evento::Pareamento { codigo, destino } => {
                     self.pareamento = Some(codigo);
                     self.destino = destino.or(self.destino.take());
@@ -153,11 +163,15 @@ impl Janela {
     fn iniciar(&mut self, ctx: &egui::Context, programa: &str, args: Vec<String>) {
         let ctx = ctx.clone();
         let avisar = Arc::new(move || ctx.request_repaint());
+        let entrando_na_sala = programa == "client" && args.iter().any(|a| a == "--sala");
         let aberto =
             caminho_do_programa(programa).and_then(|caminho| Processo::iniciar(&caminho, &args, avisar));
         match aberto {
             Ok(p) => {
-                self.sessao = Some(Sessao::new(p));
+                self.sessao = Some(Sessao {
+                    entrando_na_sala,
+                    ..Sessao::new(p)
+                });
                 self.aviso = None;
                 self.resposta_colada.clear();
             }
@@ -169,7 +183,7 @@ impl Janela {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
             ui.heading(RichText::new(crate::NOME).size(32.0));
-            ui.label("Compartilhe a tela direto entre dois PCs, sem servidor.");
+            ui.label("Compartilhe a tela com seus amigos, com pouco atraso.");
             ui.add_space(24.0);
             let tamanho = egui::vec2(280.0, 56.0);
             // Compartilhar precisa da captura e do encoder, que só existem no Windows.
@@ -199,29 +213,38 @@ impl Janela {
         ui.heading("Compartilhar minha tela");
         ui.add_space(8.0);
         let c = &mut self.compartilhar;
-        ui.radio_value(&mut c.internet, true, "Pela internet (redes diferentes)");
-        ui.radio_value(&mut c.internet, false, "Na mesma rede");
+        ui.radio_value(&mut c.modo, Modo::Sala, "Abrir uma sala (recomendado)");
+        ui.radio_value(&mut c.modo, Modo::Internet, "Pela internet, trocando códigos");
+        ui.radio_value(&mut c.modo, Modo::Rede, "Na mesma rede");
         ui.add_space(8.0);
-        if c.internet {
-            ui.label("Código de conexão de quem vai assistir:");
-            ui.add(
-                egui::TextEdit::singleline(&mut c.conexao)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("cole aqui"),
-            );
-        } else {
-            ui.label("Endereço de quem vai assistir:");
-            ui.add(
-                egui::TextEdit::singleline(&mut c.destino)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("192.168.0.20:9000"),
-            );
-            ui.label("Código:");
-            ui.add(
-                egui::TextEdit::singleline(&mut c.codigo)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("XXXX-XXXX"),
-            );
+        match c.modo {
+            Modo::Sala => {
+                ui.label(format!(
+                    "Você recebe um código; quem tiver o código entra sozinho, sem você responder nada (até {MAX_ESPECTADORES} pessoas)."
+                ));
+            }
+            Modo::Internet => {
+                ui.label("Código de conexão de quem vai assistir:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut c.conexao)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("cole aqui"),
+                );
+            }
+            Modo::Rede => {
+                ui.label("Endereço de quem vai assistir:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut c.destino)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("192.168.0.20:9000"),
+                );
+                ui.label("Código:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut c.codigo)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("XXXX-XXXX"),
+                );
+            }
         }
         ui.add_space(8.0);
         egui::Grid::new("opcoes").num_columns(2).show(ui, |ui| {
@@ -270,17 +293,29 @@ impl Janela {
         ui.heading("Assistir");
         ui.add_space(8.0);
         let a = &mut self.assistir;
-        ui.radio_value(&mut a.internet, true, "Pela internet (redes diferentes)");
-        ui.radio_value(&mut a.internet, false, "Na mesma rede");
+        ui.radio_value(&mut a.modo, Modo::Sala, "Entrar numa sala (recomendado)");
+        ui.radio_value(&mut a.modo, Modo::Internet, "Pela internet, trocando códigos");
+        ui.radio_value(&mut a.modo, Modo::Rede, "Na mesma rede");
         ui.add_space(8.0);
+        if a.modo == Modo::Sala {
+            ui.label("Código da sala de quem compartilha:");
+            ui.add(
+                egui::TextEdit::singleline(&mut a.sala)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("XXXX-XXXX"),
+            );
+            ui.add_space(8.0);
+        }
         ui.checkbox(&mut a.audio, "Tocar o som");
         if a.audio {
             ui.add(egui::Slider::new(&mut a.volume, 0..=100).text("Volume"));
         }
         ui.add_space(12.0);
         if ui.button(RichText::new("Começar").size(16.0)).clicked() {
-            let args = self.assistir.args();
-            self.iniciar(ctx, "client", args);
+            match self.assistir.args() {
+                Ok(args) => self.iniciar(ctx, "client", args),
+                Err(e) => self.aviso = Some(e),
+            }
         }
     }
 
@@ -311,6 +346,13 @@ impl Janela {
                 if let Some(d) = &s.destino {
                     codigo(ui, "E este endereço:", d);
                 }
+            }
+        }
+        // Quem compartilha, sala: o código fica à vista, porque mais gente
+        // pode entrar a qualquer momento.
+        if let Some(c) = &s.sala {
+            if s.fim.is_none() {
+                codigo(ui, "Código da sala: mande para quem vai assistir", c);
             }
         }
         // Quem compartilha, pela internet: a resposta para mandar de volta.
@@ -362,60 +404,71 @@ impl Janela {
                     ui.colored_label(Color32::from_rgb(220, 160, 60), a);
                 }
                 ui.add_space(8.0);
-                egui::CollapsingHeader::new("Adicionar espectador").show(ui, |ui| {
+                if self.compartilhar.modo == Modo::Sala {
                     ui.small(format!(
-                        "Até {MAX_ESPECTADORES}. Cada um usa mais uma cópia do vídeo no seu upload."
+                        "Quem tiver o código entra sozinho, até {MAX_ESPECTADORES}. Cada um usa mais uma cópia do vídeo no seu upload."
                     ));
-                    let linha = if self.compartilhar.internet {
-                        ui.label("Código de conexão dele:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.novo_conexao)
-                                .desired_width(f32::INFINITY)
-                                .hint_text("cole aqui"),
-                        );
-                        ui.button("Adicionar")
-                            .clicked()
-                            .then(|| linha_espectador_internet(&self.novo_conexao))
-                    } else {
-                        ui.label("Endereço e código dele:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.novo_destino)
-                                .desired_width(f32::INFINITY)
-                                .hint_text("192.168.0.21:9000"),
-                        );
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.novo_codigo)
-                                .desired_width(f32::INFINITY)
-                                .hint_text("XXXX-XXXX"),
-                        );
-                        ui.button("Adicionar")
-                            .clicked()
-                            .then(|| linha_espectador_rede(&self.novo_destino, &self.novo_codigo))
-                    };
-                    if let Some(linha) = linha {
-                        let envio = linha.and_then(|l| {
-                            s.processo
-                                .enviar(&l)
-                                .map_err(|e| format!("Não consegui enviar: {e}"))
-                        });
-                        self.aviso = envio.err();
-                        if self.aviso.is_none() {
-                            s.aviso_espectador = None;
-                            self.novo_conexao.clear();
-                            self.novo_destino.clear();
-                            self.novo_codigo.clear();
+                } else {
+                    egui::CollapsingHeader::new("Adicionar espectador").show(ui, |ui| {
+                        ui.small(format!(
+                            "Até {MAX_ESPECTADORES}. Cada um usa mais uma cópia do vídeo no seu upload."
+                        ));
+                        let linha = if self.compartilhar.modo == Modo::Internet {
+                            ui.label("Código de conexão dele:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.novo_conexao)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("cole aqui"),
+                            );
+                            ui.button("Adicionar")
+                                .clicked()
+                                .then(|| linha_espectador_internet(&self.novo_conexao))
+                        } else {
+                            ui.label("Endereço e código dele:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.novo_destino)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("192.168.0.21:9000"),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.novo_codigo)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("XXXX-XXXX"),
+                            );
+                            ui.button("Adicionar")
+                                .clicked()
+                                .then(|| linha_espectador_rede(&self.novo_destino, &self.novo_codigo))
+                        };
+                        if let Some(linha) = linha {
+                            let envio = linha.and_then(|l| {
+                                s.processo
+                                    .enviar(&l)
+                                    .map_err(|e| format!("Não consegui enviar: {e}"))
+                            });
+                            self.aviso = envio.err();
+                            if self.aviso.is_none() {
+                                s.aviso_espectador = None;
+                                self.novo_conexao.clear();
+                                self.novo_destino.clear();
+                                self.novo_codigo.clear();
+                            }
                         }
-                    }
-                });
+                    });
+                }
             }
             (None, None, false, Some(video)) => {
                 ui.colored_label(verde, "Recebendo: o vídeo está na outra janela");
                 ui.small(video);
             }
             (None, None, false, None) => {
+                let espera = match (&s.sala, s.entrando_na_sala) {
+                    (Some(_), _) => "Esperando a primeira pessoa entrar…",
+                    (None, true) => "Esperando quem compartilha…",
+                    _ => "Esperando o outro lado…",
+                };
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Esperando o outro lado…");
+                    ui.label(espera);
                 });
             }
         }

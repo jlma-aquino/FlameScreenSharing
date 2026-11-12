@@ -3,7 +3,7 @@
 //! Lado de quem assiste: rede → decode → tela.
 //!
 //! ```text
-//! fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
+//! fluxo-client [--sala CÓDIGO] [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
 //!              [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet]
 //!              [--sem-audio] [--volume V]
 //! ```
@@ -35,9 +35,12 @@ const AJUDA: &str = "\
 fluxo-client — mostra a tela transmitida por um fluxo-host
 
 Uso:
+  fluxo-client --sala CÓDIGO [opções]
   fluxo-client [opções]
 
 Opções:
+  --sala CÓDIGO   entra na sala de quem compartilha (fluxo-host --sala mostra o
+                  código), pelo servidor do FSS (outro com --sinal)
   --porta P       porta UDP onde escutar (padrão 9000)
   --vsync         sincroniza com o monitor (sem tearing; até 1 quadro a mais de atraso)
   --segundos S    fecha sozinho depois de S segundos do primeiro frame (padrão 0 = não)
@@ -72,6 +75,8 @@ struct Opts {
     codigo: Option<String>,
     sem_cifra: bool,
     sinal: Option<String>,
+    /// Código da sala de quem compartilha.
+    sala: Option<String>,
     internet: bool,
     sem_upnp: bool,
     sem_audio: bool,
@@ -95,6 +100,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         codigo: None,
         sem_cifra: false,
         sinal: None,
+        sala: None,
         internet: false,
         sem_upnp: false,
         sem_audio: false,
@@ -116,6 +122,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--codigo" => o.codigo = Some(valor()?.clone()),
             "--sem-cifra" => o.sem_cifra = true,
             "--sinal" => o.sinal = Some(valor()?.clone()),
+            "--sala" => o.sala = Some(valor()?.clone()),
             "--internet" => o.internet = true,
             "--sem-upnp" => o.sem_upnp = true,
             "--sem-audio" => o.sem_audio = true,
@@ -126,6 +133,15 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
+    }
+    if let Some(sala) = &o.sala {
+        if o.internet || o.sem_cifra || o.codigo.is_some() {
+            return Err("--sala já é o código: sem --codigo, --internet ou --sem-cifra".into());
+        }
+        fluxo_net::PairingCode::parse(sala).map_err(|e| format!("código da sala: {e}"))?;
+        o.codigo = Some(sala.clone());
+        o.sinal
+            .get_or_insert_with(|| fluxo_net::DEFAULT_SIGNAL_SERVER.to_string());
     }
     if o.internet && (o.sinal.is_some() || o.sem_cifra) {
         return Err("--internet não combina com --sinal nem --sem-cifra".into());
@@ -259,6 +275,10 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
             ler_respostas(rx.puncher());
             format!("FSS — código de conexão {cc} · cole a resposta do host")
         }
+        (Some(c), None) if o.sala.is_some() => {
+            println!("Entrando na sala {c}…");
+            format!("FSS — sala {c} · esperando quem compartilha")
+        }
         (Some(c), None) => {
             println!("Código de pareamento: {c}");
             println!("No PC que compartilha:  fluxo-host {endereco} --codigo {c}");
@@ -271,6 +291,7 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
     };
     let espera = match (&codigo, &conexao) {
         (_, Some(cc)) => format!("código de conexão\n{cc}\ncole a resposta\ndo host"),
+        (Some(c), None) if o.sala.is_some() => format!("sala {c}\nesperando quem\ncompartilha"),
         (Some(c), None) => format!("código {c}\nhost: {endereco}\n--codigo {c}"),
         (None, None) => format!("aguardando o host\n{endereco} (sem cifra)"),
     };
