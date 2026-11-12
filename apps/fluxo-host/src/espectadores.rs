@@ -175,6 +175,17 @@ impl Espectadores {
 
     /// Tira quem está calado há mais de `limite`. Devolve o número de cada um
     /// e quantos sobraram depois dele.
+    /// Tira o espectador `numero`; devolve o IP dele e quantos ficaram.
+    pub fn expulsar(&self, numero: u32) -> Option<(std::net::IpAddr, usize)> {
+        let mut l = self.lista();
+        let i = l.iter().position(|e| e.numero == numero)?;
+        let e = l.remove(i);
+        let ip = e.tx.peer_addr().ip();
+        let ficaram = l.len();
+        std::thread::spawn(move || drop(e));
+        Some((ip, ficaram))
+    }
+
     pub fn remover_silenciosos(&self, limite: Duration) -> Vec<(u32, usize)> {
         let mut l = self.lista();
         let mut saiu = Vec::new();
@@ -306,6 +317,9 @@ pub enum Controle {
     Resolucao(Option<u32>),
     /// `fps F`: como `--fps`.
     Fps(u32),
+    /// `expulsar N`: tira o espectador N e recusa o IP dele até o fim da
+    /// transmissão.
+    Expulsar(u32),
 }
 
 /// Se a linha é um [`Controle`]: `None` quando é outra coisa (um pedido).
@@ -323,11 +337,15 @@ pub fn ler_controle(linha: &str) -> Option<Result<Controle, String>> {
         ("pausar", None) => Ok(Controle::Pausa(true)),
         ("continuar", None) => Ok(Controle::Pausa(false)),
         ("resolucao", Some(r)) => crate::parse_resolucao(r).map(Controle::Resolucao),
+        ("expulsar", Some(n)) => n
+            .parse()
+            .map(Controle::Expulsar)
+            .map_err(|_| "expulsar: use o número do espectador".to_string()),
         ("fps", Some(f)) => match f.parse() {
             Ok(f) if (1..=240).contains(&f) => Ok(Controle::Fps(f)),
             _ => Err("fps: use um número de 1 a 240".to_string()),
         },
-        ("tela" | "resolucao" | "fps", None) => Err(format!("{comando}: falta o valor")),
+        ("tela" | "resolucao" | "fps" | "expulsar", None) => Err(format!("{comando}: falta o valor")),
         _ => return None,
     })
 }
@@ -629,6 +647,8 @@ mod tests {
             Some(Ok(Controle::Resolucao(None)))
         );
         assert_eq!(ler_controle("fps 30"), Some(Ok(Controle::Fps(30))));
+        assert_eq!(ler_controle("expulsar 2"), Some(Ok(Controle::Expulsar(2))));
+        assert!(matches!(ler_controle("expulsar x"), Some(Err(_))));
         for errado in [
             "tela x",
             "tela",

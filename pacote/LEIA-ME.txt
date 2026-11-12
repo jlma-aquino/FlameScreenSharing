@@ -16,6 +16,8 @@ para quem não for do grupo.
 
 ATUALIZAÇÕES
 ------------
+Cada versão nova vem assinada por quem publica o FSS; o programa confere a
+assinatura antes de instalar e recusa o que não conferir.
 Ao abrir, o programa procura versão nova e, se houver, baixa, instala e abre
 de novo sozinho (nunca no meio de uma transmissão). Dá para desligar em
 Configurações > Sobre. Deixe a pasta do programa num lugar onde você pode
@@ -29,7 +31,8 @@ ANTES DE COMEÇAR
 3. O programa não tem assinatura digital, então o Windows pode avisar:
    - "O Windows protegeu o computador": clique em "Mais informações" e depois
      em "Executar assim mesmo".
-   - Firewall: permita o acesso, marcando redes privadas e públicas se puder.
+   - Firewall: permita o acesso só em redes privadas (a de casa). As salas
+     funcionam assim mesmo em redes públicas; não libere nelas.
    Só faça isso se você recebeu o arquivo de alguém em quem confia.
 
 

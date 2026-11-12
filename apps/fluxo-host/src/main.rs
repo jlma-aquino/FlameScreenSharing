@@ -910,6 +910,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let mut captura = (m.width, m.height);
     let mut intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
     // Vídeo pausado pela janela: a última imagem fica na tela de quem assiste.
+    // IPs de espectadores expulsos (não entram de novo nesta transmissão).
+    let mut bloqueados: std::collections::HashSet<std::net::IpAddr> = std::collections::HashSet::new();
     let mut pausado = false;
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
@@ -953,6 +955,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     linhas_c.set(linhas);
                     reabrir = true;
                 }
+                Controle::Expulsar(n) => match tx.expulsar(n) {
+                    Some((ip, ficaram)) => {
+                        bloqueados.insert(ip);
+                        ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        println!("Espectador {n} expulso ({ficaram} no total)");
+                    }
+                    None => println!("(não há espectador {n})"),
+                },
                 Controle::Fps(f) => {
                     fps_c.set(f);
                     fps = f;
@@ -1015,6 +1025,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         // (quem já assistia troca de decoder sozinho, no keyframe).
         let mut keyframe_novo = false;
         while let Ok(n) = novos.try_recv() {
+            // Expulso volta com o código? Do mesmo IP, não entra mais nesta transmissão.
+            if bloqueados.contains(&n.tx.peer_addr().ip()) {
+                println!("Espectador {} não conectou: foi expulso antes", n.numero);
+                ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                std::thread::spawn(move || drop(n.tx));
+                continue;
+            }
             let comum = tx.codecs_comuns(n.codecs);
             if codec_pedido.is_some_and(|c| comum & c.bit() == 0) {
                 println!(

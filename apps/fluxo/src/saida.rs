@@ -92,6 +92,10 @@ pub fn ler(linha: &str) -> Evento {
                 if let Some(total) = depois.strip_prefix("saiu (").and_then(total) {
                     return Evento::Saiu { numero, total };
                 }
+                // "Espectador 2 expulso (1 no total)": para a janela, saiu.
+                if let Some(total) = depois.strip_prefix("expulso (").and_then(total) {
+                    return Evento::Saiu { numero, total };
+                }
             }
         }
     }
@@ -154,6 +158,67 @@ pub fn ler(linha: &str) -> Evento {
         }
     }
     Evento::Outra
+}
+
+/// Mascara os IPs da internet num texto (para "Copiar detalhes"): IPv4
+/// público vira `177.73.*.*`, IPv6 público vira `2804:14c:*`. Endereços da
+/// rede local e o loopback ficam (não identificam ninguém de fora). A porta,
+/// quando houver, fica.
+pub fn mascarar_ips(texto: &str) -> String {
+    use std::net::{IpAddr, Ipv4Addr};
+    let publico_v4 =
+        |ip: Ipv4Addr| !(ip.is_private() || ip.is_loopback() || ip.is_unspecified() || ip.is_link_local());
+    let mascara = |token: &str| -> Option<String> {
+        // "1.2.3.4", "1.2.3.4:5000", "[2001:db8::1]:5000", "2001:db8::1"
+        let (ip, porta) = match token.strip_prefix('[') {
+            Some(resto) => {
+                let (ip, depois) = resto.split_once(']')?;
+                (ip, depois)
+            }
+            None => match token.rsplit_once(':') {
+                Some((ip, p)) if ip.contains('.') && p.bytes().all(|b| b.is_ascii_digit()) => {
+                    (ip, &token[ip.len()..])
+                }
+                _ => (token, ""),
+            },
+        };
+        let novo = match ip.parse::<IpAddr>().ok()? {
+            IpAddr::V4(v4) if publico_v4(v4) => {
+                let o = v4.octets();
+                format!("{}.{}.*.*", o[0], o[1])
+            }
+            IpAddr::V6(v6) if (v6.segments()[0] & 0xE000) == 0x2000 => {
+                let s = v6.segments();
+                let curto = format!("{:x}:{:x}:*", s[0], s[1]);
+                if token.starts_with('[') {
+                    format!("[{curto}]")
+                } else {
+                    curto
+                }
+            }
+            _ => return None,
+        };
+        Some(format!("{novo}{porta}"))
+    };
+    let mut saida = String::with_capacity(texto.len());
+    let mut token = String::new();
+    let parte_de_ip = |c: char| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '[' | ']');
+    let fechar = |token: &mut String, saida: &mut String| {
+        if !token.is_empty() {
+            saida.push_str(&mascara(token).unwrap_or_else(|| token.clone()));
+            token.clear();
+        }
+    };
+    for ch in texto.chars() {
+        if parte_de_ip(ch) {
+            token.push(ch);
+        } else {
+            fechar(&mut token, &mut saida);
+            saida.push(ch);
+        }
+    }
+    fechar(&mut token, &mut saida);
+    saida
 }
 
 /// De `60 fps, 18.2 Mbps (alvo 20.0), perda 0.0%, fila 0 ms, …` deixa só o que
@@ -301,6 +366,30 @@ mod tests {
             ler("Não consegui trocar de tela: monitor 7 não existe"),
             Evento::Recusado(_)
         ));
+    }
+
+    #[test]
+    fn ips_mascarados_para_copiar() {
+        let t = "Transmitindo de 177.73.10.20:5000 para [2804:14c:65a1:9b00::7]:9000 e 192.168.1.5:9000, \
+                 pedido de 8.8.8.8, local 127.0.0.1:1 e fe80::1, sala 3F04B, 60 fps, v1.2";
+        let m = mascarar_ips(t);
+        assert!(m.contains("177.73.*.*:5000"), "{m}");
+        assert!(m.contains("[2804:14c:*]:9000"), "{m}");
+        assert!(m.contains("8.8.*.*"), "{m}");
+        assert!(m.contains("192.168.1.5:9000") && m.contains("127.0.0.1:1"), "{m}");
+        assert!(
+            m.contains("fe80::1") && m.contains("sala 3F04B") && m.contains("v1.2"),
+            "{m}"
+        );
+        assert!(!m.contains("10.20") && !m.contains("65a1"), "{m}");
+    }
+
+    #[test]
+    fn expulso_e_saida() {
+        assert_eq!(
+            ler("Espectador 2 expulso (1 no total)"),
+            Evento::Saiu { numero: 2, total: 1 }
+        );
     }
 
     #[test]

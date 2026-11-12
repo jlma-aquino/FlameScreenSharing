@@ -118,6 +118,8 @@ struct Sessao {
     respostas: Vec<(u32, String)>,
     /// Host: quantos estão assistindo.
     assistindo: usize,
+    /// Host: números de quem está assistindo (para expulsar).
+    espectadores: Vec<u32>,
     transmitindo: bool,
     /// Cliente: o vídeo chegou (codec e decoder).
     recebendo: Option<String>,
@@ -161,6 +163,7 @@ impl Sessao {
             resposta: None,
             respostas: Vec::new(),
             assistindo: 0,
+            espectadores: Vec::new(),
             transmitindo: false,
             recebendo: None,
             relatorio: None,
@@ -196,9 +199,13 @@ impl Sessao {
                 Evento::RespostaDe { numero, codigo } => self.respostas.push((numero, codigo)),
                 Evento::Conectou { numero, total } => {
                     self.assistindo = total;
+                    self.espectadores.push(numero);
                     self.respostas.retain(|(n, _)| *n != numero);
                 }
-                Evento::Saiu { total, .. } => self.assistindo = total,
+                Evento::Saiu { numero, total } => {
+                    self.assistindo = total;
+                    self.espectadores.retain(|n| *n != numero);
+                }
                 Evento::NaoConectou { numero, motivo } => {
                     self.respostas.retain(|(n, _)| *n != numero);
                     self.aviso = Some(format!("Espectador {numero} não conectou: {motivo}"));
@@ -866,6 +873,32 @@ impl Janela {
             }
         });
 
+        // Quem está assistindo, com o botão de expulsar.
+        if s.host && s.rodando() && !s.espectadores.is_empty() {
+            ui.add_space(12.0);
+            let mut expulsar = None;
+            cartao(ui, p, raio, |ui| {
+                ui.label(RichText::new("Assistindo").strong().color(p.texto));
+                for n in &s.espectadores {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Espectador {n}"));
+                        if ui
+                            .small_button("Expulsar")
+                            .on_hover_text(
+                                "Tira da transmissão; do mesmo IP, não entra de novo até você encerrar",
+                            )
+                            .clicked()
+                        {
+                            expulsar = Some(*n);
+                        }
+                    });
+                }
+            });
+            if let Some(n) = expulsar {
+                s.mandar(&format!("expulsar {n}"));
+            }
+        }
+
         // Mais um espectador, nas formas sem sala.
         if s.host && s.transmitindo && s.rodando() && s.modo != Modo::Sala {
             ui.add_space(12.0);
@@ -921,8 +954,9 @@ impl Janela {
         ui.add_space(12.0);
         egui::CollapsingHeader::new(RichText::new("Detalhes").color(p.texto_fraco)).show(ui, |ui| {
             if ui.small_button("Copiar detalhes").clicked() {
+                // IPs da internet mascarados: o texto pode ir parar num chat.
                 let texto: Vec<&str> = s.registro.iter().map(String::as_str).collect();
-                ui.ctx().copy_text(texto.join("\n"));
+                ui.ctx().copy_text(crate::saida::mascarar_ips(&texto.join("\n")));
             }
             egui::ScrollArea::vertical()
                 .max_height(180.0)
