@@ -8,9 +8,11 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod comandos;
+mod config;
 mod janela;
 mod processo;
 mod saida;
+mod tema;
 
 /// O nome que aparece para quem usa. Por dentro (crates, comandos) continua Fluxo.
 pub const NOME: &str = "FlameScreenSharing";
@@ -19,8 +21,8 @@ fn main() -> eframe::Result {
     let opcoes = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(NOME)
-            .with_inner_size([480.0, 520.0])
-            .with_min_inner_size([380.0, 360.0]),
+            .with_inner_size([960.0, 660.0])
+            .with_min_inner_size([520.0, 460.0]),
         ..Default::default()
     };
     eframe::run_native(NOME, opcoes, Box::new(|_| Ok(Box::new(janela::Janela::new()))))

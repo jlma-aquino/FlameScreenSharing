@@ -137,3 +137,7 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
       perdidos, todos os frames decodificados, troca de codec no meio; adicionar pela janela ainda sem teste na tela
 - [x] Interface gráfica: `fluxo.exe` (egui) roda o host e o cliente por baixo e mostra os códigos com botão de
       copiar. Transmissão real iniciada pela janela: 60 fps, captura→tela 11,6 ms, 0 perdidos
+- [x] Janela como a do Meet e do Discord (ADR-017): cartões na tela inicial, barra de controles durante a
+      transmissão (tela, som, pausa, qualidade, volume, mudo) que muda tudo ao vivo sem derrubar ninguém,
+      página de configurações com tema claro/escuro e padrões de codec, encoder, bitrate e som, temas por arquivo
+- [ ] Barra de controles dentro da janela do vídeo de quem assiste (aparece com o mouse, como no Meet)

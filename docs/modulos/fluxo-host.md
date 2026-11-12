@@ -113,6 +113,40 @@ resumo, encode igual (2,2 ms), captura→chegada p50 ~11 ms. Um espectador só c
 H.264 entrando obrigou a troca de AV1 para H.264, sem frame perdido para quem já
 assistia. O quinto foi recusado, e o que caiu saiu da lista.
 
+## Comandos ao vivo
+
+Também pela entrada padrão (são os botões da barra da janela), com a
+transmissão rodando e sem derrubar ninguém:
+
+| Linha | Faz | Confirma |
+|---|---|---|
+| `tela N` | Transmite o monitor N (o índice de `--monitor`) | `Tela: monitor N+1 (LxA)` |
+| `som ligado` / `som desligado` | Liga ou desliga o som do PC | `Som: ligado` / `Som: desligado` |
+| `pausar` / `continuar` | Para o vídeo na última imagem e volta | `Vídeo: pausado` / `Vídeo: transmitindo` |
+| `resolucao R` | Como `--resolucao` (`nativa` volta à da tela) | `Qualidade: LxA, até F fps` |
+| `fps F` | Como `--fps` (1 a 240) | `Qualidade: LxA, até F fps` |
+
+Por dentro:
+
+- **Tela:** solta a captura do monitor atual (o Windows não deixa o mesmo
+  processo duplicar a mesma tela duas vezes), abre a do novo e reabre o
+  encoder no device dele, que começa com um keyframe. Até o keyframe chegar,
+  quem assiste continua vendo a imagem anterior. Se o monitor novo falhar
+  (`Não consegui trocar de tela: …`), a captura antiga se recria sozinha e a
+  transmissão segue nela.
+- **Som:** a thread de áudio roda sempre, mesmo com `--sem-audio` (que agora
+  só começa com o som desligado); desligado, ela manda silêncio. Ligar de novo
+  é na hora, sem reabrir a captura.
+- **Pausa:** o laço segue recebendo da captura, mas não codifica; os pedidos de
+  keyframe de quem entra durante a pausa recebem a última imagem.
+- **Resolução e fps:** reabrem o encoder, como quando a tela muda de resolução.
+
+Medido com `fluxo-bench receber --verificar`, na mesma máquina: 720p, 30 fps,
+pausa e volta, som desligado e ligado e de volta à resolução nativa, em 24 s,
+sem frame perdido na rede (1009 de 1010 decodificados). Reabrindo a captura no
+meio (forçando a troca para o mesmo monitor): o fps nem caiu (60 → 55 → 60), 0
+perdidos e só o keyframe de recuperação.
+
 ## Encoder por software
 
 Sem encoder de hardware (ou com `--encoder software`), o vídeo vai em H.264

@@ -493,6 +493,44 @@ continuam lá, como reserva.
 - 🔁 Relay pelo servidor, para as redes em que o furo falha; aprovação de quem
   entra, se o código vazar.
 
+## ADR-017 — Janela como a do Meet: botões ao vivo pela entrada padrão e tema em arquivo
+
+**Status:** Aceito (2026-11-12)
+
+**Contexto.** A janela era um formulário: as opções só valiam ao abrir, e mudar
+tela, som ou qualidade pedia encerrar e começar de novo, derrubando quem
+assistia. O pedido foi uma interface como a do Meet ou do Discord, com botões
+embaixo durante a transmissão, configurações padrão numa janela própria, modo
+claro e escuro, e espaço para personalização. Dava para levar o vídeo para
+dentro da janela egui, mas o caminho de vídeo do cliente (Direct3D, sem vsync) é
+o que garante os ~22 ms.
+
+**Decisão.**
+- A janela continua rodando o `fluxo-host` e o `fluxo-client` por baixo. Os
+  botões mandam linhas pela entrada padrão (a mesma que já levava os códigos):
+  `tela`, `som`, `pausar`/`continuar`, `resolucao`, `fps` e `volume`. Cada
+  programa muda na hora e confirma com uma linha, e só então a janela mostra o
+  estado novo.
+- Trocar de tela reabre a captura e o encoder; o encoder novo começa com
+  keyframe, e o protocolo não muda. O som desligado manda silêncio, para ligar
+  de novo sem reabrir nada.
+- As cores ficam todas num `Tema` com papéis nomeados e duas paletas; um `Tema`
+  cabe num texto (`escuro.destaque = #F26B1D`), lido de `tema.txt`.
+- As configurações ficam num arquivo `chave = valor` em `%APPDATA%`, sem
+  dependência nova; valor estranho volta ao padrão.
+
+**Consequências.**
+- ➕ Trocar de tela, som, pausa e qualidade sem derrubar ninguém: no teste, o fps
+  nem caiu ao reabrir a captura.
+- ➕ Personalizar é trocar um arquivo; um editor de temas pode vir depois sem
+  mexer no resto.
+- ➖ O texto impresso e as linhas de comando viram contrato entre os programas
+  (testes em `saida.rs`, `espectadores.rs` e no cliente).
+- ➖ A barra de quem assiste fica na janela principal, separada do vídeo.
+- 🔁 Fase seguinte: a barra dentro da janela do vídeo (aparece com o mouse).
+  Se os comandos crescerem muito, trocar as linhas de texto por mensagens
+  estruturadas.
+
 ---
 
 ## Modelo

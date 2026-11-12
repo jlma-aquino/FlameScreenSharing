@@ -30,6 +30,18 @@ pub enum Evento {
     Recebendo(String),
     /// Host: relatório de um segundo, resumido para quem lê a janela.
     Relatorio(String),
+    /// Host: passou a transmitir esta tela (número a partir de 1, como na janela).
+    Tela(usize),
+    /// Host: o som do PC está indo (ou não).
+    Som(bool),
+    /// Host: vídeo pausado (ou transmitindo de novo).
+    Pausa(bool),
+    /// Host: resolução e fps depois de uma mudança (`1280x720, até 30 fps`).
+    Qualidade(String),
+    /// Cliente: volume agora, 0 a 100.
+    Volume(u32),
+    /// Um pedido da janela não deu certo; a transmissão segue.
+    Recusado(String),
     /// Erro fatal do programa.
     Erro(String),
     /// Qualquer outra coisa: só vai para o registro.
@@ -101,6 +113,31 @@ pub fn ler(linha: &str) -> Evento {
                 destino: destino.filter(|d| !d.starts_with('<')).map(str::to_string),
             };
         }
+    }
+    // "Tela: monitor 2 (2560x1440)"
+    if let Some(resto) = t.strip_prefix("Tela: monitor ") {
+        if let Some(n) = resto.split_whitespace().next().and_then(|n| n.parse().ok()) {
+            return Evento::Tela(n);
+        }
+    }
+    match t {
+        "Som: ligado" => return Evento::Som(true),
+        "Som: desligado" => return Evento::Som(false),
+        "Vídeo: pausado" => return Evento::Pausa(true),
+        "Vídeo: transmitindo" => return Evento::Pausa(false),
+        _ => {}
+    }
+    if let Some(q) = t.strip_prefix("Qualidade: ") {
+        return Evento::Qualidade(q.to_string());
+    }
+    if let Some(v) = t
+        .strip_prefix("Volume: ")
+        .and_then(|v| v.trim_end_matches('%').parse().ok())
+    {
+        return Evento::Volume(v);
+    }
+    if let Some(e) = t.strip_prefix("Não consegui trocar de tela: ") {
+        return Evento::Recusado(format!("Não deu para trocar de tela: {e}"));
     }
     if t.starts_with("Transmitindo monitor") {
         return Evento::Transmitindo;
@@ -247,6 +284,23 @@ mod tests {
         );
         // A dica do terminal não é código de pareamento de cliente.
         assert_eq!(ler("  No terminal: fluxo-client --sala K7M4-QX9P"), Evento::Outra);
+    }
+
+    #[test]
+    fn respostas_aos_botoes() {
+        assert_eq!(ler("Tela: monitor 2 (2560x1440)"), Evento::Tela(2));
+        assert_eq!(ler("Som: desligado"), Evento::Som(false));
+        assert_eq!(ler("Vídeo: pausado"), Evento::Pausa(true));
+        assert_eq!(ler("Vídeo: transmitindo"), Evento::Pausa(false));
+        assert_eq!(
+            ler("Qualidade: 1280x720, até 30 fps"),
+            Evento::Qualidade("1280x720, até 30 fps".into())
+        );
+        assert_eq!(ler("Volume: 35%"), Evento::Volume(35));
+        assert!(matches!(
+            ler("Não consegui trocar de tela: monitor 7 não existe"),
+            Evento::Recusado(_)
+        ));
     }
 
     #[test]

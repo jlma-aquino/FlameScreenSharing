@@ -56,6 +56,10 @@ sai da tela cheia; **F2** mostra/esconde o painel de estatísticas sobre a
 imagem (`--sem-painel` começa escondido). Teste na mesma máquina (`--destino 127.0.0.1:9000`)
 funciona, mas a janela aparece dentro da própria imagem ("espelho infinito").
 
+Com o vídeo rodando, `volume N` (0 a 100) na entrada padrão muda o volume na
+hora e o cliente confirma com `Volume: N%` (é o controle de volume e o mudo da
+janela do FSS). Funciona também no cliente portátil.
+
 ## No Linux
 
 Com `--features portatil`, `src/portatil/` substitui o caminho do Windows (ADR-015):

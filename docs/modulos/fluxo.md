@@ -1,32 +1,81 @@
 # fluxo (a janela)
 
-**Caminho:** `apps/fluxo` · **Dependências:** `eframe` (egui), `fluxo-net`, `fluxo-capture` · **Plataforma:** Windows 10+
+**Caminho:** `apps/fluxo` · **Dependências:** `eframe` (egui), `fluxo-net`, `fluxo-capture`, `fluxo-audio` (só para listar as saídas de som) · **Plataforma:** Windows 10+ (assistir também no Linux)
 
-A forma de usar o Fluxo sem terminal: `fluxo.exe` abre uma janela pequena com
-**Compartilhar minha tela** e **Assistir**. Por baixo ela roda o
-[fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da **mesma
-pasta**, sem janela de console, e mostra os códigos com um botão de copiar.
+A forma de usar o FSS sem terminal, no jeito do Meet e do Discord. Por baixo
+ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
+**mesma pasta**, sem janela de console.
 
 ## Como usar
 
-Com uma sala (o padrão), pelo servidor do FSS:
+- **Tela inicial:** dois cartões. **Compartilhar a tela** (escolhe a tela, se
+  houver mais de uma, e o som) abre uma sala; **Entrar numa sala** recebe o
+  código que quem compartilha mandou. Até 4 pessoas entram com o mesmo código.
+- **Durante a transmissão:** no meio, o código da sala em letra grande (com
+  Copiar) e o estado; embaixo, a **barra de controles**:
+  - quem compartilha: **Tela ⏷** (troca o monitor), **Som** (liga e desliga o
+    som do PC), **Pausar/Continuar**, **Qualidade ⏷** (resolução e fps) e
+    **Encerrar**;
+  - quem assiste: **mudo**, **volume** e **Sair**. O vídeo fica na janela
+    própria do cliente (F11: tela cheia, F2: estatísticas).
+  Nada disso reinicia a transmissão nem derruba quem assiste (ver "Botões ao
+  vivo").
+- **Outras formas de conectar (sem servidor):** pela internet trocando códigos
+  de conexão e de resposta, ou na mesma rede com endereço e código. É o jeito
+  antigo, para quando o servidor das salas estiver fora do ar.
+- **⚙ Configurações:** página própria, com menu à esquerda (Esc fecha):
+  - **Aparência:** escuro, claro ou igual ao sistema (muda na hora) e o tema
+    personalizado;
+  - **Compartilhar:** tela, resolução, fps, codec, encoder, bitrate máximo, som
+    ligado ao começar e de qual saída capturar o som;
+  - **Assistir:** volume inicial, em qual saída tocar, estatísticas sobre o
+    vídeo, janela sempre por cima;
+  - **Conexão:** servidor das salas (vazio = o do FSS).
 
-1. Quem vai **compartilhar** clica em Compartilhar minha tela, deixa "Abrir uma
-   sala", escolhe resolução e fps e clica em Começar. Aparece o **código da
-   sala**, com botão de copiar.
-2. Quem vai **assistir** clica em Assistir, cola o código e clica em Começar.
-   Mais gente pode entrar com o mesmo código, até 4.
+## Configurações guardadas
 
-Pela internet sem servidor ("trocando códigos"):
+Num arquivo de texto, `chave = valor`, gravado a cada mudança:
+`%APPDATA%\FlameScreenSharing\configuracoes.txt` (Linux:
+`~/.config/flamescreensharing/configuracoes.txt`). Valor estranho ou chave
+desconhecida não impede de abrir: vale o padrão daquela chave.
 
-1. Quem vai **assistir** clica em Assistir → Começar e manda o **código de
-   conexão** para quem vai compartilhar. A janela de vídeo abre esperando.
-2. Quem vai **compartilhar** clica em Compartilhar minha tela, cola o código,
-   escolhe resolução e fps e clica em Começar.
-3. Se aparecer um **código de resposta**, quem compartilha o manda de volta, e
-   quem assiste cola no campo da janela e clica em Enviar.
+## Temas
 
-Na mesma rede é igual, com endereço + código no lugar do código de conexão.
+Todas as cores e formas vêm do `Tema` (`src/tema.rs`): duas paletas (clara e
+escura) com papéis nomeados (`fundo`, `cartao`, `destaque`, `perigo`…) e o raio
+dos cantos. Nenhuma outra parte do código escolhe cor.
+
+Para personalizar, crie `tema.txt` na mesma pasta das configurações (o botão
+**Criar tema.txt** em Aparência grava um com as cores atuais) e clique em
+**Recarregar**:
+
+```text
+nome = Meu tema
+raio = 6
+escuro.destaque = #3366FF
+claro.destaque = #2255DD
+```
+
+O que faltar vem do tema padrão. Com erro, a janela avisa a linha e usa o
+padrão. Um editor de temas dentro da janela pode vir depois, gravando o mesmo
+arquivo.
+
+## Botões ao vivo
+
+Os botões mandam uma linha pela entrada padrão do programa, que muda na hora e
+confirma imprimindo uma linha; a janela só mostra o estado novo depois da
+confirmação.
+
+| Botão | Linha | Confirmação |
+|---|---|---|
+| Tela ⏷ | `tela N` (N a partir de 0) | `Tela: monitor N+1 (LxA)` |
+| Som | `som ligado` / `som desligado` | `Som: ligado` / `Som: desligado` |
+| Pausar / Continuar | `pausar` / `continuar` | `Vídeo: pausado` / `Vídeo: transmitindo` |
+| Qualidade ⏷ | `resolucao R` / `fps F` | `Qualidade: LxA, até F fps` |
+| Volume / mudo | `volume N` (0 a 100) | `Volume: N%` |
+
+Como cada um funciona por dentro está em [fluxo-host](fluxo-host.md#comandos-ao-vivo)
+e [fluxo-client](fluxo-client.md). Decisão: ADR-017.
 
 ## Nome e pacote para testes
 
@@ -35,23 +84,25 @@ descrição da porta no roteador (`NOME` em `src/main.rs`). Por dentro (crates,
 comandos, documentação) continua Fluxo.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File pacotegerar_pacote.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File pacote\gerar_pacote.ps1
 ```
 
-Gera `distlamescreensharing.zip` com `flamescreensharing.exe`, `fss-host.exe`,
-`fss-client.exe` e o `leia-me.txt`, com o runtime do c++ embutido (o outro pc não
-precisa do visual c++ redistributable). não tem assinatura digital: o windows avisa
-ao abrir.
+Gera `dist\FlameScreenSharing.zip` com `FlameScreenSharing.exe`, `FSS-host.exe`,
+`FSS-client.exe` e o `LEIA-ME.txt`, com o runtime do C++ embutido (o outro PC não
+precisa do Visual C++ Redistributable). Não tem assinatura digital: o Windows
+avisa ao abrir.
 
-## arquivos
+## Arquivos
 
 | Arquivo | Conteúdo |
 |---|---|
 | `src/main.rs` | Abre a janela |
-| `src/janela.rs` | As telas (egui): início, formulários, sessão em andamento |
-| `src/comandos.rs` | Monta a linha de comando e confere os códigos antes de abrir qualquer coisa |
-| `src/saida.rs` | Interpreta as linhas que os programas imprimem (códigos, início da transmissão, erro) |
-| `src/processo.rs` | Roda o programa sem console; linhas chegam por um canal; o código de resposta vai pela entrada padrão |
+| `src/janela.rs` | As telas (egui): início, outras formas de conectar, sessão com a barra de controles, configurações |
+| `src/tema.rs` | Cores e formas: paletas clara e escura, tema em texto (`tema.txt`) |
+| `src/config.rs` | Configurações padrão e o arquivo onde ficam |
+| `src/comandos.rs` | Monta a linha de comando (escolhas + configurações) e confere os códigos antes de abrir qualquer coisa |
+| `src/saida.rs` | Interpreta as linhas que os programas imprimem (códigos, início, confirmações dos botões, erro) |
+| `src/processo.rs` | Roda o programa sem console; linhas chegam por um canal; comandos e códigos vão pela entrada padrão |
 
 ## Por que rodar os executáveis, em vez de chamar as bibliotecas
 
@@ -59,28 +110,35 @@ A lógica do host e do cliente mora no `main` de cada um (laço de captura,
 janela de vídeo, thread de áudio). Rodá-los por baixo reaproveita tudo sem
 mexer no caminho de vídeo, que é o que tem medição; e um travamento neles não
 derruba a janela. O custo é o texto impresso virar contrato: ao mudar um
-`println!` de código, mude `saida.rs` (os testes de lá guardam o formato).
+`println!` de código ou de confirmação, mude `saida.rs` (os testes de lá
+guardam o formato).
 
 ## Limitações conhecidas
 
-- "Adicionar espectador": a lógica e o host estão testados, mas o botão ainda não
-  foi usado com a janela aberta.
-- Parar encerra o programa na hora: o resumo final do host não aparece.
-- As opções não ficam salvas entre uma abertura e outra.
-- Só as opções mais comuns; o resto (`--codec`, `--mbps`, `--fec`…) continua
-  na linha de comando.
+- O vídeo de quem assiste abre numa janela separada; a barra fica na janela
+  principal. Uma barra dentro da janela do vídeo, que aparece com o mouse, é a
+  próxima fase.
+- O menu de qualidade não marca a opção atual (o estado mostra a resolução e o
+  fps confirmados).
+- Pausar deixa a última imagem parada para quem assiste, sem aviso de "pausado"
+  na janela dele.
+- Mudanças nas configurações valem a partir da próxima transmissão (a aparência,
+  na hora).
+- Encerrar fecha o programa na hora: o resumo final do host não aparece.
 - Testar no mesmo PC com som nos dois lados faz eco: o host captura o que o
   cliente toca. Entre dois PCs não acontece.
-- Cliques simulados por uma ferramenta de automação não foram aceitos pela
-  janela (cliques de verdade, sim). Causa não encontrada; não é o nível de
-  permissão do processo.
+- Cliques simulados por uma ferramenta de automação não chegam à janela (o
+  teclado simulado chega, e cliques de verdade também). Os testes
+  automatizados navegam com Tab, Espaço e Enter.
 
 ## Teste com a janela aberta
 
-Código de conexão copiado e colado entre duas janelas no mesmo PC, com cliques
-de verdade: transmissão a 60 fps, 15,5 Mbps, captura→tela 11,6 ms, 0 perdidos,
-cifrada. Esse teste mostrou que a janela de quem assiste ficava em "Esperando"
-com o vídeo já chegando; agora o cliente avisa no primeiro frame.
+2026-11-12, navegando pelo teclado: sala aberta pela janela, cliente entrando
+pelo terminal; Som, Pausar/Continuar e Qualidade mudaram a transmissão sem
+derrubar o cliente, e a janela mostrou cada confirmação. Entrar numa sala pela
+janela abriu o vídeo; mudo e volume mudaram o estado da barra. Tema claro e
+escuro trocando na hora. O volume ao vivo foi conferido também pelo terminal
+(`Volume: 30%`, `Volume: 0%`, `volume 200` recusado).
 
 ## Testes
 
@@ -88,6 +146,8 @@ com o vídeo já chegando; agora o cliente avisa no primeiro frame.
 cargo test -p fluxo
 ```
 
-18 testes, sem abrir janela: leitura das linhas, montagem dos argumentos,
-mensagens de código errado, e o processo de verdade (entrada e saída por pipe,
-erro, fim, soltar encerra). Telas: só conferindo com a janela aberta.
+27 testes, sem abrir janela: leitura das linhas (inclusive as confirmações dos
+botões), montagem dos argumentos com as configurações, arquivo de
+configurações e de tema (ida e volta, arquivo estranho), mensagens de código
+errado e o processo de verdade (entrada e saída por pipe, erro, fim, soltar
+encerra). Telas: só conferindo com a janela aberta.

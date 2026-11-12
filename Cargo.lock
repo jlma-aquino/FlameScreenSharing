@@ -1103,6 +1103,7 @@ name = "fluxo"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "fluxo-audio",
  "fluxo-capture",
  "fluxo-net",
 ]

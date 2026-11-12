@@ -4,6 +4,8 @@
 
 use fluxo_net::{ConnectionCode, PairingCode, ReplyCode};
 
+use crate::config::{Configuracoes, CODECS, ENCODERS};
+
 /// Porta padrão do cliente.
 const PORTA_PADRAO: u16 = 9000;
 
@@ -39,9 +41,7 @@ pub struct Compartilhar {
     pub destino: String,
     pub codigo: String,
     pub monitor: usize,
-    /// Índice em [`RESOLUCOES`].
-    pub resolucao: usize,
-    pub fps: u32,
+    /// Começa com o som ligado (dá para mudar durante a transmissão).
     pub audio: bool,
 }
 
@@ -53,19 +53,19 @@ impl Default for Compartilhar {
             destino: String::new(),
             codigo: String::new(),
             monitor: 0,
-            resolucao: 0,
-            fps: 60,
             audio: true,
         }
     }
 }
 
 impl Compartilhar {
-    /// Argumentos do `fluxo-host`, ou o que falta arrumar.
-    pub fn args(&self) -> Result<Vec<String>, String> {
+    /// Argumentos do `fluxo-host`, ou o que falta arrumar. Qualidade, codec e
+    /// servidor vêm das configurações.
+    pub fn args(&self, c: &Configuracoes) -> Result<Vec<String>, String> {
         let mut a = Vec::new();
         if self.modo == Modo::Sala {
             a.push("--sala".to_string());
+            servidor(&mut a, c);
         } else if self.modo == Modo::Internet {
             let c = self.conexao.trim();
             if c.is_empty() {
@@ -88,15 +88,35 @@ impl Compartilhar {
             ]);
         }
         a.extend(["--monitor".to_string(), self.monitor.to_string()]);
-        let resolucao = RESOLUCOES[self.resolucao.min(RESOLUCOES.len() - 1)].1;
+        let resolucao = RESOLUCOES[c.resolucao.min(RESOLUCOES.len() - 1)].1;
         if resolucao != "nativa" {
             a.extend(["--resolucao".to_string(), resolucao.to_string()]);
         }
-        a.extend(["--fps".to_string(), self.fps.to_string()]);
+        a.extend(["--fps".to_string(), c.fps.to_string()]);
+        if let Some(codec) = CODECS.get(c.codec).and_then(|x| x.1) {
+            a.extend(["--codec".to_string(), codec.to_string()]);
+        }
+        if let Some(encoder) = ENCODERS.get(c.encoder).and_then(|x| x.1) {
+            a.extend(["--encoder".to_string(), encoder.to_string()]);
+        }
+        if c.mbps > 0 {
+            a.extend(["--mbps".to_string(), c.mbps.to_string()]);
+        }
+        if let Some(n) = c.som_de {
+            a.extend(["--audio-dispositivo".to_string(), n.to_string()]);
+        }
         if !self.audio {
             a.push("--sem-audio".to_string());
         }
         Ok(a)
+    }
+}
+
+/// `--sinal`, se as configurações trocaram o servidor das salas.
+fn servidor(a: &mut Vec<String>, c: &Configuracoes) {
+    let s = c.servidor.trim();
+    if !s.is_empty() {
+        a.extend(["--sinal".to_string(), s.to_string()]);
     }
 }
 
@@ -117,9 +137,6 @@ pub struct Assistir {
     pub modo: Modo,
     /// Código da sala de quem compartilha.
     pub sala: String,
-    pub audio: bool,
-    /// Volume do Fluxo, 0 a 100.
-    pub volume: u32,
 }
 
 impl Default for Assistir {
@@ -127,31 +144,39 @@ impl Default for Assistir {
         Self {
             modo: Modo::Sala,
             sala: String::new(),
-            audio: true,
-            volume: 100,
         }
     }
 }
 
 impl Assistir {
-    /// Argumentos do `fluxo-client`, ou o que falta arrumar.
-    pub fn args(&self) -> Result<Vec<String>, String> {
+    /// Argumentos do `fluxo-client`, ou o que falta arrumar. O som sempre
+    /// toca (o volume e o mudo mudam durante a transmissão).
+    pub fn args(&self, c: &Configuracoes) -> Result<Vec<String>, String> {
         let mut a = Vec::new();
         match self.modo {
             Modo::Sala => {
-                let c = self.sala.trim();
-                if c.is_empty() {
+                let codigo = self.sala.trim();
+                if codigo.is_empty() {
                     return Err("Digite o código da sala de quem compartilha.".into());
                 }
-                PairingCode::parse(c).map_err(|e| format!("Código da sala: {e}"))?;
-                a.extend(["--sala".to_string(), c.to_string()]);
+                PairingCode::parse(codigo).map_err(|e| format!("Código da sala: {e}"))?;
+                a.extend(["--sala".to_string(), codigo.to_string()]);
             }
             Modo::Internet => a.push("--internet".to_string()),
             Modo::Rede => {}
         }
-        match self.audio {
-            true => a.extend(["--volume".to_string(), self.volume.min(100).to_string()]),
-            false => a.push("--sem-audio".to_string()),
+        if self.modo == Modo::Sala {
+            servidor(&mut a, c);
+        }
+        a.extend(["--volume".to_string(), c.volume.min(100).to_string()]);
+        if let Some(n) = c.tocar_em {
+            a.extend(["--saida-som".to_string(), n.to_string()]);
+        }
+        if !c.estatisticas {
+            a.push("--sem-painel".to_string());
+        }
+        if c.sempre_no_topo {
+            a.push("--no-topo".to_string());
         }
         Ok(a)
     }
@@ -196,6 +221,10 @@ mod tests {
         PairingCode::generate().unwrap().to_string()
     }
 
+    fn padrao() -> Configuracoes {
+        Configuracoes::default()
+    }
+
     #[test]
     fn mesma_rede_vira_destino_e_codigo() {
         let codigo = codigo_valido();
@@ -205,32 +234,55 @@ mod tests {
             codigo: codigo.clone(),
             ..Default::default()
         };
-        let a = c.args().unwrap();
+        let a = c.args(&padrao()).unwrap();
         assert_eq!(
             a[..4],
             ["--destino", "192.168.0.5:9000", "--codigo", codigo.as_str()]
         );
         assert!(a.windows(2).any(|p| p == ["--fps", "60"]));
-        assert!(!a.iter().any(|x| x == "--resolucao" || x == "--sem-audio"));
+        let fora = [
+            "--resolucao",
+            "--sem-audio",
+            "--codec",
+            "--encoder",
+            "--mbps",
+            "--sinal",
+        ];
+        assert!(!a.iter().any(|x| fora.contains(&x.as_str())));
     }
 
     #[test]
-    fn opcoes_viram_argumentos() {
+    fn configuracoes_viram_argumentos() {
         let c = Compartilhar {
             modo: Modo::Rede,
             destino: "192.168.0.5:9100".into(),
             codigo: codigo_valido(),
             monitor: 1,
-            resolucao: 3,
-            fps: 120,
             audio: false,
             ..Default::default()
         };
-        let a = c.args().unwrap();
+        let cfg = Configuracoes {
+            resolucao: 3,
+            fps: 120,
+            codec: 3,
+            encoder: 1,
+            mbps: 40,
+            som_de: Some(2),
+            ..padrao()
+        };
+        let a = c.args(&cfg).unwrap();
         assert_eq!(a[1], "192.168.0.5:9100");
-        assert!(a.windows(2).any(|p| p == ["--monitor", "1"]));
-        assert!(a.windows(2).any(|p| p == ["--resolucao", "1440p"]));
-        assert!(a.windows(2).any(|p| p == ["--fps", "120"]));
+        for par in [
+            ["--monitor", "1"],
+            ["--resolucao", "1440p"],
+            ["--fps", "120"],
+            ["--codec", "av1"],
+            ["--encoder", "nvenc"],
+            ["--mbps", "40"],
+            ["--audio-dispositivo", "2"],
+        ] {
+            assert!(a.windows(2).any(|p| p == par), "{par:?}");
+        }
         assert!(a.iter().any(|x| x == "--sem-audio"));
     }
 
@@ -240,19 +292,22 @@ mod tests {
             modo: Modo::Internet,
             ..Default::default()
         };
-        assert!(vazio.args().unwrap_err().contains("código de conexão"));
+        assert!(vazio.args(&padrao()).unwrap_err().contains("código de conexão"));
         let errado = Compartilhar {
             modo: Modo::Internet,
             conexao: "AAAA-BBBB".into(),
             ..Default::default()
         };
-        assert!(errado.args().unwrap_err().starts_with("Código de conexão:"));
+        assert!(errado
+            .args(&padrao())
+            .unwrap_err()
+            .starts_with("Código de conexão:"));
         let sem_destino = Compartilhar {
             modo: Modo::Rede,
             codigo: codigo_valido(),
             ..Default::default()
         };
-        assert!(sem_destino.args().unwrap_err().contains("endereço"));
+        assert!(sem_destino.args(&padrao()).unwrap_err().contains("endereço"));
         assert!(linha_de_resposta("  ").is_err());
         assert!(linha_de_resposta("XXXX").is_err());
     }
@@ -286,26 +341,66 @@ mod tests {
             sala: format!(" {codigo} "),
             ..Default::default()
         };
-        assert_eq!(a.args().unwrap(), ["--sala", codigo.as_str(), "--volume", "100"]);
-        assert!(Assistir::default().args().unwrap_err().contains("código da sala"));
+        assert_eq!(
+            a.args(&padrao()).unwrap(),
+            ["--sala", codigo.as_str(), "--volume", "100"]
+        );
+        assert!(Assistir::default()
+            .args(&padrao())
+            .unwrap_err()
+            .contains("código da sala"));
         let i = Assistir {
             modo: Modo::Internet,
             ..Default::default()
         };
-        assert_eq!(i.args().unwrap(), ["--internet", "--volume", "100"]);
-        let b = Assistir {
-            modo: Modo::Rede,
-            audio: false,
+        assert_eq!(i.args(&padrao()).unwrap(), ["--internet", "--volume", "100"]);
+        let cfg = Configuracoes {
             volume: 30,
+            tocar_em: Some(1),
+            estatisticas: false,
+            sempre_no_topo: true,
+            servidor: "203.0.113.5:3478".into(),
+            ..padrao()
+        };
+        let b = Assistir {
+            modo: Modo::Sala,
+            sala: codigo.clone(),
+        };
+        assert_eq!(
+            b.args(&cfg).unwrap(),
+            [
+                "--sala",
+                codigo.as_str(),
+                "--sinal",
+                "203.0.113.5:3478",
+                "--volume",
+                "30",
+                "--saida-som",
+                "1",
+                "--sem-painel",
+                "--no-topo"
+            ]
+        );
+        // O servidor só vale para a sala.
+        let r = Assistir {
+            modo: Modo::Rede,
             ..Default::default()
         };
-        assert_eq!(b.args().unwrap(), ["--sem-audio"]);
+        assert!(!r.args(&cfg).unwrap().iter().any(|x| x == "--sinal"));
     }
 
     #[test]
     fn sala_nao_pede_nada() {
-        let a = Compartilhar::default().args().unwrap();
+        let a = Compartilhar::default().args(&padrao()).unwrap();
         assert_eq!(a[0], "--sala");
-        assert!(!a.iter().any(|x| x == "--codigo" || x == "--conexao"));
+        assert!(!a
+            .iter()
+            .any(|x| x == "--codigo" || x == "--conexao" || x == "--sinal"));
+        let cfg = Configuracoes {
+            servidor: "meu.servidor:7000".into(),
+            ..padrao()
+        };
+        let b = Compartilhar::default().args(&cfg).unwrap();
+        assert_eq!(b[..3], ["--sala", "--sinal", "meu.servidor:7000"]);
     }
 }

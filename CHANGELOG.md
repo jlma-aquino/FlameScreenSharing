@@ -6,6 +6,26 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Janela nova, no jeito do Meet e do Discord** (ADR-017): na tela inicial, um
+  cartão para compartilhar e outro para entrar numa sala; durante a transmissão,
+  o código grande no meio e uma barra embaixo com Tela, Som, Pausar, Qualidade e
+  Encerrar (quem assiste: mudo, volume e Sair). Tudo muda ao vivo, sem reiniciar
+  a transmissão nem derrubar ninguém.
+- **Configurações** numa página própria (Aparência, Compartilhar, Assistir,
+  Conexão), guardadas em `%APPDATA%\FlameScreenSharing\configuracoes.txt`: tema
+  claro, escuro ou igual ao sistema; tela, resolução, fps, codec, encoder, bitrate
+  máximo e saída de som de quem compartilha; volume inicial, saída de som,
+  estatísticas e janela por cima de quem assiste; servidor das salas.
+- **Temas**: todas as cores vêm de `tema.rs`; um `tema.txt` na pasta das
+  configurações troca as cores sem recompilar.
+- **Comandos ao vivo** pela entrada padrão: `tela N`, `som ligado|desligado`,
+  `pausar`, `continuar`, `resolucao R` e `fps F` no host; `volume N` no cliente
+  (Windows e portátil). `DesktopCapturer::release_duplication`.
+
+### Mudado
+- `fluxo-host --sem-audio` agora só começa com o som desligado: a captura do som
+  roda sempre, para ligar na hora.
+
 - **Sala** (ADR-016): quem compartilha abre uma sala (`fluxo-host --sala`, ou
   "Abrir uma sala" na janela) e passa o código; quem assiste entra com ele
   (`fluxo-client --sala CÓDIGO`), sem código de resposta, até 4 pessoas. Usa o
@@ -24,7 +44,7 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   host, `conexao CÓDIGO` ou `destino IP:PORTA CÓDIGO`. O bitrate e o codec seguem
   o espectador em pior situação; quem fica 15 s calado sai da lista.
   `VideoSender::silent_for`; `fluxo-bench receber --so-h264`.
-- **Pacote para testes** (`pacotegerar_pacote.ps1`): zip com os três programas e um
+- **Pacote para testes** (`pacote/gerar_pacote.ps1`): zip com os três programas e um
   LEIA-ME. O nome visível passa a ser **FlameScreenSharing (FSS)**; por dentro
   continua Fluxo. Na janela, "Copiar detalhes".
 - Códigos de conexão e de resposta aceitam hifens tipográficos e caracteres
