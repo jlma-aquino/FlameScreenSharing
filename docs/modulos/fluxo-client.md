@@ -8,7 +8,7 @@ Lado de quem assiste: rede (`fluxo-net`) → decode (`fluxo-decode`) → tela.
 
 ```text
 fluxo-client [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
-             [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet [--sem-upnp]]
+             [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet [--usar-upnp]]
 ```
 
 `--no-topo` mantém a janela sempre por cima das outras: útil para acompanhar
@@ -39,7 +39,7 @@ por servidores STUN públicos). Mande para quem compartilha; ele roda
 NATs e o vídeo vai direto. Erro de digitação é avisado na hora. Se este PC
 tem IPv6, o código leva o endereço IPv6 também (48 símbolos), e o host
 costuma conectar por ele antes mesmo da resposta; se o roteador tem UPnP e
-não há CGNAT, a porta é aberta nele (`--sem-upnp` desliga) e basta um
+não há CGNAT, com `--usar-upnp` (desligado por padrão) a porta é aberta nele, por 1 hora renovada enquanto o programa roda, e basta um
 código.
 
 ```powershell

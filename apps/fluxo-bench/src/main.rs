@@ -66,7 +66,7 @@ struct Opts {
     /// `receber` sem servidor: mostra um código de conexão (STUN público).
     internet: bool,
     /// `receber --internet` sem tentar abrir a porta no roteador por UPnP.
-    sem_upnp: bool,
+    usar_upnp: bool,
     /// `audio`: toca o resultado neste volume (0 a 100).
     volume: Option<f32>,
     /// `audio` (e o host): de qual saída de som capturar (`None`: a padrão).
@@ -109,7 +109,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         conexao: None,
         ttl_furo: fluxo_net::PUNCH_TTL,
         internet: false,
-        sem_upnp: false,
+        usar_upnp: false,
         volume: None,
         dispositivo: None,
         audio: None,
@@ -137,7 +137,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--conexao" => o.conexao = Some(valor()?.clone()),
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--internet" => o.internet = true,
-            "--sem-upnp" => o.sem_upnp = true,
+            "--usar-upnp" => o.usar_upnp = true,
             "--volume" => o.volume = Some(valor()?.parse().map_err(|_| "volume inválido (0 a 100)")?),
             "--dispositivo" => o.dispositivo = Some(valor()?.parse().map_err(|_| "dispositivo inválido")?),
             "--audio" => o.audio = Some(valor()?.clone()),
@@ -203,7 +203,7 @@ Opções:
                         nele e o enviar acha o receber por ele (redes diferentes)
   --internet            no receber: redes diferentes sem servidor; mostra um código de
                         conexão e pede no terminal o código de resposta do enviar
-  --sem-upnp            no receber --internet: não abre a porta no roteador por UPnP
+  --usar-upnp           no receber --internet: abre a porta no roteador por UPnP (desligado por padrão)
   --audio x.wav         no receber: decodifica o áudio que chega e grava (sem tocar)
   --tocar V             no receber: toca o áudio como o fluxo-client, volume V de 0 a
                         100 (0 = testa a reprodução em silêncio)

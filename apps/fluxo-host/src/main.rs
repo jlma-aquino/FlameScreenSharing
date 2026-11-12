@@ -55,7 +55,7 @@ Opções:
                         (padrão 12; 0 = TTL normal)
   --codigo XXXX-XXXX    código de pareamento mostrado pelo fluxo-client (obrigatório):
                         só o cliente com esse código recebe, e tudo vai cifrado
-  --sem-cifra           TESTE: sem pareamento nem cifra (o cliente também)
+  --sem-cifra           TESTE (só em compilação de teste, não na de produção): sem pareamento nem cifra (o cliente também)
   --monitor N           monitor a transmitir (padrão 0)
   --sem-audio           não transmite o som do PC (por padrão vai junto, em Opus)
   --audio-dispositivo N captura o som da saída N (padrão: a saída padrão do Windows;
@@ -238,7 +238,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--bitrate-fixo" => o.bitrate_fixo = true,
             "--fila-max" => o.fila_max = valor()?.parse().map_err(|_| "fila-max inválido")?,
             "--codigo" => o.codigo = Some(valor()?.clone()),
-            "--sem-cifra" => o.sem_cifra = true,
+            // Só em compilação de teste: na de produção a cifra não desliga.
+            "--sem-cifra" if cfg!(debug_assertions) => o.sem_cifra = true,
             "--simular-banda" => o.simular_banda = valor()?.parse().map_err(|_| "simular-banda inválido")?,
             "--simular-atraso" => {
                 o.simular_atraso = valor()?.parse().map_err(|_| "simular-atraso inválido")?

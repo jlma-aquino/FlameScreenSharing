@@ -109,7 +109,7 @@ pub fn cmd_receber(o: &Opts) -> Result<(), Box<dyn Error>> {
     // Sem servidor: endereços públicos pelo STUN (IPv4 e IPv6) e porta aberta
     // por UPnP, se der; só valem para estes sockets.
     let internet = match o.internet {
-        true => Some(fluxo_net::Internet::open(o.porta, !o.sem_upnp)?),
+        true => Some(fluxo_net::Internet::open(o.porta, o.usar_upnp)?),
         false => None,
     };
     let (v4, v6, keepalive) = match &internet {

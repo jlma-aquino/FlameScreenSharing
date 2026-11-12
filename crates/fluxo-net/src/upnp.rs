@@ -17,8 +17,9 @@ use crate::NetError;
 const PRAZO_DESCOBERTA: Duration = Duration::from_millis(1500);
 /// Prazo de cada pedido HTTP ao roteador.
 const PRAZO_HTTP: Duration = Duration::from_secs(3);
-/// Validade da porta aberta; renovada por quem a mantiver (o Fluxo apaga
-/// ao sair, e o roteador apaga sozinho depois disso, se o Fluxo cair).
+/// Validade da porta aberta. Enquanto o [`PortMapping`] existe, ela é
+/// renovada na metade do prazo; o Fluxo apaga ao sair, e se ele cair (ou faltar
+/// luz), o roteador apaga sozinho quando o prazo acabar.
 pub const UPNP_LEASE: Duration = Duration::from_secs(3600);
 
 fn erro(message: impl Into<String>) -> NetError {
@@ -51,16 +52,45 @@ pub enum UpnpOutcome {
     Opened(PortMapping),
 }
 
-/// Porta aberta no roteador; fechada ao destruir.
+/// Porta aberta no roteador; renovada enquanto existe, fechada ao destruir.
 #[derive(Debug)]
 pub struct PortMapping {
     gateway: Gateway,
     /// Endereço público que leva a este PC.
     pub public: SocketAddrV4,
+    /// Para a thread que renova.
+    parar: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PortMapping {
+    fn novo(gateway: Gateway, public: SocketAddrV4, local: SocketAddrV4) -> Self {
+        use std::sync::atomic::Ordering;
+        let parar = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (g, p) = (gateway.clone(), parar.clone());
+        let _ = std::thread::Builder::new()
+            .name("fluxo-upnp".into())
+            .spawn(move || {
+                let mut desde = std::time::Instant::now();
+                while !p.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(500));
+                    if desde.elapsed() >= UPNP_LEASE / 2 {
+                        // Falhou? Tenta de novo na próxima metade; a conexão já aberta segue.
+                        let _ = g.add_udp_mapping(public.port(), local, UPNP_LEASE);
+                        desde = std::time::Instant::now();
+                    }
+                }
+            });
+        Self {
+            gateway,
+            public,
+            parar,
+        }
+    }
 }
 
 impl Drop for PortMapping {
     fn drop(&mut self) {
+        self.parar.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = self.gateway.remove_udp_mapping(self.public.port());
     }
 }
@@ -194,10 +224,11 @@ pub fn open_port(local: SocketAddrV4, stun: SocketAddrV4) -> Result<UpnpOutcome,
     for porta in [stun.port(), local.port()] {
         match g.add_udp_mapping(porta, local, UPNP_LEASE) {
             Ok(()) => {
-                return Ok(UpnpOutcome::Opened(PortMapping {
-                    gateway: g,
-                    public: SocketAddrV4::new(externo, porta),
-                }))
+                return Ok(UpnpOutcome::Opened(PortMapping::novo(
+                    g,
+                    SocketAddrV4::new(externo, porta),
+                    local,
+                )))
             }
             Err(e) => ultimo_erro = Some(e),
         }

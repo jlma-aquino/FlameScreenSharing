@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! fluxo-client [--sala CÓDIGO] [--porta P] [--vsync] [--segundos S] [--largura L] [--altura A] [--no-topo]
-//!              [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet]
+//!              [--sem-painel] [--codigo XXXX-XXXX] [--sem-cifra] [--sinal SERVIDOR] [--internet [--usar-upnp]]
 //!              [--sem-audio] [--volume V]
 //! ```
 //!
@@ -109,13 +109,14 @@ Opções:
   --altura A      altura inicial da janela (padrão 720)
   --no-topo       janela sempre por cima das outras
   --codigo X      usa este código de pareamento (padrão: um novo, sorteado)
-  --sem-cifra     TESTE: sem pareamento nem cifra (o host também)
+  --sem-cifra     TESTE (só em compilação de teste, não na de produção): sem pareamento nem cifra (o host também)
   --sinal S       registra o código no servidor de sinalização S (fluxo-sinal), para
                   um host em outra rede achar este PC: fluxo-host --sinal S --codigo ...
   --internet      redes diferentes, sem servidor: mostra um código de conexão para
                   mandar a quem compartilha (fluxo-host --conexao ...) e pede no
                   terminal o código de resposta que ele mandar de volta
-  --sem-upnp      com --internet: não abre a porta no roteador por UPnP
+  --usar-upnp     com --internet: abre a porta no roteador por UPnP (desligado por
+                  padrão; a porta vale 1 hora, renovada enquanto o programa roda)
   --sem-audio     não toca o som do host
   --volume V      volume do som do host, 0 a 100 (padrão 100; só do Fluxo)
   --saida-som N   toca na saída de som N (padrão: a do Windows; lista em fluxo-bench audio)
@@ -146,7 +147,7 @@ struct Opts {
     /// Código da sala de quem compartilha.
     sala: Option<String>,
     internet: bool,
-    sem_upnp: bool,
+    usar_upnp: bool,
     sem_audio: bool,
     /// Volume do som do host, 0 a 100 (só do Fluxo, não o do sistema).
     volume: f32,
@@ -173,7 +174,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         chave: None,
         sala: None,
         internet: false,
-        sem_upnp: false,
+        usar_upnp: false,
         sem_audio: false,
         volume: 100.0,
         saida_som: None,
@@ -192,12 +193,13 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--altura" => o.altura = valor()?.parse().map_err(|_| "altura inválida")?,
             "--no-topo" => o.no_topo = true,
             "--codigo" => o.codigo = Some(valor()?.clone()),
-            "--sem-cifra" => o.sem_cifra = true,
+            // Só em compilação de teste: na de produção a cifra não desliga.
+            "--sem-cifra" if cfg!(debug_assertions) => o.sem_cifra = true,
             "--sinal" => o.sinal = Some(valor()?.clone()),
             "--chave" => o.chave = Some(fluxo_net::ServerKey::parse(valor()?).map_err(|e| e.to_string())?),
             "--sala" => o.sala = Some(valor()?.clone()),
             "--internet" => o.internet = true,
-            "--sem-upnp" => o.sem_upnp = true,
+            "--usar-upnp" => o.usar_upnp = true,
             "--sem-audio" => o.sem_audio = true,
             "--volume" => o.volume = valor()?.parse().map_err(|_| "volume inválido (0 a 100)")?,
             "--saida-som" => o.saida_som = Some(valor()?.parse().map_err(|_| "saida-som inválida")?),
@@ -310,7 +312,7 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
     // e porta aberta por UPnP, se der; só valem para estes sockets, que são
     // os que recebem o vídeo.
     let internet = match o.internet {
-        true => Some(fluxo_net::Internet::open(o.porta, !o.sem_upnp)?),
+        true => Some(fluxo_net::Internet::open(o.porta, o.usar_upnp)?),
         false => None,
     };
     let (v4, v6, keepalive) = match &internet {

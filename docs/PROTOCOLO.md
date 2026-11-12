@@ -296,7 +296,7 @@ cliente: Punch a cada 250 ms para o host (abre o NAT do cliente) → PairInit pa
   o cliente abre a sua porta IPv4 no roteador (`AddPortMapping`, UDP,
   validade de 1 h, apagada ao sair) **só** se o IP externo do roteador for
   o mesmo que o STUN viu; atrás de CGNAT (o roteador vê um IP privado, ex.
-  `100.64.x.x`) não pede nada. `--sem-upnp` desliga.
+  `100.64.x.x`) não pede nada. Só com `--usar-upnp` (desligado por padrão); a porta vale 1 hora e é renovada na metade do prazo enquanto o programa roda.
 - **Limites:** NAT simétrico dos dois lados no IPv4, sem IPv6 de um dos
   lados, não fura. Com os dois atrás do mesmo roteador, o IPv4 só funciona
   se ele fizer *hairpin* (o IPv6, se houver, passa; na mesma rede, use

@@ -169,7 +169,12 @@ impl Assistir {
                 PairingCode::parse(codigo).map_err(|e| format!("Código da sala: {e}"))?;
                 a.extend(["--sala".to_string(), codigo.to_string()]);
             }
-            Modo::Internet => a.push("--internet".to_string()),
+            Modo::Internet => {
+                a.push("--internet".to_string());
+                if c.upnp {
+                    a.push("--usar-upnp".to_string());
+                }
+            }
             Modo::Rede => {}
         }
         if self.modo == Modo::Sala {

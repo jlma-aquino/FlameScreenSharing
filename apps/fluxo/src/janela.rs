@@ -1329,6 +1329,16 @@ impl Janela {
                 .size(13.0)
                 .color(p.texto_fraco),
         );
+        ui.add_space(16.0);
+        titulo_campo(
+            ui,
+            p,
+            "Porta no roteador (UPnP)",
+            "Só para assistir pela internet trocando códigos: abre uma porta no roteador para quem \
+             compartilha chegar direto, por 1 hora, renovada enquanto o programa roda e fechada ao sair. \
+             As salas não precisam.",
+        );
+        ui.checkbox(&mut self.cfg.upnp, "Abrir a porta no roteador (UPnP)");
     }
 }
 

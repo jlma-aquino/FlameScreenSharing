@@ -25,7 +25,7 @@ fluxo-bench encode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [-
                        [--mbps M] [--fps F] [--keyframe-a-cada S]
                        [--saida arquivo.h264] [--verificar] [--refresh N] [--perder-a-cada S]
 fluxo-bench decode     [--monitor N] [--segundos S] [--encoder auto|nvenc|mf] [--mbps M] [--codec C]
-fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra] [--sinal SERVIDOR | --internet [--sem-upnp]]
+fluxo-bench receber    [--porta P] [--segundos S] [--saida arquivo.h264] [--verificar] [--codigo C] [--sem-cifra] [--sinal SERVIDOR | --internet [--usar-upnp]]
 fluxo-bench enviar     (--destino IP:PORTA | --sinal SERVIDOR) (--codigo C | --sem-cifra) [--mbps M] [--fps F] [--segundos S] [--fec K]
 fluxo-bench enviar     --conexao CÓDIGO [--mbps M] [--fps F] [--segundos S] [--fec K]
 fluxo-bench nat

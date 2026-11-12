@@ -56,6 +56,8 @@ pub struct Configuracoes {
     /// Painel de estatísticas sobre o vídeo.
     pub estatisticas: bool,
     pub sempre_no_topo: bool,
+    /// Pela internet trocando códigos: abrir a porta no roteador por UPnP.
+    pub upnp: bool,
 
     // Conexão
     /// Chave de acesso ao servidor das salas (`FSS1-…`), como colada.
@@ -82,6 +84,7 @@ impl Default for Configuracoes {
             tocar_em: None,
             estatisticas: true,
             sempre_no_topo: false,
+            upnp: false,
             chave: String::new(),
             atualizar_sozinho: true,
         }
@@ -137,6 +140,7 @@ impl Configuracoes {
              tocar_em = {}\n\
              estatisticas = {}\n\
              sempre_no_topo = {}\n\
+             upnp = {}\n\
              chave = {}\n\
              atualizacoes = {}\n",
             self.aparencia.chave(),
@@ -156,6 +160,7 @@ impl Configuracoes {
             opcional(self.tocar_em),
             sim(self.estatisticas),
             sim(self.sempre_no_topo),
+            sim(self.upnp),
             self.chave.split_whitespace().collect::<String>(),
             sim(self.atualizar_sozinho),
         )
@@ -207,6 +212,7 @@ impl Configuracoes {
                 "tocar_em" => c.tocar_em = opcional(v).unwrap_or(c.tocar_em),
                 "estatisticas" => c.estatisticas = sim(v).unwrap_or(c.estatisticas),
                 "sempre_no_topo" => c.sempre_no_topo = sim(v).unwrap_or(c.sempre_no_topo),
+                "upnp" => c.upnp = sim(v).unwrap_or(c.upnp),
                 "chave" => c.chave = v.to_string(),
                 "atualizacoes" => c.atualizar_sozinho = sim(v).unwrap_or(c.atualizar_sozinho),
                 _ => {}
@@ -236,6 +242,7 @@ mod tests {
             tocar_em: Some(1),
             estatisticas: false,
             sempre_no_topo: true,
+            upnp: true,
             chave: "FSS1-ABCDE-FGHJK".into(),
             atualizar_sozinho: false,
         };
