@@ -291,6 +291,47 @@ pub fn ler_pedido(linha: &str) -> Result<Pedido, String> {
     }
 }
 
+/// Mudança com a transmissão rodando, também pela entrada padrão (é por ela
+/// que a janela do FSS manda os botões). Quem assiste não cai: no máximo
+/// recebe um keyframe novo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Controle {
+    /// `tela N`: passa a transmitir o monitor N (o índice de `--monitor`).
+    Tela(usize),
+    /// `som ligado` / `som desligado`: o som do PC vai ou não (desligado, vai silêncio).
+    Som(bool),
+    /// `pausar` / `continuar`: o vídeo para na última imagem e volta.
+    Pausa(bool),
+    /// `resolucao R`: como `--resolucao` (`nativa` volta à da tela).
+    Resolucao(Option<u32>),
+    /// `fps F`: como `--fps`.
+    Fps(u32),
+}
+
+/// Se a linha é um [`Controle`]: `None` quando é outra coisa (um pedido).
+pub fn ler_controle(linha: &str) -> Option<Result<Controle, String>> {
+    let mut p = linha.split_whitespace();
+    let (comando, valor) = (p.next()?, p.next());
+    Some(match (comando, valor) {
+        ("tela", Some(n)) => n
+            .parse()
+            .map(Controle::Tela)
+            .map_err(|_| "tela: use o número do monitor (0, 1, …)".to_string()),
+        ("som", Some("ligado")) => Ok(Controle::Som(true)),
+        ("som", Some("desligado")) => Ok(Controle::Som(false)),
+        ("som", _) => Err("som: use som ligado  ou  som desligado".to_string()),
+        ("pausar", None) => Ok(Controle::Pausa(true)),
+        ("continuar", None) => Ok(Controle::Pausa(false)),
+        ("resolucao", Some(r)) => crate::parse_resolucao(r).map(Controle::Resolucao),
+        ("fps", Some(f)) => match f.parse() {
+            Ok(f) if (1..=240).contains(&f) => Ok(Controle::Fps(f)),
+            _ => Err("fps: use um número de 1 a 240".to_string()),
+        },
+        ("tela" | "resolucao" | "fps", None) => Err(format!("{comando}: falta o valor")),
+        _ => return None,
+    })
+}
+
 /// Alguém que acabou de parear, a caminho do laço do vídeo.
 pub struct Novo {
     pub numero: u32,
@@ -298,20 +339,35 @@ pub struct Novo {
     pub codecs: u8,
 }
 
-/// Lê pedidos da entrada padrão até ela fechar, cada um pareando em thread
-/// própria (pode levar minutos). `ocupados` conta quem assiste e quem está
-/// pareando; quem sair desconta lá no laço do vídeo.
+/// Lê a entrada padrão até ela fechar. Controles vão para o laço do vídeo
+/// por `controles`; pedidos de espectador pareiam cada um em thread própria
+/// (pode levar minutos). `ocupados` conta quem assiste e quem está pareando;
+/// quem sair desconta lá no laço do vídeo.
 pub fn atender_pedidos(
     cfg: SenderConfig,
     ttl_furo: u32,
     numeros: Arc<AtomicU32>,
     novos: Sender<Novo>,
     ocupados: Arc<AtomicUsize>,
+    controles: Sender<Controle>,
 ) {
     for linha in std::io::stdin().lines() {
         let Ok(linha) = linha else { return };
         if linha.trim().is_empty() {
             continue;
+        }
+        match ler_controle(&linha) {
+            Some(Ok(c)) => {
+                if controles.send(c).is_err() {
+                    return; // o vídeo acabou
+                }
+                continue;
+            }
+            Some(Err(e)) => {
+                println!("({e})");
+                continue;
+            }
+            None => {}
         }
         let pedido = match ler_pedido(&linha) {
             Ok(p) => p,
@@ -555,5 +611,36 @@ mod tests {
             .starts_with("código de conexão"));
         assert!(ler_pedido("destino 10.0.0.2:9000").is_err());
         assert!(ler_pedido("oi").is_err());
+    }
+
+    #[test]
+    fn controles_da_janela() {
+        assert_eq!(ler_controle("tela 1"), Some(Ok(Controle::Tela(1))));
+        assert_eq!(ler_controle(" som desligado "), Some(Ok(Controle::Som(false))));
+        assert_eq!(ler_controle("som ligado"), Some(Ok(Controle::Som(true))));
+        assert_eq!(ler_controle("pausar"), Some(Ok(Controle::Pausa(true))));
+        assert_eq!(ler_controle("continuar"), Some(Ok(Controle::Pausa(false))));
+        assert_eq!(
+            ler_controle("resolucao 720p"),
+            Some(Ok(Controle::Resolucao(Some(720))))
+        );
+        assert_eq!(
+            ler_controle("resolucao nativa"),
+            Some(Ok(Controle::Resolucao(None)))
+        );
+        assert_eq!(ler_controle("fps 30"), Some(Ok(Controle::Fps(30))));
+        for errado in [
+            "tela x",
+            "tela",
+            "som talvez",
+            "fps 0",
+            "fps 999",
+            "resolucao abc",
+        ] {
+            assert!(matches!(ler_controle(errado), Some(Err(_))), "{errado}");
+        }
+        // Pedidos de espectador não são controles.
+        assert_eq!(ler_controle("conexao ABCD"), None);
+        assert_eq!(ler_controle("destino 10.0.0.2:9000 X"), None);
     }
 }

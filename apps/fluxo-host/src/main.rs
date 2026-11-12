@@ -455,6 +455,7 @@ fn transmitir_audio(
     tx: &espectadores::Espectadores,
     dispositivo: Option<usize>,
     parar: &std::sync::atomic::AtomicBool,
+    ligado: &std::sync::atomic::AtomicBool,
 ) -> Result<String, fluxo_audio::AudioError> {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -480,7 +481,10 @@ fn transmitir_audio(
     let inicio = Instant::now();
     while !parar.load(Ordering::Relaxed) {
         std::thread::sleep(Duration::from_millis(5));
-        for q in cap.read_frames()? {
+        for mut q in cap.read_frames()? {
+            if !ligado.load(Ordering::Relaxed) {
+                q.fill(0.0);
+            }
             let pacote = enc.encode(&q)?;
             bytes += pacote.len() as u64;
             // A captura deste quadro terminou agora; a primeira amostra, 10 ms antes.
@@ -574,8 +578,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     manter_tela_ligada();
     let mut cap = DesktopCapturer::new(o.monitor)?;
     // Cópias: o frame capturado prende o capturador enquanto existe.
-    let device = cap.d3d_device().clone();
-    let context = cap.d3d_context().clone();
+    let mut device = cap.d3d_device().clone();
+    let mut context = cap.d3d_context().clone();
     let m = cap.monitor().clone();
     // fps e linhas do vídeo: os pedidos, ou os padrões do encoder (mais
     // baixos no por software). Em Cell porque, no automático, só se sabe que
@@ -765,9 +769,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             fps_c.get()
         );
     }
-    let fps = fps_c.get();
+    let mut fps = fps_c.get();
     let (vw, vh) = tamanho(m.width, m.height);
     let (local, destino) = (tx.local_addr(), tx.peer_addr());
+    // Botões da janela (trocar de tela, som, pausa), também pela entrada padrão.
+    let (controles_tx, controles) = std::sync::mpsc::channel();
     // Quem assiste. Mais gente pode entrar pela entrada padrão (a janela manda
     // os códigos por ela), cada um pareando em thread própria.
     let primeiro = tx;
@@ -783,20 +789,27 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         let (ocupados, numeros, ttl) = (ocupados.clone(), numeros.clone(), o.ttl_furo);
         std::thread::Builder::new()
             .name("fluxo-pedidos".into())
-            .spawn(move || espectadores::atender_pedidos(cfg_novos, ttl, numeros, novos_tx, ocupados))?;
+            .spawn(move || {
+                espectadores::atender_pedidos(cfg_novos, ttl, numeros, novos_tx, ocupados, controles_tx)
+            })?;
     }
     // Áudio numa thread própria, para todos (pacotes à parte).
     let parar_audio = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let audio = match o.sem_audio {
-        true => None,
-        false => {
-            let (tx, parar, disp) = (tx.clone(), parar_audio.clone(), o.audio_dispositivo);
-            Some(
-                std::thread::Builder::new()
-                    .name("fluxo-audio".into())
-                    .spawn(move || transmitir_audio(&tx, disp, &parar))?,
-            )
-        }
+    // Som ligado ou não (botão da janela). A thread roda mesmo desligado, mandando
+    // silêncio: ligar de novo é na hora, sem reabrir nada.
+    let som_ligado = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(!o.sem_audio));
+    let audio = {
+        let (tx, parar, disp, som) = (
+            tx.clone(),
+            parar_audio.clone(),
+            o.audio_dispositivo,
+            som_ligado.clone(),
+        );
+        Some(
+            std::thread::Builder::new()
+                .name("fluxo-audio".into())
+                .spawn(move || transmitir_audio(&tx, disp, &parar, &som))?,
+        )
     };
 
     println!(
@@ -871,9 +884,68 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let mut ultimo_encode = Instant::now();
     // Tamanho atual da captura (para reabrir o encoder).
     let mut captura = (m.width, m.height);
-    let intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
+    let mut intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
+    // Vídeo pausado pela janela: a última imagem fica na tela de quem assiste.
+    let mut pausado = false;
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
+        // Botões da janela. Nada aqui derruba quem assiste: trocar de tela ou
+        // de qualidade reabre a captura ou o encoder, e o encoder novo começa
+        // com um keyframe (a imagem anterior fica na tela até ele chegar).
+        while let Ok(c) = controles.try_recv() {
+            use espectadores::Controle;
+            let mut reabrir = false;
+            match c {
+                Controle::Tela(n) if n == cap.monitor().index => {
+                    println!("Tela: monitor {} ({}x{})", n + 1, captura.0, captura.1)
+                }
+                Controle::Tela(n) => {
+                    // A captura antiga solta a tela antes (o Windows não deixa
+                    // duplicar a mesma duas vezes); se a nova falhar, a antiga
+                    // se recria sozinha no próximo frame e a transmissão segue.
+                    cap.release_duplication();
+                    match DesktopCapturer::new(n) {
+                        Ok(nova) => {
+                            cap = nova;
+                            device = cap.d3d_device().clone();
+                            context = cap.d3d_context().clone();
+                            let novo = cap.monitor();
+                            captura = (novo.width, novo.height);
+                            println!("Tela: monitor {} ({}x{})", n + 1, novo.width, novo.height);
+                            reabrir = true;
+                        }
+                        Err(e) => println!("Não consegui trocar de tela: {e}"),
+                    }
+                }
+                Controle::Som(sim) => {
+                    som_ligado.store(sim, std::sync::atomic::Ordering::Relaxed);
+                    println!("Som: {}", if sim { "ligado" } else { "desligado" });
+                }
+                Controle::Pausa(sim) => {
+                    pausado = sim;
+                    println!("Vídeo: {}", if sim { "pausado" } else { "transmitindo" });
+                }
+                Controle::Resolucao(linhas) => {
+                    linhas_c.set(linhas);
+                    reabrir = true;
+                }
+                Controle::Fps(f) => {
+                    fps_c.set(f);
+                    fps = f;
+                    intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
+                    reabrir = true;
+                }
+            }
+            if reabrir {
+                enc = open_encoder(&device, &config_para(captura.0, captura.1, codec))?.encoder;
+                pendente = None;
+                ultima = None;
+                limite = FpsLimiter::new(fps);
+                onda_ativa = false;
+                let (vw, vh) = tamanho(captura.0, captura.1);
+                println!("Qualidade: {vw}x{vh}, até {fps} fps");
+            }
+        }
         // Com um pendente, espera no máximo até o horário dele; sem pendente,
         // 10 ms: com a tela parada, um pedido de keyframe do cliente é
         // atendido em até ~10 ms (re-enviando a última imagem).
@@ -990,7 +1062,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             || keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p);
         let frames_antes = seg.frames;
         let mut recriar = None;
-        if let Some(frame) = frame.filter(|f| f.info().desktop_updated) {
+        if let Some(frame) = frame.filter(|f| f.info().desktop_updated && !pausado) {
             // Momento da captura, no relógio que o cliente usa para medir o trânsito.
             let capturado_us = clock_us();
             if limite.on_frame(Instant::now()) {
@@ -1012,7 +1084,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             }
             drop(frame); // devolve o frame ao Windows o quanto antes
         }
-        if recriar.is_none() && limite.on_tick(Instant::now()) {
+        if recriar.is_none() && !pausado && limite.on_tick(Instant::now()) {
             if let Some(t) = &pendente {
                 recriar = codificar(&mut *enc, codec, &tx, t, pendente_us, pedir_keyframe, &mut seg)?;
                 pedir_keyframe = false;

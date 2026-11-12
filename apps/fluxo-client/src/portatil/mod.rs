@@ -62,11 +62,11 @@ pub fn run(
 
     let audio = match (o.sem_audio, rx.take_audio()) {
         (false, Some(fila)) => {
-            let (c, volume) = (comp.clone(), o.volume / 100.0);
+            let c = comp.clone();
             Some(
                 std::thread::Builder::new()
                     .name("fluxo-audio".into())
-                    .spawn(move || som::tocar(fila, volume, &c))?,
+                    .spawn(move || som::tocar(fila, &c))?,
             )
         }
         _ => None,

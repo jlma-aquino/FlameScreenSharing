@@ -30,6 +30,26 @@ mod present;
 mod window;
 
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU32, Ordering as Ordem};
+
+/// Volume do som do host, 0 a 100. Começa no `--volume` e muda com o vídeo
+/// rodando, quando chega `volume N` pela entrada padrão (é assim que a
+/// janela do FSS mexe nele, sem reiniciar nada).
+static VOLUME: AtomicU32 = AtomicU32::new(100);
+
+/// O volume agora, de 0 a 1.
+pub(crate) fn volume() -> f32 {
+    VOLUME.load(Ordem::Relaxed) as f32 / 100.0
+}
+
+/// `volume N` → `Some(Ok(N))`; outra linha → `None`.
+fn ler_volume(linha: &str) -> Option<Result<u32, String>> {
+    let resto = linha.trim().strip_prefix("volume")?;
+    Some(match resto.trim().parse::<u32>() {
+        Ok(v) if v <= 100 => Ok(v),
+        _ => Err("volume: use um número de 0 a 100".to_string()),
+    })
+}
 
 const AJUDA: &str = "\
 fluxo-client — mostra a tela transmitida por um fluxo-host
@@ -62,6 +82,7 @@ Opções:
 
 Na janela: F11 ou Alt+Enter alterna tela cheia; Esc sai da tela cheia;
 F2 mostra/esconde o painel de estatísticas.
+No terminal, com o vídeo rodando:  volume N  (0 a 100) muda o volume na hora.
 No PC que compartilha:  fluxo-host --destino <IP deste PC>:9000 --codigo <código>
   (redes diferentes:    fluxo-host --sinal <servidor> --codigo <código>)";
 
@@ -165,6 +186,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    VOLUME.store(opts.volume.clamp(0.0, 100.0).round() as u32, Ordem::Relaxed);
     match run(&opts) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -278,7 +300,6 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
                 true => println!("Ele conecta direto; se não conectar, cole aqui o código de resposta dele:"),
                 false => println!("Depois cole aqui o código de resposta que ele mandar de volta:"),
             }
-            ler_respostas(rx.puncher());
             format!("FSS — código de conexão {cc} · cole a resposta do host")
         }
         (Some(c), None) if o.sala.is_some() => {
@@ -301,6 +322,8 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
         (Some(c), None) => format!("código {c}\nhost: {endereco}\n--codigo {c}"),
         (None, None) => format!("aguardando o host\n{endereco} (sem cifra)"),
     };
+    // Códigos de resposta só valem com código de conexão; o volume, sempre.
+    ler_entrada(conexao.is_some().then(|| rx.puncher()));
     Ok(Preparado { rx, titulo, espera })
 }
 
@@ -339,11 +362,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     // Áudio numa thread própria: toca no ritmo da placa, sem esperar o vídeo.
     let audio = match (o.sem_audio, rx.take_audio()) {
         (false, Some(fila)) => {
-            let (c, volume, saida) = (comp.clone(), o.volume / 100.0, o.saida_som);
+            let (c, saida) = (comp.clone(), o.saida_som);
             Some(
                 std::thread::Builder::new()
                     .name("fluxo-audio".into())
-                    .spawn(move || tocar_audio(fila, volume, saida, &c))?,
+                    .spawn(move || tocar_audio(fila, saida, &c))?,
             )
         }
         _ => None,
@@ -385,9 +408,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Lê do terminal os códigos de resposta do host (numa thread: a janela e o
-/// vídeo seguem) e fura o NAT na direção de cada um.
-fn ler_respostas(furos: fluxo_net::Puncher) {
+/// Lê a entrada padrão numa thread (a janela e o vídeo seguem): `volume N`
+/// e, com código de conexão (`furos`), os códigos de resposta do host,
+/// furando o NAT na direção de cada um.
+fn ler_entrada(furos: Option<fluxo_net::Puncher>) {
     std::thread::spawn(move || {
         for linha in std::io::stdin().lines() {
             let Ok(linha) = linha else {
@@ -396,6 +420,22 @@ fn ler_respostas(furos: fluxo_net::Puncher) {
             if linha.trim().is_empty() {
                 continue;
             }
+            match ler_volume(&linha) {
+                Some(Ok(v)) => {
+                    VOLUME.store(v, Ordem::Relaxed);
+                    println!("Volume: {v}%");
+                    continue;
+                }
+                Some(Err(e)) => {
+                    println!("{e}");
+                    continue;
+                }
+                None => {}
+            }
+            let Some(furos) = &furos else {
+                println!("(não entendi \"{}\": use volume 0 a 100)", linha.trim());
+                continue;
+            };
             match fluxo_net::ReplyCode::parse(&linha) {
                 Ok(r) => {
                     let destinos = r.candidates();
@@ -414,14 +454,14 @@ fn ler_respostas(furos: fluxo_net::Puncher) {
 #[cfg(windows)]
 fn tocar_audio(
     fila: fluxo_net::AudioStream,
-    volume: f32,
     saida: Option<usize>,
     c: &exibir::Compartilhado,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
-    let mut tocador = fluxo_audio::AudioPlayer::new(volume, saida)?;
+    let mut atual = volume();
+    let mut tocador = fluxo_audio::AudioPlayer::new(atual, saida)?;
     // Para quando a janela fecha ou quando a rede termina (a exibição soltou
     // o VideoReceiver): os dois são o fim normal.
     'tocar: while !c.fechar.load(Ordering::Relaxed) {
@@ -436,6 +476,10 @@ fn tocar_audio(
             }
             espera = Duration::ZERO;
         }
+        if volume() != atual {
+            atual = volume();
+            tocador.set_volume(atual);
+        }
         tocador.pump(Instant::now())?;
     }
     let s = tocador.stats();
@@ -444,4 +488,19 @@ fn tocar_audio(
          buffer final {} quadros de 10 ms",
         s.jitter.played, s.jitter.lost, s.fec, s.jitter.underruns, s.jitter.target
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ler_volume;
+
+    #[test]
+    fn volume_pela_entrada() {
+        assert_eq!(ler_volume("volume 40"), Some(Ok(40)));
+        assert_eq!(ler_volume(" volume 0 "), Some(Ok(0)));
+        assert!(matches!(ler_volume("volume 101"), Some(Err(_))));
+        assert!(matches!(ler_volume("volume"), Some(Err(_))));
+        // Códigos de resposta seguem para o furo do NAT.
+        assert_eq!(ler_volume("8D9E-66WU-866"), None);
+    }
 }

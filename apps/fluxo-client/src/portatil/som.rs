@@ -120,7 +120,6 @@ fn para_bytes(pcm: &[f32], volume: f32, saida: &mut Vec<u8>) {
 /// Thread do som, até a janela fechar ou a rede terminar. Devolve o resumo.
 pub fn tocar(
     fila: fluxo_net::AudioStream,
-    volume: f32,
     c: &Compartilhado,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let (nome, mut filho, mut entrada) = abrir_tocador()?;
@@ -152,7 +151,7 @@ pub fn tocar(
                 Next::Lost { following: None } => dec.decode(None)?,
                 Next::Empty => break,
             };
-            para_bytes(&pcm, volume, &mut bytes);
+            para_bytes(&pcm, crate::volume(), &mut bytes);
             entrada.write_all(&bytes)?;
             adiantado.enviou(quadro_ms, Instant::now());
         }

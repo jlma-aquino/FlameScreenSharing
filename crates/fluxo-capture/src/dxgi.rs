@@ -254,6 +254,13 @@ impl DesktopCapturer {
         &self.context
     }
 
+    /// Solta a duplicação do monitor; o próximo [`next_frame`](Self::next_frame)
+    /// a recria. O Windows não deixa o mesmo processo duplicar a mesma tela duas
+    /// vezes: solte antes de abrir outro capturador dela.
+    pub fn release_duplication(&mut self) {
+        self.duplication = None;
+    }
+
     fn recreate_duplication(&mut self) -> Result<(), CaptureError> {
         self.duplication = None;
         let dup = unsafe { self.output.DuplicateOutput(&self.device) }.map_err(map_duplicate_error)?;
