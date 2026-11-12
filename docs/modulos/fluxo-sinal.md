@@ -55,5 +55,6 @@ sala ocupada (raro: 1 em ~1 milhão por par de códigos).
   é o local, que não serve para um host de fora.
 - NAT simétrico dos dois lados não fura; o relay de fallback é o próximo
   item da fase 5.
-- Testado só com os dois PCs na mesma rede (servidor no notebook). Ainda
-  falta um teste com NATs de verdade, com o servidor na internet.
+- Roda na Oracle Cloud em `137.131.152.250:3478` ([SERVIDOR.md](../SERVIDOR.md)).
+  Testado com o servidor na internet e os dois PCs na mesma rede; ainda falta
+  um teste com os PCs em redes diferentes.

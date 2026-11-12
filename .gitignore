@@ -3,3 +3,6 @@
 *.h264
 *.hevc
 /dist
+# Chave SSH do servidor: nunca versionar.
+/.secret
+/.secrets
