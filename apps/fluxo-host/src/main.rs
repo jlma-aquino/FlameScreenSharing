@@ -540,6 +540,24 @@ fn guardar_copia(
     Ok(())
 }
 
+/// Tela e PC acordados enquanto o host roda. Com o monitor apagado por
+/// inatividade (alguém vendo um filme sem mexer no mouse, ou longe do PC), o
+/// Windows para de entregar quadros à captura, e quem entra fica sem imagem
+/// (visto num teste da sala: 19 pedidos de keyframe sem resposta). Vale para
+/// esta thread, que é a do laço do vídeo, até o processo terminar.
+#[cfg(windows)]
+fn manter_tela_ligada() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetThreadExecutionState(flags: u32) -> u32;
+    }
+    const ES_CONTINUOUS: u32 = 0x8000_0000;
+    const ES_SYSTEM_REQUIRED: u32 = 0x1;
+    const ES_DISPLAY_REQUIRED: u32 = 0x2;
+    // SAFETY: só flags; sem ponteiros.
+    unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) };
+}
+
 #[cfg(windows)]
 fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, Instant};
@@ -553,6 +571,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use crate::limite::FpsLimiter;
 
     enable_dpi_awareness();
+    manter_tela_ligada();
     let mut cap = DesktopCapturer::new(o.monitor)?;
     // Cópias: o frame capturado prende o capturador enquanto existe.
     let device = cap.d3d_device().clone();

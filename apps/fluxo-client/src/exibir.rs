@@ -115,6 +115,8 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
     // Painel sobre a imagem: o texto muda 1×/s; F2 liga e desliga.
     let mut texto_painel = cfg.espera.clone();
     let mut painel_ligado = false;
+    // Já avisou no título que o host pareou (antes da primeira imagem).
+    let mut avisou_pareado = false;
     // Última versão do cursor desenhada, e quantas vezes ele foi redesenhado
     // sem frame novo.
     let mut versao_cursor: Option<u64> = None;
@@ -243,7 +245,21 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
             }
         }
 
-        // Antes do primeiro frame fica o texto de espera (código, sala).
+        // Antes do primeiro frame fica o texto de espera (código, sala); com o
+        // host já pareado, ele passa a dizer isso (tela do host bloqueada ou
+        // apagada não manda imagem, e "esperando quem compartilha" enganava).
+        if inicio.is_none() && !avisou_pareado && Instant::now() >= proximo_titulo {
+            proximo_titulo = Instant::now() + Duration::from_secs(1);
+            if rx.stats().peer.is_some() {
+                avisou_pareado = true;
+                *c.titulo.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some("FSS — conectado · esperando a primeira imagem".to_string());
+                texto_painel = "conectado\nesperando a\nprimeira imagem".to_string();
+                if painel_ligado {
+                    tela.set_overlay(Some(&texto_painel))?;
+                }
+            }
+        }
         if inicio.is_some() && Instant::now() >= proximo_titulo {
             let s = rx.stats();
             let latencia = match latencia_seg.0.is_empty() {
