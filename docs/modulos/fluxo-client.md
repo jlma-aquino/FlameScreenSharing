@@ -203,6 +203,34 @@ tela e gera nova captura: o host passa a codificar na frequência do monitor
 (até ~165 fps), não nos 60 do `--fps`. Ver a pendência de limite de fps no
 roadmap.
 
+## Barra de controles sobre o vídeo
+
+Com o mouse sobre o vídeo aparece uma barra embaixo, como a do YouTube:
+**mudo**, **volume** (arrastar, roda do mouse ou setas), **estatísticas** (o
+painel do F2), **tela cheia** e **Sair**. Com o mouse parado por 2,5 s, ela
+some e o cursor some junto; mexer traz de volta. Antes da primeira imagem ela
+fica sempre visível (é por ela que dá para sair). Teclas: F11, F, Alt+Enter
+ou clique duplo no vídeo alternam a tela cheia; Esc sai dela; M liga e
+desliga o som; F2 mostra as estatísticas.
+
+- `src/controles.rs`: onde cada peça fica (`Layout`, em pixels, na escala do
+  monitor), o que cada evento do mouse faz (`Controles`) e quando a barra
+  some. Sem Windows, com testes.
+- `src/window.rs` anota os eventos (mover, apertar, soltar, clique duplo,
+  roda, mouse saiu) e esconde o cursor; o laço da janela em `main.rs` aplica
+  as ações e manda à exibição um `Desenho` (só quando muda).
+- `src/overlay.rs` desenha em Direct2D, depois do painel: degradê escuro,
+  ícones da fonte Segoe MDL2 Assets (vem com o Windows), trilho do volume na
+  cor de destaque do FSS. A exibição redesenha na hora quando a barra muda,
+  mesmo com a tela parada e antes da primeira imagem (é assim que o texto de
+  espera aparece agora).
+
+`--janela X,Y,L,A` abre a janela nessa posição e tamanho (externos, em pixels
+de tela); ao fechar, o cliente imprime `Janela: X,Y,L,A`. É assim que a
+janela do FSS dá o lugar ao vídeo e volta para onde ele estava. O cliente
+sabe o DPI de cada monitor (antes, numa tela com escala, o Windows esticava o
+vídeo, borrado).
+
 ## Limitações conhecidas
 
 - A janela não toma o foco se for aberta por outro programa em segundo

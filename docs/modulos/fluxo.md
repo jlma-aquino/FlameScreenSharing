@@ -16,8 +16,11 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
   - quem compartilha: **Tela ⏷** (troca o monitor), **Som** (liga e desliga o
     som do PC), **Pausar/Continuar**, **Qualidade ⏷** (resolução e fps) e
     **Encerrar**;
-  - quem assiste: **mudo**, **volume** e **Sair**. O vídeo fica na janela
-    própria do cliente (F11: tela cheia, F2: estatísticas).
+  - quem assiste não vê esta janela: o vídeo abre **no lugar dela**, na mesma
+    posição e tamanho, com a barra de controles por cima do vídeo (mudo,
+    volume, estatísticas, tela cheia, Sair; some com o mouse parado, como no
+    YouTube). Ao sair, esta janela volta onde o vídeo estava (`src/lugar.rs`;
+    ver [fluxo-client](fluxo-client.md#barra-de-controles-sobre-o-vídeo)).
   Nada disso reinicia a transmissão nem derruba quem assiste (ver "Botões ao
   vivo").
 - **Outras formas de conectar (sem servidor):** pela internet trocando códigos
@@ -30,7 +33,8 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
     ligado ao começar e de qual saída capturar o som;
   - **Assistir:** volume inicial, em qual saída tocar, estatísticas sobre o
     vídeo, janela sempre por cima;
-  - **Conexão:** servidor das salas (vazio = o do FSS).
+  - **Conexão:** servidor das salas (vazio = o do FSS);
+  - **Sobre:** versão, atualizações (ligar ou desligar, Verificar agora).
 
 ## Configurações guardadas
 
@@ -77,6 +81,31 @@ confirmação.
 Como cada um funciona por dentro está em [fluxo-host](fluxo-host.md#comandos-ao-vivo)
 e [fluxo-client](fluxo-client.md). Decisão: ADR-017.
 
+## Atualizações
+
+Ao abrir, a janela pergunta à API do GitHub qual é a versão mais nova
+publicada em Releases (`src/atualizacao.rs`). Sendo mais nova:
+
+1. baixa `FlameScreenSharing.zip` e `SHA256SUMS.txt` com o `curl.exe` do Windows;
+2. confere o SHA-256 do zip (não conferiu: nada é trocado);
+3. abre o zip com o `tar.exe` do Windows numa pasta temporária;
+4. sem transmissão em andamento, troca os arquivos da pasta do programa (cada
+   antigo vira `*.antigo`, apagado na abertura seguinte; o Windows deixa
+   renomear o .exe em uso) e abre a versão nova, que mostra "Atualizado para
+   a versão X". Com transmissão, espera ela acabar. Se uma troca falha, as
+   anteriores são desfeitas.
+
+Só a cópia empacotada (`FlameScreenSharing.exe`) se atualiza; rodando da
+compilação, a janela só avisa. Desliga em Configurações > Sobre. Publicar uma
+versão: `pacote\publicar_versao.ps1` (decisão: ADR-018). O repositório precisa
+ser público. Para testar sem publicar, `FSS_ATUALIZACOES=file:///.../versao.json`
+troca o endereço da API.
+
+Teste local (2026-11-12): cópia instalada numa pasta, "versão 9.9.9" falsa por
+`file://` com o zip e o SHA-256 de verdade: baixou, conferiu, trocou os
+arquivos e abriu de novo com `--atualizado`. Com o SHA-256 errado, nada foi
+trocado e o programa seguiu aberto.
+
 ## Nome e pacote para testes
 
 Para quem usa, o programa se chama **FlameScreenSharing (FSS)**: janela, títulos e
@@ -100,6 +129,8 @@ avisa ao abrir.
 | `src/janela.rs` | As telas (egui): início, outras formas de conectar, sessão com a barra de controles, configurações |
 | `src/tema.rs` | Cores e formas: paletas clara e escura, tema em texto (`tema.txt`) |
 | `src/config.rs` | Configurações padrão e o arquivo onde ficam |
+| `src/lugar.rs` | O vídeo de quem assiste no lugar desta janela (esconder, voltar) |
+| `src/atualizacao.rs` | Verifica, baixa, confere e instala versões novas |
 | `src/comandos.rs` | Monta a linha de comando (escolhas + configurações) e confere os códigos antes de abrir qualquer coisa |
 | `src/saida.rs` | Interpreta as linhas que os programas imprimem (códigos, início, confirmações dos botões, erro) |
 | `src/processo.rs` | Roda o programa sem console; linhas chegam por um canal; comandos e códigos vão pela entrada padrão |
@@ -115,9 +146,6 @@ guardam o formato).
 
 ## Limitações conhecidas
 
-- O vídeo de quem assiste abre numa janela separada; a barra fica na janela
-  principal. Uma barra dentro da janela do vídeo, que aparece com o mouse, é a
-  próxima fase.
 - O menu de qualidade não marca a opção atual (o estado mostra a resolução e o
   fps confirmados).
 - Pausar deixa a última imagem parada para quem assiste, sem aviso de "pausado"

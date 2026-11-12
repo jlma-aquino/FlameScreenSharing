@@ -6,6 +6,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Quem assiste vê o vídeo no lugar da janela do FSS**, com uma barra por cima
+  como a do YouTube: mudo, volume (arrastar, roda do mouse, setas), estatísticas,
+  tela cheia e Sair. Some com o mouse parado (o cursor junto) e volta ao mexer;
+  clique duplo, F e F11 alternam a tela cheia; M liga e desliga o som. Ao sair, a
+  janela do FSS volta onde o vídeo estava. `fluxo-client --janela X,Y,L,A`.
+- **Atualizações automáticas** (ADR-018): ao abrir, o FSS procura versão nova nas
+  Releases do GitHub; achando, baixa, confere o SHA-256, instala e abre de novo
+  (com transmissão em andamento, espera ela acabar). Configurações > Sobre.
+  `pacote\publicar_versao.ps1` publica uma versão.
 - **Janela nova, no jeito do Meet e do Discord** (ADR-017): na tela inicial, um
   cartão para compartilhar e outro para entrar numa sala; durante a transmissão,
   o código grande no meio e uma barra embaixo com Tela, Som, Pausar, Qualidade e
@@ -23,6 +32,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   (Windows e portátil). `DesktopCapturer::release_duplication`.
 
 ### Mudado
+- O cliente sabe o DPI de cada monitor: em tela com escala, o vídeo não fica
+  mais esticado pelo Windows. O texto de espera aparece antes da primeira imagem.
 - `fluxo-host --sem-audio` agora só começa com o som desligado: a captura do som
   roda sempre, para ligar na hora.
 

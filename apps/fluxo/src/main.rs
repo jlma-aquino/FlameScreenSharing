@@ -7,6 +7,7 @@
 // Sem janela de console ao abrir com dois cliques.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod atualizacao;
 mod comandos;
 mod config;
 mod janela;
@@ -19,6 +20,9 @@ mod tema;
 pub const NOME: &str = "FlameScreenSharing";
 
 fn main() -> eframe::Result {
+    // Aberto pela versão anterior, logo depois de instalar esta.
+    let atualizado = std::env::args().any(|a| a == "--atualizado");
+    atualizacao::limpar_antigos();
     let opcoes = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(NOME)
@@ -29,6 +33,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         NOME,
         opcoes,
-        Box::new(|cc| Ok(Box::new(janela::Janela::new(lugar::hwnd_de(cc))))),
+        Box::new(|cc| Ok(Box::new(janela::Janela::new(lugar::hwnd_de(cc), atualizado)))),
     )
 }

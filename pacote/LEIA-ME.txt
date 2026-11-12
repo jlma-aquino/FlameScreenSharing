@@ -6,6 +6,14 @@ criar conta. O vídeo vai direto de um PC para o outro. Todos precisam usar esta
 mesma versão.
 
 
+ATUALIZAÇÕES
+------------
+Ao abrir, o programa procura versão nova e, se houver, baixa, instala e abre
+de novo sozinho (nunca no meio de uma transmissão). Dá para desligar em
+Configurações > Sobre. Deixe a pasta do programa num lugar onde você pode
+gravar (Documentos, Área de Trabalho), não em Arquivos de Programas.
+
+
 ANTES DE COMEÇAR
 ----------------
 1. Extraia o zip INTEIRO para uma pasta. Abrir de dentro do zip não funciona.
@@ -26,8 +34,7 @@ Quem vai COMPARTILHAR:
 
 Quem vai ASSISTIR:
   3. No cartão "Entrar numa sala", digite ou cole o código e clique em Entrar.
-     Uma janela de vídeo abre e a imagem aparece em alguns segundos
-     (F11: tela cheia).
+     O vídeo aparece em alguns segundos no lugar da janela.
 
 Mais gente pode entrar com o mesmo código, até 4 pessoas.
 
@@ -36,7 +43,9 @@ ninguém:
   - quem compartilha: Tela (qual monitor), Som (liga e desliga o som do PC),
     Pausar, Qualidade (resolução e quadros por segundo) e Encerrar, que fecha
     a sala para todos;
-  - quem assiste: mudo, volume e Sair.
+  - quem assiste: o vídeo abre no lugar da janela, com uma barra por cima
+    (mudo, volume, estatísticas, tela cheia e Sair). Ela some com o mouse
+    parado e volta ao mexer. Clique duplo no vídeo: tela cheia.
 
 Em Configurações (canto de cima) ficam o tema claro ou escuro e os padrões:
 qualidade, codec, de onde vem o som e onde ele toca.

@@ -140,4 +140,6 @@ Marque os itens conforme forem concluídos e registre no CHANGELOG.
 - [x] Janela como a do Meet e do Discord (ADR-017): cartões na tela inicial, barra de controles durante a
       transmissão (tela, som, pausa, qualidade, volume, mudo) que muda tudo ao vivo sem derrubar ninguém,
       página de configurações com tema claro/escuro e padrões de codec, encoder, bitrate e som, temas por arquivo
-- [ ] Barra de controles dentro da janela do vídeo de quem assiste (aparece com o mouse, como no Meet)
+- [x] Vídeo de quem assiste no lugar da janela do FSS, com barra de controles por cima (como a do YouTube)
+- [x] Atualizações automáticas pelas Releases do GitHub (ADR-018), com SHA-256 conferido
+- [ ] Assinatura digital dos executáveis (o Windows para de avisar, e a atualização fica protegida contra conta invadida)

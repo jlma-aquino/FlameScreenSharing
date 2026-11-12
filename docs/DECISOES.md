@@ -531,6 +531,39 @@ o que garante os ~22 ms.
   Se os comandos crescerem muito, trocar as linhas de texto por mensagens
   estruturadas.
 
+## ADR-018 — Atualização automática pelas Releases do GitHub
+
+**Status:** Aceito (2026-11-12)
+
+**Contexto.** Cada versão nova ia por zip, mandado à mão, e todos precisam da
+mesma versão para se conectar. O pedido: verificar se há atualização e, havendo,
+baixar, instalar e reiniciar sozinho. O código já está no GitHub, e o
+repositório pode ser público.
+
+**Decisão.**
+- Cada versão é uma Release do GitHub (`vX.Y.Z`) com `FlameScreenSharing.zip` e
+  `SHA256SUMS.txt`. A janela lê `releases/latest` ao abrir e compara com a
+  própria versão (`CARGO_PKG_VERSION`).
+- Baixa e abre o zip com o `curl.exe` e o `tar.exe` que vêm com o Windows, pelo
+  caminho completo da pasta do sistema; nenhuma biblioteca de rede ou TLS no
+  programa. Só o `serde_json` entra, para ler a resposta.
+- Confere o SHA-256 antes de trocar qualquer coisa. Troca renomeando o arquivo
+  antigo para `*.antigo` (funciona com o .exe aberto), desfaz tudo se uma troca
+  falhar, e abre a versão nova com `--atualizado`. Nunca no meio de uma
+  transmissão.
+- Só a cópia empacotada se atualiza; a compilada só avisa.
+
+**Consequências.**
+- ➕ Todos ficam na mesma versão sem mandar zip.
+- ➕ Sem servidor próprio, sem custo, sem dependência pesada.
+- ➖ O repositório precisa ser público (a API sem senha só lê os públicos).
+- ➖ O SHA-256 vem da mesma Release: protege contra download corrompido, não
+  contra conta do GitHub invadida. Sem assinatura digital, o Windows continua
+  avisando ao abrir e o antivírus pode desconfiar de um programa que se troca.
+- ➖ Depende de Windows 10 1803 ou mais novo (`curl.exe` e `tar.exe`).
+- 🔁 Assinatura digital (certificado de código), quando valer o custo; no Linux,
+  o mesmo esquema com o `.tar.gz`.
+
 ---
 
 ## Modelo

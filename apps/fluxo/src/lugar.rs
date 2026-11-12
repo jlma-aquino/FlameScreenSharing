@@ -8,6 +8,9 @@
 //! a volta é feita da thread que lê a saída do cliente. Fora do Windows não
 //! faz nada (o cliente portátil abre a janela dele, separada).
 
+/// Posição e tamanho externos de uma janela: x, y, largura, altura.
+pub type Retangulo = (i32, i32, i32, i32);
+
 /// `Janela: X,Y,L,A`, que o cliente imprime ao fechar.
 pub fn ler_retangulo(linha: &str) -> Option<(i32, i32, i32, i32)> {
     let resto = linha.trim().strip_prefix("Janela: ")?;

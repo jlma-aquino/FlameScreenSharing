@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke};
 
+use crate::atualizacao::{self, Pronta, Resultado, Versao};
 use crate::comandos::{
     linha_de_resposta, linha_espectador_internet, linha_espectador_rede, Assistir, Compartilhar, Modo, FPS,
     RESOLUCOES,
@@ -57,14 +58,32 @@ enum Secao {
     Transmissao,
     Assistir,
     Conexao,
+    Sobre,
+}
+
+/// Onde a atualização está.
+#[derive(Debug, Clone)]
+enum Atualizacao {
+    Nada,
+    Verificando,
+    EmDia,
+    /// Há versão nova, mas esta cópia não se atualiza sozinha.
+    Disponivel {
+        versao: Versao,
+        pagina: String,
+    },
+    /// Baixada e conferida: instala assim que não houver transmissão.
+    Pronta(Pronta),
+    Erro(String),
 }
 
 impl Secao {
-    const TODAS: [Secao; 4] = [
+    const TODAS: [Secao; 5] = [
         Secao::Aparencia,
         Secao::Transmissao,
         Secao::Assistir,
         Secao::Conexao,
+        Secao::Sobre,
     ];
 
     fn rotulo(self) -> &'static str {
@@ -73,6 +92,7 @@ impl Secao {
             Secao::Transmissao => "Compartilhar",
             Secao::Assistir => "Assistir",
             Secao::Conexao => "Conexão",
+            Secao::Sobre => "Sobre",
         }
     }
 }
@@ -218,6 +238,12 @@ impl Sessao {
 }
 
 pub struct Janela {
+    /// Verificação de atualização, feita numa thread (rede).
+    atualizacao: Arc<Mutex<Atualizacao>>,
+    /// Já verificou ao abrir.
+    verificou: bool,
+    /// Aberta logo depois de se atualizar: mostra um aviso.
+    atualizado_agora: bool,
     /// HWND desta janela (Windows), para dar o lugar ao vídeo de quem assiste.
     hwnd: Option<isize>,
     tema: Tema,
@@ -250,7 +276,7 @@ pub struct Janela {
 }
 
 impl Janela {
-    pub fn new(hwnd: Option<isize>) -> Self {
+    pub fn new(hwnd: Option<isize>, atualizado_agora: bool) -> Self {
         let monitores = fluxo_capture::list_monitors()
             .map(|l| {
                 l.iter()
@@ -261,6 +287,9 @@ impl Janela {
         let cfg = Configuracoes::carregar();
         let (tema, erro_tema) = crate::tema::carregar();
         Self {
+            atualizacao: Arc::new(Mutex::new(Atualizacao::Nada)),
+            verificou: false,
+            atualizado_agora,
             hwnd,
             tema,
             erro_tema,
@@ -317,7 +346,7 @@ impl Janela {
         }
         let ctx = ctx.clone();
         // Onde o vídeo estava ao fechar: a janela volta ali.
-        let onde: Arc<Mutex<Option<(i32, i32, i32, i32)>>> = Arc::default();
+        let onde: Arc<Mutex<Option<lugar::Retangulo>>> = Arc::default();
         let avisar: Aviso = Arc::new(move |linha| {
             match (linha, lugar_do_video) {
                 (Some(l), _) => {
@@ -347,6 +376,89 @@ impl Janela {
                 self.resposta_colada.clear();
             }
             Err(e) => self.aviso = Some(format!("Não consegui abrir o programa: {e}")),
+        }
+    }
+
+    /// Procura versão nova numa thread; achando, ela baixa e confere.
+    fn verificar_atualizacao(&mut self, ctx: &egui::Context) {
+        let estado = self.atualizacao.clone();
+        *estado.lock().unwrap_or_else(|e| e.into_inner()) = Atualizacao::Verificando;
+        let ctx = ctx.clone();
+        std::thread::Builder::new()
+            .name("fss-atualizacao".into())
+            .spawn(move || {
+                let novo = match atualizacao::verificar_e_baixar() {
+                    Ok(Resultado::EmDia) => Atualizacao::EmDia,
+                    Ok(Resultado::Disponivel(l)) => Atualizacao::Disponivel {
+                        versao: l.versao,
+                        pagina: l.pagina,
+                    },
+                    Ok(Resultado::Pronta(p)) => Atualizacao::Pronta(p),
+                    Err(e) => Atualizacao::Erro(e),
+                };
+                *estado.lock().unwrap_or_else(|e| e.into_inner()) = novo;
+                ctx.request_repaint();
+            })
+            .ok();
+    }
+
+    fn estado_atualizacao(&self) -> Atualizacao {
+        self.atualizacao.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Atualização baixada e nenhuma transmissão: instala e reinicia.
+    fn instalar_se_puder(&mut self) {
+        if self.sessao.is_some() {
+            return;
+        }
+        if let Atualizacao::Pronta(p) = self.estado_atualizacao() {
+            // Só volta daqui se não deu certo.
+            let erro = atualizacao::instalar_e_reiniciar(&p).err().unwrap_or_default();
+            *self.atualizacao.lock().unwrap_or_else(|e| e.into_inner()) = Atualizacao::Erro(erro);
+        }
+    }
+
+    /// Aviso no topo: versão nova chegando, ou acabou de atualizar.
+    fn faixa_de_aviso(&mut self, ctx: &egui::Context, p: &Paleta) {
+        let texto = match (self.estado_atualizacao(), self.atualizado_agora) {
+            (Atualizacao::Pronta(pronta), _) if self.sessao.is_some() => Some(format!(
+                "Versão {} baixada: instala sozinha quando a transmissão acabar.",
+                pronta.versao
+            )),
+            (Atualizacao::Disponivel { versao, .. }, _) => Some(format!(
+                "Versão {versao} disponível. Esta cópia não se atualiza sozinha: baixe pela página."
+            )),
+            (_, true) => Some(format!("Atualizado para a versão {}.", atualizacao::VERSAO)),
+            _ => None,
+        };
+        let Some(texto) = texto else { return };
+        let mut fechar = false;
+        let mut abrir = None;
+        egui::TopBottomPanel::top("aviso")
+            .frame(
+                egui::Frame::new()
+                    .fill(p.destaque.gamma_multiply(0.18))
+                    .inner_margin(Margin::symmetric(16, 6)),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(texto).color(p.texto));
+                    if let Atualizacao::Disponivel { pagina, .. } = self.estado_atualizacao() {
+                        if !pagina.is_empty() && ui.link("Abrir a página").clicked() {
+                            abrir = Some(pagina);
+                        }
+                    }
+                    if self.atualizado_agora && ui.small_button("OK").clicked() {
+                        fechar = true;
+                    }
+                });
+            });
+        if let Some(url) = abrir {
+            ctx.open_url(egui::OpenUrl::new_tab(url));
+        }
+        if fechar {
+            self.atualizado_agora = false;
         }
     }
 
@@ -899,6 +1011,7 @@ impl Janela {
                         Secao::Transmissao => self.secao_transmissao(ui, p),
                         Secao::Assistir => self.secao_assistir(ui, p),
                         Secao::Conexao => self.secao_conexao(ui, p),
+                        Secao::Sobre => self.secao_sobre(ui, p),
                     }
                     ui.add_space(24.0);
                     ui.separator();
@@ -1101,6 +1214,59 @@ impl Janela {
                 ui.checkbox(&mut c.sempre_no_topo, "Sempre por cima das outras");
                 ui.end_row();
             });
+    }
+
+    fn secao_sobre(&mut self, ui: &mut egui::Ui, p: &Paleta) {
+        titulo_campo(
+            ui,
+            p,
+            &format!("{} {}", crate::NOME, atualizacao::VERSAO),
+            "Compartilhamento de tela com pouco atraso, direto entre os PCs.",
+        );
+        ui.add_space(12.0);
+        titulo_campo(
+            ui,
+            p,
+            "Atualizações",
+            "Ao abrir, o programa procura versão nova no GitHub. Achando, baixa, confere e instala sozinho, \
+             e abre de novo (se houver transmissão, espera ela acabar).",
+        );
+        ui.checkbox(
+            &mut self.cfg.atualizar_sozinho,
+            "Procurar e instalar atualizações sozinho",
+        );
+        let estado = self.estado_atualizacao();
+        let (texto, cor) = match &estado {
+            Atualizacao::Nada => ("Ainda não verificou.".to_string(), p.texto_fraco),
+            Atualizacao::Verificando => ("Procurando…".to_string(), p.texto_fraco),
+            Atualizacao::EmDia => ("Esta é a versão mais nova.".to_string(), p.sucesso),
+            Atualizacao::Disponivel { versao, .. } => (format!("Versão {versao} disponível."), p.aviso),
+            Atualizacao::Pronta(pr) => (
+                format!("Versão {} baixada, pronta para instalar.", pr.versao),
+                p.sucesso,
+            ),
+            Atualizacao::Erro(e) => (format!("Não deu para atualizar: {e}"), p.perigo),
+        };
+        ui.horizontal(|ui| {
+            if matches!(estado, Atualizacao::Verificando) {
+                ui.spinner();
+            }
+            ui.label(RichText::new(texto).color(cor));
+        });
+        let ocupado = matches!(estado, Atualizacao::Verificando);
+        if ui
+            .add_enabled(!ocupado, egui::Button::new("Verificar agora"))
+            .clicked()
+        {
+            self.verificar_atualizacao(ui.ctx());
+        }
+        if let Atualizacao::Pronta(pr) = &estado {
+            if !pr.notas.is_empty() {
+                ui.add_space(8.0);
+                ui.label(RichText::new("Novidades").strong());
+                ui.label(RichText::new(&pr.notas).color(p.texto_fraco));
+            }
+        }
     }
 
     fn secao_conexao(&mut self, ui: &mut egui::Ui, p: &Paleta) {
@@ -1415,9 +1581,17 @@ impl eframe::App for Janela {
             // O programa pode terminar sem imprimir nada.
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+        if !self.verificou {
+            self.verificou = true;
+            if self.cfg.atualizar_sozinho {
+                self.verificar_atualizacao(ctx);
+            }
+        }
+        self.instalar_se_puder();
         let p = self.paleta(ctx);
 
         self.barra_de_cima(ctx, &p);
+        self.faixa_de_aviso(ctx, &p);
         if self.configuracoes.is_some() {
             self.pagina_configuracoes(ctx, &p);
         } else {

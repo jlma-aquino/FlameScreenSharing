@@ -60,6 +60,10 @@ pub struct Configuracoes {
     // Conexão
     /// Servidor das salas; vazio = o do FSS.
     pub servidor: String,
+
+    // Sobre
+    /// Ao abrir, procura versão nova e, achando, baixa e instala sozinho.
+    pub atualizar_sozinho: bool,
 }
 
 impl Default for Configuracoes {
@@ -79,6 +83,7 @@ impl Default for Configuracoes {
             estatisticas: true,
             sempre_no_topo: false,
             servidor: String::new(),
+            atualizar_sozinho: true,
         }
     }
 }
@@ -132,7 +137,8 @@ impl Configuracoes {
              tocar_em = {}\n\
              estatisticas = {}\n\
              sempre_no_topo = {}\n\
-             servidor = {}\n",
+             servidor = {}\n\
+             atualizacoes = {}\n",
             self.aparencia.chave(),
             self.monitor,
             sim(self.som),
@@ -151,6 +157,7 @@ impl Configuracoes {
             sim(self.estatisticas),
             sim(self.sempre_no_topo),
             self.servidor,
+            sim(self.atualizar_sozinho),
         )
     }
 
@@ -201,6 +208,7 @@ impl Configuracoes {
                 "estatisticas" => c.estatisticas = sim(v).unwrap_or(c.estatisticas),
                 "sempre_no_topo" => c.sempre_no_topo = sim(v).unwrap_or(c.sempre_no_topo),
                 "servidor" => c.servidor = v.to_string(),
+                "atualizacoes" => c.atualizar_sozinho = sim(v).unwrap_or(c.atualizar_sozinho),
                 _ => {}
             }
         }
@@ -229,6 +237,7 @@ mod tests {
             estatisticas: false,
             sempre_no_topo: true,
             servidor: "203.0.113.5:3478".into(),
+            atualizar_sozinho: false,
         };
         assert_eq!(Configuracoes::de_texto(&c.para_texto()), c);
         let p = Configuracoes::default();
