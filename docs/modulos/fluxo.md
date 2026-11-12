@@ -33,7 +33,8 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
     ligado ao começar e de qual saída capturar o som;
   - **Assistir:** volume inicial, em qual saída tocar, estatísticas sobre o
     vídeo, janela sempre por cima;
-  - **Conexão:** servidor das salas (vazio = o do FSS);
+  - **Conexão:** a chave do servidor das salas (`FSS1-…`, conferida na hora;
+    sem ela, os cartões de sala pedem para colar);
   - **Sobre:** versão, atualizações (ligar ou desligar, Verificar agora).
 
 ## Configurações guardadas

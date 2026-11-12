@@ -198,6 +198,14 @@ cliente                       servidor                        host
   Lista: quantidade (1 byte, até 4) e os endereços. Pedidos com menos de 100
   bytes são ignorados; toda resposta é menor, para o servidor não servir de
   amplificador contra um endereço forjado.
+- **Chave de acesso** (ADR-019): pedido (Register, Lookup) vai com 16 bytes a
+  mais no fim do datagrama: `HMAC-SHA256(segredo, "fluxo sinal v1" ‖ pacote)`,
+  truncado. O servidor com chaves confere com cada uma e ignora, sem
+  resposta, o que não confere. As respostas não são assinadas (um Found
+  forjado só leva a um PairInit sem resposta: o SPAKE2 decide). O cabeçalho e
+  a versão do protocolo não mudam. Texto da chave: `FSS1-` + base32
+  (`23456789ABCDEFGHJKLMNPQRSTUVWXYZ`) de tipo do endereço (IPv4, IPv6 ou
+  nome), endereço, segredo (16 bytes) e 2 bytes de conferência (SHA-256).
 - **Sala:** os 20 bits mais altos do SHA-256 de `"fluxo sala v1"` + código.
   O servidor nunca vê o código; vendo a sala, sobram ~20 bits que ele não
   deduz, e o SPAKE2 só aceita um palpite por pareamento (quem controla o

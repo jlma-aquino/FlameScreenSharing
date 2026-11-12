@@ -564,6 +564,41 @@ repositório pode ser público.
 - 🔁 Assinatura digital (certificado de código), quando valer o custo; no Linux,
   o mesmo esquema com o `.tar.gz`.
 
+## ADR-019 — Chave de acesso ao servidor de sinalização
+
+**Status:** Aceito (2026-11-12)
+
+**Contexto.** O endereço do servidor da Oracle ia dentro do programa: quem
+recebesse o zip (ou baixasse do GitHub, com o repositório público) usaria o
+servidor, e ele atendia qualquer pedido, sem limite de salas. Alguém poderia
+lotá-lo de salas falsas ou usá-lo para responder a endereços forjados. A ideia
+foi mandar aos amigos o programa e uma "chave"; criptografar só o IP não
+protegeria nada (o programa precisa do IP para conectar, e ele aparece na
+rede).
+
+**Decisão.**
+- A chave (`ServerKey`, `FSS1-…`) leva o endereço do servidor e um segredo
+  aleatório de 128 bits. Cada pedido ao servidor sai com um HMAC-SHA256 do
+  pacote, truncado em 16 bytes, no fim do datagrama.
+- O `fluxo-sinal` lê as chaves aceitas de um arquivo e ignora, sem responder,
+  o que não vier assinado com uma delas. Sem arquivo, recusa subir (a não ser
+  com `--aberto`, para testes). `--nova-chave` gera uma.
+- O programa não traz servidor: a chave vai em Configurações > Conexão
+  (`--chave` no host e no cliente). Sem chave, só as formas sem servidor.
+
+**Consequências.**
+- ➕ Saber o IP não basta: sem chave, o servidor nem responde (não serve de
+  amplificador nem de depósito de salas).
+- ➕ Quem baixa o projeto roda o próprio servidor, com a própria chave.
+- ➕ Chave vazou: gera outra, manda a quem deve ter, apaga a antiga.
+- ➖ Quem tem a chave tem o segredo: não dá para saber qual amigo vazou, a não
+  ser dando uma chave para cada (o servidor aceita várias).
+- ➖ Versões antigas do programa param de achar salas no servidor novo.
+- ➖ As respostas do servidor não são assinadas (só dariam um PairInit sem
+  resposta; o SPAKE2 protege o pareamento).
+- 🔁 Limite de pedidos por IP e de salas, se uma chave vazar e for usada para
+  abusar; chave própria do repassador (relay), quando ele existir.
+
 ---
 
 ## Modelo

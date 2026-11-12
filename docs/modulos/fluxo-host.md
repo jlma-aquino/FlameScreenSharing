@@ -8,7 +8,7 @@ Lado de quem compartilha a tela: captura (`fluxo-capture`) → encode
 ## Uso
 
 ```text
-fluxo-host --sala [--sinal SERVIDOR] [opções]
+fluxo-host --sala --chave FSS1-… [opções]
 fluxo-host (--destino IP:PORTA | --sinal SERVIDOR) --codigo XXXX-XXXX [--monitor N] [--encoder auto|nvenc|mf]
            [--codec auto|h264|hevc|av1] [--resolucao R]
 fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
@@ -20,9 +20,9 @@ Com `--sala`, o host sorteia um código e mostra; quem assiste entra com ele,
 sem responder nada, e mais gente pode entrar depois (até 4):
 
 ```powershell
-.\target\release\fluxo-host.exe --sala
+.\target\release\fluxo-host.exe --sala --chave FSS1-…
 # Código da sala: K7M4-QX9P
-.\target\release\fluxo-client.exe --sala K7M4-QX9P   # em cada PC que assiste
+.\target\release\fluxo-client.exe --sala K7M4-QX9P --chave FSS1-…   # em cada PC que assiste
 ```
 
 O host espera a primeira pessoa antes de abrir o encoder (o codec depende dela).

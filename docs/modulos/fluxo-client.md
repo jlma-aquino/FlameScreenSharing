@@ -23,7 +23,7 @@ mostram "cifrado" durante a transmissão. `--codigo` fixa um código (útil em
 scripts); `--sem-cifra` desliga o pareamento, só para teste.
 
 Numa sala, `--sala CÓDIGO` usa o código de quem compartilha (`fluxo-host
---sala`) e entra pelo servidor do FSS (outro com `--sinal`): nada a mandar de
+--sala`) e entra pelo servidor da chave (`--chave FSS1-…`, a mesma do host): nada a mandar de
 volta. Pareado, o cliente sai da sala, e a vaga fica para outro.
 
 Em redes diferentes, `--sinal SERVIDOR` registra o código num servidor de

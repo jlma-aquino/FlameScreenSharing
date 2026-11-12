@@ -16,29 +16,43 @@ pessoas entrarem com o mesmo código numa sala aberta pelo host.
 ## Uso
 
 ```text
-fluxo-sinal [--porta P] [--ip IP]
+fluxo-sinal --chaves ARQUIVO [--porta P] [--ip IP]
+fluxo-sinal --nova-chave ENDEREÇO [--chaves ARQUIVO]
+fluxo-sinal --aberto [--porta P]          # só para testes
 ```
 
 Padrão: UDP 7000 em todas as interfaces. Precisa ficar num endereço que os
-dois lados alcancem: IP público com a porta **UDP 7000** liberada (numa VPS,
-no firewall dela). Nada é guardado em disco; uma sala some 30 s depois do
-último registro do cliente.
+dois lados alcancem: IP público com a porta UDP liberada (numa VPS, no
+firewall dela). Nada de salas é guardado em disco; uma sala some 30 s depois
+do último registro do cliente.
+
+**Chaves de acesso** (ADR-019). O servidor só atende quem tem uma chave
+(`FSS1-…`, 52 caracteres): o endereço dele e um segredo de 128 bits. Cada
+pedido sai assinado com o segredo (HMAC-SHA256, 16 bytes no fim do
+datagrama); pedido sem assinatura de uma chave do arquivo é ignorado, sem
+resposta. Saber o IP não basta para usar o servidor nem para fazê-lo
+responder a terceiros.
 
 ```bash
-# No servidor (Linux)
-cargo build --release -p fluxo-sinal
-./target/release/fluxo-sinal
+# Cria uma chave para este servidor e guarda no arquivo
+fluxo-sinal --nova-chave 203.0.113.5:3478 --chaves chaves.txt
+# Atende quem tem uma das chaves do arquivo
+fluxo-sinal --chaves chaves.txt --porta 3478
 ```
+
+O arquivo tem uma chave por linha (`#` começa comentário). Para tirar o
+acesso de alguém, apague a linha e reinicie. Sem `--chaves` o servidor
+recusa subir; `--aberto` atende qualquer um (testes locais, `fluxo-bench`).
+
+Quem usa cola a chave nas configurações do FSS (Conexão), ou passa
+`--chave` aos programas:
 
 ```powershell
-# No PC que assiste
-.\target\release\fluxo-client.exe --sinal meu-servidor.com
-#   No PC que compartilha:  fluxo-host --sinal meu-servidor.com --codigo K7M4-QX9P
-# No PC que compartilha
-.\target\release\fluxo-host.exe --sinal meu-servidor.com --codigo K7M4-QX9P
+.\target\release\fluxo-host.exe --sala --chave FSS1-…
+.\target\release\fluxo-client.exe --sala K7M4-QX9P --chave FSS1-…
 ```
 
-`--sinal` aceita nome, IP ou `endereço:porta` (sem porta: 7000).
+`--sinal ENDEREÇO` (sem chave) continua valendo para servidores `--aberto`.
 
 ## Saída
 
@@ -48,6 +62,9 @@ Uma linha por acontecimento (repetições seguidas iguais são omitidas):
 [     1.0 s] sala 3F04B: cliente em 203.0.113.7:41000
 [     1.1 s] sala 3F04B: host 198.51.100.4:52311 achou o cliente 203.0.113.7:41000
 ```
+
+`pacote sem chave válida de IP (ignorado)` aparece no máximo uma vez por
+minuto por IP.
 
 `sala vazia` quando um host procura antes de o cliente abrir (ou com o
 código errado, que cai em outra sala); `recusada` quando outro IP tenta uma
@@ -59,6 +76,7 @@ sala ocupada (raro: 1 em ~1 milhão por par de códigos).
   é o local, que não serve para um host de fora.
 - NAT simétrico dos dois lados não fura; o relay de fallback é o próximo
   item da fase 5.
-- Roda na Oracle Cloud em `137.131.152.250:3478` ([SERVIDOR.md](../SERVIDOR.md)).
+- O do projeto roda na Oracle Cloud ([SERVIDOR.md](../SERVIDOR.md)); o
+  programa não traz nenhum servidor: sem chave, as salas não funcionam.
   Testado com o servidor na internet e os dois PCs na mesma rede; ainda falta
   um teste com os PCs em redes diferentes.

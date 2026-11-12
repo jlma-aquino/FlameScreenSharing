@@ -586,7 +586,8 @@ impl Janela {
             }
             ui.checkbox(&mut self.cfg.som, "Transmitir o som do PC");
             ui.add_space(6.0);
-            let botao = principal(ui, p, "Compartilhar", self.tema.raio, cfg!(windows));
+            let tem_chave = self.falta_chave(ui, p);
+            let botao = principal(ui, p, "Compartilhar", self.tema.raio, cfg!(windows) && tem_chave);
             if botao.clicked() {
                 self.iniciar_host(ctx, Modo::Sala);
             }
@@ -615,10 +616,26 @@ impl Janela {
             }
             let enter = campo.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.add_space(6.0);
-            if principal(ui, p, "Entrar", self.tema.raio, true).clicked() || enter {
+            let tem_chave = self.falta_chave(ui, p);
+            if (principal(ui, p, "Entrar", self.tema.raio, tem_chave).clicked() || enter) && tem_chave {
                 self.iniciar_cliente(ctx, Modo::Sala);
             }
         });
+    }
+
+    /// Sem chave do servidor, a sala não funciona: avisa e leva às configurações.
+    /// Devolve se há chave.
+    fn falta_chave(&mut self, ui: &mut egui::Ui, p: &Paleta) -> bool {
+        if !self.cfg.chave.trim().is_empty() {
+            return true;
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Falta a chave do servidor.").color(p.aviso));
+            if ui.link("Colar a chave").clicked() {
+                self.configuracoes = Some(Secao::Conexao);
+            }
+        });
+        false
     }
 
     /// Pela internet trocando códigos, ou na mesma rede (o jeito antigo, sem servidor).
@@ -1273,21 +1290,34 @@ impl Janela {
         titulo_campo(
             ui,
             p,
-            "Servidor das salas",
-            "Onde os dois PCs se encontram. O vídeo não passa por ele. Vazio: o servidor do FSS.",
+            "Chave do servidor",
+            "As salas precisam de um servidor onde os dois PCs se encontram (o vídeo não passa por ele). \
+             Quem roda o servidor gera uma chave e manda junto com o programa; cole aqui.",
         );
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.cfg.servidor)
-                    .hint_text("o do FSS")
-                    .desired_width(280.0),
+        ui.add(
+            egui::TextEdit::multiline(&mut self.cfg.chave)
+                .hint_text("FSS1-…")
+                .font(egui::FontId::monospace(14.0))
+                .desired_rows(2)
+                .desired_width(f32::INFINITY),
+        );
+        if self.cfg.chave.trim().is_empty() {
+            ui.label(
+                RichText::new("Sem chave, só as outras formas de conectar funcionam (trocando códigos ou na mesma rede).")
+                    .color(p.texto_fraco),
             );
-            if !self.cfg.servidor.is_empty() && ui.button("Usar o do FSS").clicked() {
-                self.cfg.servidor.clear();
+        } else {
+            match crate::comandos::ler_chave(&self.cfg.chave) {
+                Ok(k) => {
+                    ui.colored_label(p.sucesso, format!("Chave válida · servidor {}", k.server()));
+                }
+                Err(e) => {
+                    ui.colored_label(p.perigo, e);
+                }
             }
-        });
+        }
         ui.label(
-            RichText::new("Os dois lados precisam usar o mesmo servidor.")
+            RichText::new("Quem compartilha e quem assiste precisam da mesma chave.")
                 .size(13.0)
                 .color(p.texto_fraco),
         );

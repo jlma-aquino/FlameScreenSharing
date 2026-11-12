@@ -71,6 +71,7 @@ use std::fmt;
 pub use bitrate::{BitrateChange, BitrateController, NetworkReport, DEFAULT_QUEUE_LIMIT_MS, START_KBPS};
 pub use clock::{clock_diff_us, clock_us};
 pub use conexao::{CodeError, ConnectionCode, ReplyCode};
+pub use fluxo_crypto::ServerKey;
 pub use internet::Internet;
 pub use observar::{PairingEvent, PairingObserver};
 pub use receiver::{
@@ -204,10 +205,6 @@ pub fn ipv6_socket_for_signal() -> Option<std::net::UdpSocket> {
 
 /// Porta padrão do servidor de sinalização (`fluxo-sinal`).
 pub const SIGNAL_PORT: u16 = 7000;
-
-/// Servidor de sinalização do FSS (Oracle Cloud, ver `docs/SERVIDOR.md`):
-/// o das salas quando ninguém diz outro.
-pub const DEFAULT_SIGNAL_SERVER: &str = "137.131.152.250:3478";
 
 /// Lê o endereço de um servidor de sinalização como digitado: `host:porta`,
 /// ou só `host` (porta [`SIGNAL_PORT`]); nomes são resolvidos (DNS),

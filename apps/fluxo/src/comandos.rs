@@ -2,7 +2,7 @@
 //! que foi escolhido na janela, conferindo os códigos antes de abrir qualquer
 //! coisa (a mensagem de erro aparece na hora, no campo certo).
 
-use fluxo_net::{ConnectionCode, PairingCode, ReplyCode};
+use fluxo_net::{ConnectionCode, PairingCode, ReplyCode, ServerKey};
 
 use crate::config::{Configuracoes, CODECS, ENCODERS};
 
@@ -25,7 +25,7 @@ pub const FPS: [u32; 3] = [30, 60, 120];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modo {
     /// Quem compartilha abre uma sala; quem assiste entra com o código, pelo
-    /// servidor do FSS.
+    /// servidor da chave (Configurações > Conexão).
     Sala,
     /// Redes diferentes, sem servidor: código de conexão e de resposta.
     Internet,
@@ -65,7 +65,7 @@ impl Compartilhar {
         let mut a = Vec::new();
         if self.modo == Modo::Sala {
             a.push("--sala".to_string());
-            servidor(&mut a, c);
+            chave_do_servidor(&mut a, c)?;
         } else if self.modo == Modo::Internet {
             let c = self.conexao.trim();
             if c.is_empty() {
@@ -112,12 +112,19 @@ impl Compartilhar {
     }
 }
 
-/// `--sinal`, se as configurações trocaram o servidor das salas.
-fn servidor(a: &mut Vec<String>, c: &Configuracoes) {
-    let s = c.servidor.trim();
-    if !s.is_empty() {
-        a.extend(["--sinal".to_string(), s.to_string()]);
+/// `--chave`: a sala precisa da chave do servidor (Configurações > Conexão).
+fn chave_do_servidor(a: &mut Vec<String>, c: &Configuracoes) -> Result<(), String> {
+    let k = ler_chave(&c.chave)?;
+    a.extend(["--chave".to_string(), k.to_string()]);
+    Ok(())
+}
+
+/// A chave colada nas configurações, conferida.
+pub fn ler_chave(texto: &str) -> Result<ServerKey, String> {
+    if texto.trim().is_empty() {
+        return Err("Falta a chave do servidor: cole em Configurações > Conexão a chave que quem roda o servidor mandou.".into());
     }
+    ServerKey::parse(texto).map_err(|e| format!("Chave do servidor: {e}"))
 }
 
 /// `192.168.0.5` vira `192.168.0.5:9000`; quem já tem porta (ou é IPv6 entre
@@ -166,7 +173,7 @@ impl Assistir {
             Modo::Rede => {}
         }
         if self.modo == Modo::Sala {
-            servidor(&mut a, c);
+            chave_do_servidor(&mut a, c)?;
         }
         a.extend(["--volume".to_string(), c.volume.min(100).to_string()]);
         if let Some(n) = c.tocar_em {
@@ -334,19 +341,42 @@ mod tests {
         assert_eq!(com_porta("2001:db8::1"), "[2001:db8::1]:9000");
     }
 
+    fn chave() -> String {
+        ServerKey::generate("203.0.113.5:3478").unwrap().to_string()
+    }
+
     #[test]
     fn assistir() {
         let codigo = codigo_valido();
+        let k = chave();
+        let com_chave = Configuracoes {
+            chave: k.clone(),
+            ..padrao()
+        };
         let a = Assistir {
             sala: format!(" {codigo} "),
             ..Default::default()
         };
         assert_eq!(
-            a.args(&padrao()).unwrap(),
-            ["--sala", codigo.as_str(), "--volume", "100"]
+            a.args(&com_chave).unwrap(),
+            [
+                "--sala",
+                codigo.as_str(),
+                "--chave",
+                k.as_str(),
+                "--volume",
+                "100"
+            ]
         );
+        // Sala sem chave, ou com a chave errada: explica.
+        assert!(a.args(&padrao()).unwrap_err().contains("Configurações > Conexão"));
+        let errada = Configuracoes {
+            chave: "FSS1-ERRADA".into(),
+            ..padrao()
+        };
+        assert!(a.args(&errada).unwrap_err().starts_with("Chave do servidor:"));
         assert!(Assistir::default()
-            .args(&padrao())
+            .args(&com_chave)
             .unwrap_err()
             .contains("código da sala"));
         let i = Assistir {
@@ -359,8 +389,7 @@ mod tests {
             tocar_em: Some(1),
             estatisticas: false,
             sempre_no_topo: true,
-            servidor: "203.0.113.5:3478".into(),
-            ..padrao()
+            ..com_chave.clone()
         };
         let b = Assistir {
             modo: Modo::Sala,
@@ -371,8 +400,8 @@ mod tests {
             [
                 "--sala",
                 codigo.as_str(),
-                "--sinal",
-                "203.0.113.5:3478",
+                "--chave",
+                k.as_str(),
                 "--volume",
                 "30",
                 "--saida-som",
@@ -381,26 +410,26 @@ mod tests {
                 "--no-topo"
             ]
         );
-        // O servidor só vale para a sala.
+        // A chave só vale para a sala.
         let r = Assistir {
             modo: Modo::Rede,
             ..Default::default()
         };
-        assert!(!r.args(&cfg).unwrap().iter().any(|x| x == "--sinal"));
+        assert!(!r.args(&cfg).unwrap().iter().any(|x| x == "--chave"));
     }
 
     #[test]
-    fn sala_nao_pede_nada() {
-        let a = Compartilhar::default().args(&padrao()).unwrap();
-        assert_eq!(a[0], "--sala");
+    fn sala_pede_so_a_chave() {
+        let k = chave();
+        let cfg = Configuracoes {
+            chave: format!("  {}\n", k.to_lowercase()),
+            ..padrao()
+        };
+        let a = Compartilhar::default().args(&cfg).unwrap();
+        assert_eq!(a[..3], ["--sala", "--chave", k.as_str()]);
         assert!(!a
             .iter()
             .any(|x| x == "--codigo" || x == "--conexao" || x == "--sinal"));
-        let cfg = Configuracoes {
-            servidor: "meu.servidor:7000".into(),
-            ..padrao()
-        };
-        let b = Compartilhar::default().args(&cfg).unwrap();
-        assert_eq!(b[..3], ["--sala", "--sinal", "meu.servidor:7000"]);
+        assert!(Compartilhar::default().args(&padrao()).is_err());
     }
 }

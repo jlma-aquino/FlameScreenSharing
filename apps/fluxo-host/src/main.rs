@@ -29,15 +29,18 @@ const AJUDA: &str = "\
 fluxo-host — transmite a tela para um cliente Fluxo
 
 Uso:
-  fluxo-host --sala [opções]
+  fluxo-host --sala --chave FSS1-… [opções]
   fluxo-host --destino IP:PORTA --codigo XXXX-XXXX [opções]
   fluxo-host --sinal SERVIDOR --codigo XXXX-XXXX [opções]
   fluxo-host --conexao CÓDIGO-DE-CONEXÃO [opções]
 
 Opções:
   --sala                abre uma sala: mostra um código, e quem assiste entra com ele
-                        (fluxo-client --sala CÓDIGO), sem responder nada. Usa o
-                        servidor do FSS (outro com --sinal); --codigo fixa o código
+                        (fluxo-client --sala CÓDIGO), sem responder nada. Precisa
+                        do servidor: --chave; --codigo fixa o código
+  --chave FSS1-…        chave de acesso ao servidor de sinalização (quem roda o
+                        fluxo-sinal gera com --nova-chave): o endereço dele e o
+                        segredo que assina os pedidos
   --destino IP:PORTA    para onde enviar, ex.: 192.168.0.20:9000 (mesma rede)
   --sinal SERVIDOR      acha o cliente pelo servidor de sinalização (fluxo-sinal),
                         ex.: meu-servidor.com ou 203.0.113.5:7000 (redes diferentes)
@@ -102,6 +105,8 @@ Para testar sem cliente, rode antes em outro terminal (ou outro PC):
 struct Opts {
     destino: String,
     sinal: Option<String>,
+    /// Chave de acesso ao servidor (endereço + segredo que assina os pedidos).
+    chave: Option<fluxo_net::ServerKey>,
     /// Sala: quem assiste entra com o código, pelo servidor.
     sala: bool,
     /// Código de conexão do cliente (sem servidor): pareamento + endereço dele.
@@ -160,6 +165,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         destino: String::new(),
         sinal: None,
+        chave: None,
         sala: false,
         conexao: None,
         ttl_furo: fluxo_net::PUNCH_TTL,
@@ -193,6 +199,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         match a.as_str() {
             "--destino" => o.destino = valor()?.clone(),
             "--sinal" => o.sinal = Some(valor()?.clone()),
+            "--chave" => o.chave = Some(fluxo_net::ServerKey::parse(valor()?).map_err(|e| e.to_string())?),
             "--sala" => o.sala = true,
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--sem-audio" => o.sem_audio = true,
@@ -239,14 +246,18 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
     }
+    if let (Some(k), None) = (&o.chave, &o.sinal) {
+        o.sinal = Some(k.server().to_string());
+    }
     if o.sala {
         if !o.destino.is_empty() || o.conexao.is_some() || o.sem_cifra {
             return Err(
                 "--sala acha quem assiste pelo servidor: sem --destino, --conexao ou --sem-cifra".into(),
             );
         }
-        o.sinal
-            .get_or_insert_with(|| fluxo_net::DEFAULT_SIGNAL_SERVER.to_string());
+        if o.sinal.is_none() {
+            return Err("--sala precisa da chave do servidor (--chave FSS1-…) ou de --sinal".into());
+        }
         let codigo = match &o.codigo {
             Some(c) => fluxo_net::PairingCode::parse(c).map_err(|e| e.to_string())?,
             None => fluxo_net::PairingCode::generate().map_err(|e| e.to_string())?,
@@ -625,6 +636,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         // código de conexão, também para o código de resposta ir e voltar
         // pelo chat.
         pairing_timeout: Duration::from_secs(if o.conexao.is_some() { 300 } else { 30 }),
+        signal_key: o.chave.clone(),
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let servidor = o
@@ -639,7 +651,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 "  Quem vai assistir entra com ele, sem responder nada (até {} pessoas).",
                 espectadores::MAX_ESPECTADORES
             );
-            println!("  No terminal: fluxo-client --sala {c}");
+            println!("  No terminal: fluxo-client --sala {c} --chave <a mesma chave do servidor>");
             println!("Esperando a primeira pessoa entrar…");
         }
         (Some(c), Some(s), _) => {

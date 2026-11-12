@@ -52,6 +52,8 @@ pub struct ReceiverConfig {
     ///
     /// [`VideoSender::connect_via_signal`]: crate::VideoSender::connect_via_signal
     pub signal_server: Option<SocketAddr>,
+    /// Chave do servidor: o registro sai assinado com ela (`None`: servidor aberto).
+    pub signal_key: Option<fluxo_crypto::ServerKey>,
     /// Servidor STUN que viu o nosso endereço público
     /// ([`PublicAddr::server`](crate::PublicAddr::server)). Enquanto nenhum
     /// host chegar, um pedido STUN a cada 15 s mantém vivo o mapeamento do
@@ -89,6 +91,7 @@ impl Default for ReceiverConfig {
             feedback_interval: Duration::from_millis(250),
             pairing_code: None,
             signal_server: None,
+            signal_key: None,
             keepalive_to: None,
             on_pairing: None,
             codecs: 1,
@@ -515,7 +518,12 @@ struct Sinalizacao {
 }
 
 impl Sinalizacao {
-    fn new(servidor: SocketAddr, codigo: &PairingCode, socket: &Portas) -> Self {
+    fn new(
+        servidor: SocketAddr,
+        codigo: &PairingCode,
+        chave: Option<&fluxo_crypto::ServerKey>,
+        socket: &Portas,
+    ) -> Self {
         let msg = SignalMessage::Register {
             room: codigo.room(),
             locals: crate::local_candidates(socket.v4(), socket.v6()),
@@ -524,6 +532,10 @@ impl Sinalizacao {
             .control(0, clock_us())
             .encode_with_payload(&msg.to_bytes())
             .expect("mensagem de sinalização cabe num pacote");
+        let registro = match chave {
+            Some(k) => k.signed(&registro),
+            None => registro,
+        };
         Self {
             servidor,
             registro,
@@ -597,7 +609,12 @@ fn recv_loop(
     let mut candidata: Option<Candidata> = None;
     let mut respondido: Option<Respondido> = None;
     let mut sinal = match (cfg.signal_server, &cfg.pairing_code) {
-        (Some(servidor), Some(codigo)) => Some(Sinalizacao::new(servidor, codigo, &socket)),
+        (Some(servidor), Some(codigo)) => Some(Sinalizacao::new(
+            servidor,
+            codigo,
+            cfg.signal_key.as_ref(),
+            &socket,
+        )),
         _ => None,
     };
 

@@ -6,6 +6,14 @@ criar conta. O vídeo vai direto de um PC para o outro. Todos precisam usar esta
 mesma versão.
 
 
+CHAVE DO SERVIDOR
+-----------------
+As salas precisam da chave do servidor (um texto que começa com FSS1-), que
+vem junto com este arquivo. Na primeira vez, abra Configurações > Conexão e
+cole a chave. Quem compartilha e quem assiste usam a mesma. Não passe a chave
+para quem não for do grupo.
+
+
 ATUALIZAÇÕES
 ------------
 Ao abrir, o programa procura versão nova e, se houver, baixa, instala e abre

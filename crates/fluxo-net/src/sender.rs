@@ -69,6 +69,9 @@ pub struct SenderConfig {
     /// (NATs Linux, como o do celular roteando), e o furo sai por outra. Ver
     /// [`PUNCH_TTL`].
     pub punch_ttl: Option<u32>,
+    /// Chave do servidor de sinalização: a procura sai assinada com ela
+    /// (servidor com chaves ignora pedido sem assinatura). `None`: servidor aberto.
+    pub signal_key: Option<fluxo_crypto::ServerKey>,
 }
 
 /// Tamanho da "fila do roteador" da banda simulada, em frames (~66 ms a 60 fps).
@@ -93,6 +96,7 @@ impl SenderConfig {
             pairing_timeout: Duration::from_secs(10),
             on_pairing: None,
             punch_ttl: None,
+            signal_key: None,
         }
     }
 }
@@ -159,6 +163,7 @@ fn parear(
     rota: &Rota,
     observar: Option<&PairingObserver>,
     mut ttl_normal: Option<u32>,
+    chave: Option<&fluxo_crypto::ServerKey>,
 ) -> Result<(Session, SocketAddr), NetError> {
     let mut t = Tentativa::nova(codigo)?;
     let (mut candidatos, servidor) = match *rota {
@@ -179,6 +184,11 @@ fn parear(
                 .map_err(NetError::Proto)?,
         ),
         None => None,
+    };
+    // Servidor com chaves: a procura vai assinada.
+    let procura = match (procura, chave) {
+        (Some(p), Some(k)) => Some(k.signed(&p)),
+        (p, _) => p,
     };
     let mut servidor_respondeu = false;
     let mut recusados: Vec<SocketAddr> = Vec::new();
@@ -519,6 +529,7 @@ impl VideoSender {
                     &rota,
                     cfg.on_pairing.as_ref(),
                     ttl_normal,
+                    cfg.signal_key.as_ref(),
                 );
                 if let (Some(normal), Some(v4)) = (ttl_normal, portas.v4()) {
                     v4.set_ttl(normal).map_err(NetError::io("configurar TTL"))?;

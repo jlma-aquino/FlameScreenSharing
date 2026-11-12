@@ -58,8 +58,8 @@ pub struct Configuracoes {
     pub sempre_no_topo: bool,
 
     // Conexão
-    /// Servidor das salas; vazio = o do FSS.
-    pub servidor: String,
+    /// Chave de acesso ao servidor das salas (`FSS1-…`), como colada.
+    pub chave: String,
 
     // Sobre
     /// Ao abrir, procura versão nova e, achando, baixa e instala sozinho.
@@ -82,7 +82,7 @@ impl Default for Configuracoes {
             tocar_em: None,
             estatisticas: true,
             sempre_no_topo: false,
-            servidor: String::new(),
+            chave: String::new(),
             atualizar_sozinho: true,
         }
     }
@@ -137,7 +137,7 @@ impl Configuracoes {
              tocar_em = {}\n\
              estatisticas = {}\n\
              sempre_no_topo = {}\n\
-             servidor = {}\n\
+             chave = {}\n\
              atualizacoes = {}\n",
             self.aparencia.chave(),
             self.monitor,
@@ -156,7 +156,7 @@ impl Configuracoes {
             opcional(self.tocar_em),
             sim(self.estatisticas),
             sim(self.sempre_no_topo),
-            self.servidor,
+            self.chave.split_whitespace().collect::<String>(),
             sim(self.atualizar_sozinho),
         )
     }
@@ -207,7 +207,7 @@ impl Configuracoes {
                 "tocar_em" => c.tocar_em = opcional(v).unwrap_or(c.tocar_em),
                 "estatisticas" => c.estatisticas = sim(v).unwrap_or(c.estatisticas),
                 "sempre_no_topo" => c.sempre_no_topo = sim(v).unwrap_or(c.sempre_no_topo),
-                "servidor" => c.servidor = v.to_string(),
+                "chave" => c.chave = v.to_string(),
                 "atualizacoes" => c.atualizar_sozinho = sim(v).unwrap_or(c.atualizar_sozinho),
                 _ => {}
             }
@@ -236,7 +236,7 @@ mod tests {
             tocar_em: Some(1),
             estatisticas: false,
             sempre_no_topo: true,
-            servidor: "203.0.113.5:3478".into(),
+            chave: "FSS1-ABCDE-FGHJK".into(),
             atualizar_sozinho: false,
         };
         assert_eq!(Configuracoes::de_texto(&c.para_texto()), c);

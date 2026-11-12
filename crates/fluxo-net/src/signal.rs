@@ -11,6 +11,10 @@
 //! NAT que interessa. Depois disso os dois furam os NATs mandando pacotes um
 //! ao outro (ver `sender.rs` e `receiver.rs`); vídeo nunca passa por aqui.
 //!
+//! Com chaves ([`SignalServer::with_keys`]), só atende pedidos assinados com
+//! uma delas ([`ServerKey`]); o resto é ignorado em silêncio, sem resposta
+//! (quem não tem a chave não usa o servidor nem o faz responder a terceiros).
+//!
 //! [`PairingCode::room`]: fluxo_crypto::PairingCode::room
 
 use std::collections::HashMap;
@@ -18,6 +22,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use fluxo_crypto::ServerKey;
 use fluxo_proto::{PacketHeader, PacketKind, SignalMessage};
 
 use crate::{clock_us, is_transient};
@@ -50,6 +55,8 @@ pub enum SignalEvent {
     NotFound { room: u32, host: SocketAddr },
     /// Cliente tentou uma sala cheia ([`MAX_PER_ROOM`]).
     RoomTaken { room: u32, client: SocketAddr },
+    /// Pacote sem assinatura de uma chave aceita (servidor com chaves): ignorado.
+    Ignored { from: SocketAddr },
 }
 
 struct Cliente {
@@ -64,9 +71,26 @@ struct Cliente {
 #[derive(Default)]
 pub struct SignalServer {
     salas: HashMap<u32, Vec<Cliente>>,
+    /// Vazia: servidor aberto (atende qualquer um).
+    chaves: Vec<ServerKey>,
+    /// Pacotes ignorados por não virem assinados com uma das chaves.
+    ignorados: u64,
 }
 
 impl SignalServer {
+    /// Servidor que só atende pedidos assinados com uma destas chaves.
+    pub fn with_keys(chaves: Vec<ServerKey>) -> Self {
+        Self {
+            chaves,
+            ..Self::default()
+        }
+    }
+
+    /// Pacotes ignorados até agora por falta de chave válida.
+    pub fn ignored(&self) -> u64 {
+        self.ignorados
+    }
+
     /// Trata um datagrama: devolve o que mandar (destino, pacote) e o
     /// evento, se houve. Lixo e pacotes que não são pedidos são ignorados.
     pub fn handle(
@@ -79,6 +103,16 @@ impl SignalServer {
             sala.retain(|c| agora.duration_since(c.visto) < ROOM_TTL);
         }
         self.salas.retain(|_, sala| !sala.is_empty());
+        let datagrama = match self.chaves.is_empty() {
+            true => datagrama,
+            false => match self.chaves.iter().find_map(|k| k.verify(datagrama)) {
+                Some(pedido) => pedido,
+                None => {
+                    self.ignorados += 1;
+                    return (Vec::new(), Some(SignalEvent::Ignored { from: de }));
+                }
+            },
+        };
         let Ok((h, payload)) = PacketHeader::decode(datagrama) else {
             return (Vec::new(), None);
         };
@@ -218,6 +252,34 @@ mod tests {
     fn ler(p: &[u8]) -> (u32, SignalMessage) {
         let (h, payload) = PacketHeader::decode(p).unwrap();
         (h.frame_id, SignalMessage::from_bytes(payload).unwrap())
+    }
+
+    #[test]
+    fn com_chave_so_atende_pedido_assinado() {
+        let chave = ServerKey::generate("203.0.113.5:3478").unwrap();
+        let outra = ServerKey::generate("203.0.113.5:3478").unwrap();
+        let mut s = SignalServer::with_keys(vec![chave.clone()]);
+        let t = Instant::now();
+        let cliente = a("200.0.0.1:41000");
+        let registro = pedido(
+            1,
+            SignalMessage::Register {
+                room: 42,
+                locals: Vec::new(),
+            },
+        );
+        // Sem assinatura, ou com a chave errada: nada, nem resposta.
+        for p in [registro.clone(), outra.signed(&registro)] {
+            let (r, ev) = s.handle(&p, cliente, t);
+            assert!(r.is_empty());
+            assert_eq!(ev, Some(SignalEvent::Ignored { from: cliente }));
+        }
+        assert_eq!((s.ignored(), s.clients()), (2, 0));
+        let (r, ev) = s.handle(&chave.signed(&registro), cliente, t);
+        assert_eq!(r.len(), 1);
+        assert_eq!(ler(&r[0].1), (1, SignalMessage::Registered { public: cliente }));
+        assert!(ev.is_some());
+        assert_eq!(s.clients(), 1);
     }
 
     #[test]
