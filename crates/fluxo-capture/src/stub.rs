@@ -71,3 +71,20 @@ impl Frame<'_> {
 impl Drop for Frame<'_> {
     fn drop(&mut self) {}
 }
+
+/// Uma janela que dá para compartilhar (fora do Windows, nenhuma).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowInfo {
+    pub hwnd: isize,
+    pub title: String,
+    pub minimized: bool,
+}
+
+/// Fora do Windows não há janelas para compartilhar.
+pub fn list_windows() -> Vec<WindowInfo> {
+    Vec::new()
+}
+
+pub fn window_size(_hwnd: isize) -> Option<(u32, u32)> {
+    None
+}

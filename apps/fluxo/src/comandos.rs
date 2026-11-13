@@ -41,6 +41,8 @@ pub struct Compartilhar {
     pub destino: String,
     pub codigo: String,
     pub monitor: usize,
+    /// Transmitir só esta janela (HWND), em vez do monitor.
+    pub janela: Option<isize>,
     /// Começa com o som ligado (dá para mudar durante a transmissão).
     pub audio: bool,
 }
@@ -53,6 +55,7 @@ impl Default for Compartilhar {
             destino: String::new(),
             codigo: String::new(),
             monitor: 0,
+            janela: None,
             audio: true,
         }
     }
@@ -88,6 +91,9 @@ impl Compartilhar {
             ]);
         }
         a.extend(["--monitor".to_string(), self.monitor.to_string()]);
+        if let Some(h) = self.janela {
+            a.extend(["--janela-captura".to_string(), h.to_string()]);
+        }
         let resolucao = RESOLUCOES[c.resolucao.min(RESOLUCOES.len() - 1)].1;
         if resolucao != "nativa" {
             a.extend(["--resolucao".to_string(), resolucao.to_string()]);

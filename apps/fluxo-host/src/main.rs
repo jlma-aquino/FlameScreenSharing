@@ -20,6 +20,8 @@
 // Só o host Windows usa; os testes da lógica de tempo rodam em qualquer sistema.
 #[cfg(any(windows, test))]
 mod espectadores;
+#[cfg(windows)]
+mod fonte;
 #[cfg(any(windows, test))]
 mod limite;
 
@@ -57,6 +59,9 @@ Opções:
                         só o cliente com esse código recebe, e tudo vai cifrado
   --sem-cifra           TESTE (só em compilação de teste, não na de produção): sem pareamento nem cifra (o cliente também)
   --monitor N           monitor a transmitir (padrão 0)
+  --janela-captura H    transmite só a janela H (número HWND; a janela do FSS lista as
+                        abertas). Pega a janela mesmo com outras por cima; o cursor
+                        vai desenhado na imagem. Windows 10 1903+
   --sem-audio           não transmite o som do PC (por padrão vai junto, em Opus)
   --audio-dispositivo N captura o som da saída N (padrão: a saída padrão do Windows;
                         a lista aparece em fluxo-bench audio)
@@ -121,6 +126,8 @@ struct Opts {
     /// TTL dos pedidos até o furo do cliente chegar (0 = normal).
     ttl_furo: u32,
     monitor: usize,
+    /// Transmitir só esta janela (HWND), em vez do monitor.
+    janela_captura: Option<isize>,
     encoder: fluxo_encode::BackendChoice,
     /// Codec pedido (`None`: o melhor que os dois lados suportam).
     codec: Option<fluxo_encode::VideoCodec>,
@@ -176,6 +183,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         sem_audio: false,
         audio_dispositivo: None,
         monitor: 0,
+        janela_captura: None,
         encoder: Default::default(),
         codec: None,
         mbps: None,
@@ -215,6 +223,13 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
                     Some(fluxo_net::ConnectionCode::parse(valor()?).map_err(|e| format!("--conexao: {e}"))?)
             }
             "--monitor" => o.monitor = valor()?.parse().map_err(|_| "monitor inválido")?,
+            "--janela-captura" => {
+                o.janela_captura = Some(
+                    valor()?
+                        .parse()
+                        .map_err(|_| "janela-captura: use o número da janela (HWND)")?,
+                )
+            }
             "--encoder" => o.encoder = valor()?.parse()?,
             "--codec" => {
                 o.codec = match valor()?.as_str() {
@@ -589,7 +604,9 @@ fn manter_tela_ligada() {
 fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, Instant};
 
-    use fluxo_capture::{enable_dpi_awareness, CaptureError, DesktopCapturer};
+    use fluxo_capture::{enable_dpi_awareness, CaptureError};
+
+    use crate::fonte::{Alvo, Fonte};
     use fluxo_encode::{
         open_encoder, scaled_size, suggested_bitrate_kbps, Backend, BackendChoice, EncoderConfig,
     };
@@ -599,25 +616,38 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
 
     enable_dpi_awareness();
     manter_tela_ligada();
-    let mut cap = DesktopCapturer::new(o.monitor)?;
+    let alvo = match o.janela_captura {
+        Some(h) => Alvo::Janela(h),
+        None => Alvo::Tela(o.monitor),
+    };
+    let mut cap = Fonte::abrir(alvo)?;
     // Cópias: o frame capturado prende o capturador enquanto existe.
     let mut device = cap.d3d_device().clone();
     let mut context = cap.d3d_context().clone();
-    let m = cap.monitor().clone();
+    let (mw, mh) = cap.tamanho();
     // fps e linhas do vídeo: os pedidos, ou os padrões do encoder (mais
     // baixos no por software). Em Cell porque, no automático, só se sabe que
     // caiu no software depois de abrir.
-    let software = |sim: bool| limites(o.fps, o.resolucao, (m.width, m.height), sim);
+    let software = |sim: bool| limites(o.fps, o.resolucao, (mw, mh), sim);
     let pedido_software = o.encoder == BackendChoice::Only(Backend::Software);
     let (fps_inicial, linhas_inicial) = software(pedido_software);
     let fps_c = std::cell::Cell::new(fps_inicial);
     let linhas_c = std::cell::Cell::new(linhas_inicial);
     // Tamanho do vídeo para uma captura w×h (--resolucao, ou o mesmo).
     let tamanho = |w: u32, h: u32| linhas_c.get().map_or((w, h), |alt| scaled_size((w, h), alt));
-    let (vw, vh) = tamanho(m.width, m.height);
+    let (vw, vh) = tamanho(mw, mh);
+    // Numa janela, o teto automático é o da tela 1: a janela pode crescer, e a
+    // transmissão pode trocar para a tela no meio (o teto não muda depois).
+    let (bw, bh) = match alvo {
+        Alvo::Janela(_) => fluxo_capture::list_monitors()
+            .ok()
+            .and_then(|l| l.first().map(|t| tamanho(t.width, t.height)))
+            .map_or((vw, vh), |(w, h)| (w.max(vw), h.max(vh))),
+        Alvo::Tela(_) => (vw, vh),
+    };
     let mbps = o
         .mbps
-        .unwrap_or(suggested_bitrate_kbps(vw, vh, fps_c.get()) as f64 / 1000.0);
+        .unwrap_or(suggested_bitrate_kbps(bw, bh, fps_c.get()) as f64 / 1000.0);
     let bitrate_bps = (mbps * 1e6).round() as u64;
     let config_para = |w: u32, h: u32, codec| {
         let (vw, vh) = tamanho(w, h);
@@ -767,9 +797,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let codec_pedido = o
         .codec
         .or(pedido_software.then_some(fluxo_encode::VideoCodec::H264));
-    let (mut codec, aberto) = abrir_com_codec(&device, codec_pedido, do_cliente, |c| {
-        config_para(m.width, m.height, c)
-    })?;
+    let (mut codec, aberto) = abrir_com_codec(&device, codec_pedido, do_cliente, |c| config_para(mw, mh, c))?;
     for (b, motivo) in &aberto.skipped {
         println!("(pulando {b}: {motivo})");
     }
@@ -782,7 +810,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             linhas_c.set(l);
             let cfg = EncoderConfig {
                 backend: BackendChoice::Only(Backend::Software),
-                ..config_para(m.width, m.height, codec)
+                ..config_para(mw, mh, codec)
             };
             enc = open_encoder(&device, &cfg)?.encoder;
         }
@@ -794,7 +822,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let mut fps = fps_c.get();
-    let (vw, vh) = tamanho(m.width, m.height);
+    let (vw, vh) = tamanho(mw, mh);
     let (local, destino) = (tx.local_addr(), tx.peer_addr());
     // Botões da janela (trocar de tela, som, pausa), também pela entrada padrão.
     let (controles_tx, controles) = std::sync::mpsc::channel();
@@ -837,11 +865,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!(
-        "Transmitindo monitor {} ({}x{}{}) de {} para {}\n  {}\n  {:.1} Mbps, até {} fps, pacing {:.0} Mbps, FEC {}, keyframe de segurança a cada {} s{}",
-        m.index,
-        m.width,
-        m.height,
-        match (vw, vh) == (m.width, m.height) {
+        "Transmitindo {} ({}x{}{}) de {} para {}\n  {}\n  {:.1} Mbps, até {} fps, pacing {:.0} Mbps, FEC {}, keyframe de segurança a cada {} s{}",
+        cap.descricao(),
+        mw,
+        mh,
+        match (vw, vh) == (mw, mh) {
             true => String::new(),
             false => format!(" → {vw}x{vh}"),
         },
@@ -916,7 +944,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let mut onda_ativa = false;
     let mut ultimo_encode = Instant::now();
     // Tamanho atual da captura (para reabrir o encoder).
-    let mut captura = (m.width, m.height);
+    let mut captura = (mw, mh);
+    // Controles gerados aqui mesmo (a janela compartilhada fechou: volta para a tela 1).
+    let mut internos: Vec<espectadores::Controle> = Vec::new();
+    if matches!(alvo, Alvo::Janela(_)) {
+        // Na janela o cursor vem na imagem: o do cliente fica escondido.
+        tx.send_cursor_position(0, 0, false);
+    }
     let mut intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
     // Vídeo pausado pela janela: a última imagem fica na tela de quem assiste.
     // IPs de espectadores expulsos (não entram de novo nesta transmissão).
@@ -927,26 +961,34 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         // Botões da janela. Nada aqui derruba quem assiste: trocar de tela ou
         // de qualidade reabre a captura ou o encoder, e o encoder novo começa
         // com um keyframe (a imagem anterior fica na tela até ele chegar).
-        while let Ok(c) = controles.try_recv() {
+        while let Some(c) = internos.pop().or_else(|| controles.try_recv().ok()) {
             use espectadores::Controle;
             let mut reabrir = false;
+            let trocar_para = match c {
+                Controle::Tela(n) => Some(Alvo::Tela(n)),
+                Controle::Janela(h) => Some(Alvo::Janela(h)),
+                _ => None,
+            };
             match c {
-                Controle::Tela(n) if n == cap.monitor().index => {
-                    println!("Tela: monitor {} ({}x{})", n + 1, captura.0, captura.1)
+                Controle::Tela(_) | Controle::Janela(_) if trocar_para == Some(cap.alvo()) => {
+                    println!("{}", cap.linha())
                 }
-                Controle::Tela(n) => {
+                Controle::Tela(_) | Controle::Janela(_) => {
                     // A captura antiga solta a tela antes (o Windows não deixa
                     // duplicar a mesma duas vezes); se a nova falhar, a antiga
                     // se recria sozinha no próximo frame e a transmissão segue.
-                    cap.release_duplication();
-                    match DesktopCapturer::new(n) {
+                    cap.soltar();
+                    match Fonte::abrir(trocar_para.expect("tela ou janela")) {
                         Ok(nova) => {
                             cap = nova;
                             device = cap.d3d_device().clone();
                             context = cap.d3d_context().clone();
-                            let novo = cap.monitor();
-                            captura = (novo.width, novo.height);
-                            println!("Tela: monitor {} ({}x{})", n + 1, novo.width, novo.height);
+                            captura = cap.tamanho();
+                            // Na janela o cursor vem na imagem; no monitor, o cliente desenha.
+                            if matches!(cap.alvo(), Alvo::Janela(_)) {
+                                tx.send_cursor_position(0, 0, false);
+                            }
+                            println!("{}", cap.linha());
                             reabrir = true;
                         }
                         Err(e) => println!("Não consegui trocar de tela: {e}"),
@@ -1007,10 +1049,16 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 .div_ceil(1000) as u32,
             None => 10,
         };
-        let mut frame = match cap.next_frame(espera_ms) {
+        let mut frame = match cap.proximo(espera_ms) {
             Ok(f) => f,
             Err(CaptureError::AccessLost) => {
                 std::thread::sleep(Duration::from_millis(50));
+                None
+            }
+            // A janela compartilhada fechou: volta para a tela 1, sem derrubar ninguém.
+            Err(CaptureError::Window(m)) => {
+                println!("({m}; voltando para a tela 1)");
+                internos.push(espectadores::Controle::Tela(0));
                 None
             }
             Err(e) => return Err(e.into()),
@@ -1031,7 +1079,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     tamanho(captura.0, captura.1),
                 ));
             }
-            if let Some(p) = f.info().pointer {
+            if let Some(p) = f.ponteiro() {
                 let (x, y) = espectadores::ponto_no_video((p.x, p.y), captura, tamanho(captura.0, captura.1));
                 tx.send_cursor_position(x, y, p.visible);
             }
@@ -1119,7 +1167,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             || keyframe_a_cada.is_some_and(|p| ultimo_keyframe.elapsed() >= p);
         let frames_antes = seg.frames;
         let mut recriar = None;
-        if let Some(frame) = frame.filter(|f| f.info().desktop_updated && !pausado) {
+        if let Some(frame) = frame.filter(|f| f.atualizou() && !pausado) {
             // Momento da captura, no relógio que o cliente usa para medir o trânsito.
             let capturado_us = clock_us();
             if limite.on_frame(Instant::now()) {

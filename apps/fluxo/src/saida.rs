@@ -32,6 +32,8 @@ pub enum Evento {
     Relatorio(String),
     /// Host: passou a transmitir esta tela (número a partir de 1, como na janela).
     Tela(usize),
+    /// Host: passou a transmitir só esta janela (HWND).
+    Janela(isize),
     /// Host: o som do PC está indo (ou não).
     Som(bool),
     /// Host: vídeo pausado (ou transmitindo de novo).
@@ -148,7 +150,13 @@ pub fn ler(linha: &str) -> Evento {
     if let Some(e) = t.strip_prefix("Não consegui trocar de tela: ") {
         return Evento::Recusado(format!("Não deu para trocar de tela: {e}"));
     }
-    if t.starts_with("Transmitindo monitor") {
+    // "Tela: janela 132456 (1280x720)"
+    if let Some(resto) = t.strip_prefix("Tela: janela ") {
+        if let Some(h) = resto.split_whitespace().next().and_then(|n| n.parse().ok()) {
+            return Evento::Janela(h);
+        }
+    }
+    if t.starts_with("Transmitindo monitor") || t.starts_with("Transmitindo janela") {
         return Evento::Transmitindo;
     }
     if let Some(v) = t.strip_prefix("vídeo em ") {
@@ -359,6 +367,11 @@ mod tests {
     #[test]
     fn respostas_aos_botoes() {
         assert_eq!(ler("Tela: monitor 2 (2560x1440)"), Evento::Tela(2));
+        assert_eq!(ler("Tela: janela 132456 (1280x720)"), Evento::Janela(132456));
+        assert_eq!(
+            ler("Transmitindo janela 132456 (1280x720) de 0.0.0.0:1 para 1.2.3.4:9000"),
+            Evento::Transmitindo
+        );
         assert_eq!(ler("Som: desligado"), Evento::Som(false));
         assert_eq!(ler("Vídeo: pausado"), Evento::Pausa(true));
         assert_eq!(ler("Vídeo: transmitindo"), Evento::Pausa(false));

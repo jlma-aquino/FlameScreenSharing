@@ -43,12 +43,18 @@ use std::fmt;
 #[cfg(windows)]
 mod dxgi;
 #[cfg(windows)]
+mod janela;
+#[cfg(windows)]
 pub use dxgi::{enable_dpi_awareness, list_monitors, DesktopCapturer, Frame};
+#[cfg(windows)]
+pub use janela::{list_windows, window_size, WindowCapturer, WindowFrame, WindowInfo};
 
 #[cfg(not(windows))]
 mod stub;
 #[cfg(not(windows))]
-pub use stub::{enable_dpi_awareness, list_monitors, DesktopCapturer, Frame};
+pub use stub::{
+    enable_dpi_awareness, list_monitors, list_windows, window_size, DesktopCapturer, Frame, WindowInfo,
+};
 
 /// Um monitor que pode ser capturado.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +115,8 @@ pub enum CaptureError {
     /// Outra aplicação já está usando Desktop Duplication neste monitor
     /// além do limite do sistema, ou o recurso não está disponível.
     NotAvailable(String),
+    /// Captura de uma janela: a janela fechou, ou o Windows não tem a API.
+    Window(String),
     /// Erro genérico do Windows, com o código HRESULT e a mensagem.
     Windows { hresult: i32, message: String },
 }
@@ -120,6 +128,7 @@ impl fmt::Display for CaptureError {
             Self::NoSuchMonitor(i) => write!(f, "monitor {i} não existe"),
             Self::AccessLost => write!(f, "acesso à captura perdido (será recriado)"),
             Self::NotAvailable(m) => write!(f, "Desktop Duplication indisponível: {m}"),
+            Self::Window(m) => write!(f, "captura da janela: {m}"),
             Self::Windows { hresult, message } => {
                 write!(f, "erro do Windows 0x{:08X}: {message}", *hresult as u32)
             }

@@ -317,6 +317,8 @@ pub enum Controle {
     Resolucao(Option<u32>),
     /// `fps F`: como `--fps`.
     Fps(u32),
+    /// `janela HWND`: passa a transmitir só essa janela (ver `fonte.rs`).
+    Janela(isize),
     /// `expulsar N`: tira o espectador N e recusa o IP dele até o fim da
     /// transmissão.
     Expulsar(u32),
@@ -337,6 +339,10 @@ pub fn ler_controle(linha: &str) -> Option<Result<Controle, String>> {
         ("pausar", None) => Ok(Controle::Pausa(true)),
         ("continuar", None) => Ok(Controle::Pausa(false)),
         ("resolucao", Some(r)) => crate::parse_resolucao(r).map(Controle::Resolucao),
+        ("janela", Some(h)) => h
+            .parse()
+            .map(Controle::Janela)
+            .map_err(|_| "janela: use o número da janela (HWND)".to_string()),
         ("expulsar", Some(n)) => n
             .parse()
             .map(Controle::Expulsar)
@@ -345,7 +351,9 @@ pub fn ler_controle(linha: &str) -> Option<Result<Controle, String>> {
             Ok(f) if (1..=240).contains(&f) => Ok(Controle::Fps(f)),
             _ => Err("fps: use um número de 1 a 240".to_string()),
         },
-        ("tela" | "resolucao" | "fps" | "expulsar", None) => Err(format!("{comando}: falta o valor")),
+        ("tela" | "janela" | "resolucao" | "fps" | "expulsar", None) => {
+            Err(format!("{comando}: falta o valor"))
+        }
         _ => return None,
     })
 }
@@ -648,6 +656,7 @@ mod tests {
         );
         assert_eq!(ler_controle("fps 30"), Some(Ok(Controle::Fps(30))));
         assert_eq!(ler_controle("expulsar 2"), Some(Ok(Controle::Expulsar(2))));
+        assert_eq!(ler_controle("janela 132456"), Some(Ok(Controle::Janela(132456))));
         assert!(matches!(ler_controle("expulsar x"), Some(Err(_))));
         for errado in [
             "tela x",

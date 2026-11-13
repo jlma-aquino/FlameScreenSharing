@@ -134,6 +134,8 @@ struct Sessao {
     // O estado dos botões, como o programa confirmou.
     /// Host: tela transmitida (a partir de 0).
     monitor: usize,
+    /// Host: janela transmitida, no lugar do monitor.
+    janela: Option<isize>,
     /// Host: o som do PC está indo.
     som: bool,
     /// Host: vídeo pausado.
@@ -177,6 +179,7 @@ impl Sessao {
             registro: VecDeque::new(),
             fim: None,
             monitor: cfg.monitor,
+            janela: None,
             som: cfg.som,
             pausado: false,
             qualidade: None,
@@ -221,7 +224,11 @@ impl Sessao {
                 Evento::Transmitindo => self.transmitindo = true,
                 Evento::Recebendo(v) => self.recebendo = Some(v),
                 Evento::Relatorio(r) => self.relatorio = Some(r),
-                Evento::Tela(n) => self.monitor = n.saturating_sub(1),
+                Evento::Tela(n) => {
+                    self.monitor = n.saturating_sub(1);
+                    self.janela = None;
+                }
+                Evento::Janela(h) => self.janela = Some(h),
                 Evento::Som(sim) => self.som = sim,
                 Evento::Pausa(sim) => self.pausado = sim,
                 Evento::Qualidade(q) => self.qualidade = Some(q),
@@ -335,6 +342,12 @@ impl Janela {
 
     fn iniciar_host(&mut self, ctx: &egui::Context, modo: Modo) {
         self.compartilhar.modo = modo;
+        // A janela escolhida pode ter fechado nesse meio tempo.
+        if let Some(h) = self.compartilhar.janela {
+            if !janelas_para_compartilhar().iter().any(|j| j.hwnd == h) {
+                self.compartilhar.janela = None;
+            }
+        }
         self.compartilhar.monitor = self.cfg.monitor;
         self.compartilhar.audio = self.cfg.som;
         match self.compartilhar.args(&self.cfg) {
@@ -605,9 +618,13 @@ impl Janela {
                     "Compartilhar ainda só funciona no Windows; assistir funciona aqui.",
                 );
             }
-            if self.monitores.len() > 1 {
-                escolher_tela(ui, "inicio_tela", &self.monitores, &mut self.cfg.monitor);
-            }
+            escolher_fonte(
+                ui,
+                "inicio_tela",
+                &self.monitores,
+                &mut self.cfg.monitor,
+                &mut self.compartilhar.janela,
+            );
             ui.checkbox(&mut self.cfg.som, "Transmitir o som do PC");
             ui.add_space(6.0);
             let tem_chave = self.falta_chave(ui, p);
@@ -1396,16 +1413,39 @@ impl Janela {
 /// Os botões de quem compartilha: tela, som, pausa, qualidade.
 fn controles_host(ui: &mut egui::Ui, s: &mut Sessao, p: &Paleta, raio: u8, monitores: &[String]) {
     ui.horizontal(|ui| {
-        let tela = botao_comum(&format!("🖥  Tela {}  ⏷", s.monitor + 1), raio);
-        egui::containers::menu::MenuButton::from_button(tela).ui(ui, |ui| {
+        let rotulo = match s.janela {
+            Some(_) => "🖥  Janela  ⏷".to_string(),
+            None => format!("🖥  Tela {}  ⏷", s.monitor + 1),
+        };
+        egui::containers::menu::MenuButton::from_button(botao_comum(&rotulo, raio)).ui(ui, |ui| {
+            ui.label(RichText::new("Telas").strong());
             if monitores.is_empty() {
                 ui.label("Nenhuma tela encontrada");
             }
             for (i, nome) in monitores.iter().enumerate() {
-                if ui.selectable_label(i == s.monitor, nome).clicked() {
+                if ui
+                    .selectable_label(s.janela.is_none() && i == s.monitor, nome)
+                    .clicked()
+                {
                     s.mandar(&format!("tela {i}"));
                     ui.close();
                 }
+            }
+            let janelas = janelas_para_compartilhar();
+            if !janelas.is_empty() {
+                ui.separator();
+                ui.label(RichText::new("Janelas").strong());
+                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                    for j in janelas {
+                        if ui
+                            .selectable_label(s.janela == Some(j.hwnd), nome_da_janela(&j))
+                            .clicked()
+                        {
+                            s.mandar(&format!("janela {}", j.hwnd));
+                            ui.close();
+                        }
+                    }
+                });
             }
         });
         let (rotulo, botao) = match s.som {
@@ -1591,6 +1631,75 @@ fn botao_perigo(p: &Paleta, texto: &str, raio: u8) -> egui::Button<'static> {
     .fill(p.perigo)
     .corner_radius(CornerRadius::same(raio))
     .min_size(egui::vec2(110.0, 40.0))
+}
+
+/// As janelas abertas que dá para compartilhar (sem as do próprio FSS).
+fn janelas_para_compartilhar() -> Vec<fluxo_capture::WindowInfo> {
+    fluxo_capture::list_windows()
+        .into_iter()
+        .filter(|j| !j.title.starts_with("FSS —") && j.title != crate::NOME)
+        .collect()
+}
+
+/// Título curto, para listas.
+fn nome_da_janela(j: &fluxo_capture::WindowInfo) -> String {
+    let mut t: String = j.title.chars().take(48).collect();
+    if j.title.chars().count() > 48 {
+        t.push('…');
+    }
+    if j.minimized {
+        t.push_str(" (minimizada)");
+    }
+    t
+}
+
+/// Tela inteira ou uma janela, para começar a compartilhar.
+fn escolher_fonte(
+    ui: &mut egui::Ui,
+    id: &str,
+    monitores: &[String],
+    monitor: &mut usize,
+    janela: &mut Option<isize>,
+) {
+    let atual = match janela {
+        Some(h) => janelas_para_compartilhar()
+            .into_iter()
+            .find(|j| j.hwnd == *h)
+            .map(|j| nome_da_janela(&j))
+            .unwrap_or_else(|| "Janela (fechou?)".into()),
+        None => monitores
+            .get(*monitor)
+            .cloned()
+            .unwrap_or_else(|| format!("Tela {}", *monitor + 1)),
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(atual)
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            ui.label(RichText::new("Telas").strong());
+            for (i, nome) in monitores.iter().enumerate() {
+                if ui
+                    .selectable_label(janela.is_none() && *monitor == i, nome)
+                    .clicked()
+                {
+                    *monitor = i;
+                    *janela = None;
+                }
+            }
+            let janelas = janelas_para_compartilhar();
+            if !janelas.is_empty() {
+                ui.separator();
+                ui.label(RichText::new("Janelas").strong());
+                for j in janelas {
+                    if ui
+                        .selectable_label(*janela == Some(j.hwnd), nome_da_janela(&j))
+                        .clicked()
+                    {
+                        *janela = Some(j.hwnd);
+                    }
+                }
+            }
+        });
 }
 
 fn escolher_tela(ui: &mut egui::Ui, id: &str, monitores: &[String], monitor: &mut usize) {

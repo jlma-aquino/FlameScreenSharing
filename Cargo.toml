@@ -65,6 +65,14 @@ windows = { version = "0.61", features = [
     # fluxo-client: janela Win32 e teclado.
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
+    # fluxo-capture: captura de uma janela (Windows.Graphics.Capture).
+    "Foundation",
+    "Graphics_Capture",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_Graphics_Dwm",
 ] }
 
 [profile.release]
