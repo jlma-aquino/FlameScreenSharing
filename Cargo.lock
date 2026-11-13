@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "fluxo-audio",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo-audio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "unsafe-libopus",
  "windows",
@@ -1172,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluxo-audio",
  "fluxo-capture",
@@ -1184,14 +1184,14 @@ dependencies = [
 
 [[package]]
 name = "fluxo-capture"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "windows",
 ]
 
 [[package]]
 name = "fluxo-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "fluxo-audio",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo-crypto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
@@ -1217,7 +1217,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo-decode"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluxo-proto",
  "windows",
@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo-encode"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluxo-capture",
  "fluxo-proto",
@@ -1236,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluxo-audio",
  "fluxo-capture",
@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "fluxo-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluxo-crypto",
  "fluxo-proto",
@@ -1255,11 +1255,11 @@ dependencies = [
 
 [[package]]
 name = "fluxo-proto"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "fluxo-sinal"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluxo-net",
 ]
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "fss-assinatura"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluxo-crypto",
  "sha2",

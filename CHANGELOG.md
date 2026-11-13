@@ -5,6 +5,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [0.2.0] — 2026-11-12
+
 ### Adicionado
 - **Várias sessões ao mesmo tempo**, em abas: compartilhar enquanto assiste, ou
   assistir a mais de uma pessoa. A casinha na barra do vídeo traz a janela do FSS de
