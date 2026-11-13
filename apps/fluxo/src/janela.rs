@@ -154,6 +154,8 @@ struct Sessao {
     volume_enviado: u32,
     /// Cliente: o vídeo abriu no lugar desta janela, que está escondida.
     video_no_lugar: bool,
+    /// Cliente: o código da sala onde entrou (para o nome da aba).
+    sala_assistida: Option<String>,
 }
 
 impl Sessao {
@@ -190,6 +192,7 @@ impl Sessao {
             mudo: false,
             volume_enviado: cfg.volume,
             video_no_lugar: false,
+            sala_assistida: None,
         }
     }
 
@@ -288,7 +291,11 @@ pub struct Janela {
     monitores: Vec<String>,
     /// Saídas de som do Windows (número e nome).
     saidas_som: Vec<(usize, String)>,
-    sessao: Option<Sessao>,
+    /// Sessões rodando ao mesmo tempo: no máximo uma compartilhando e quantas
+    /// quiser assistindo (cada uma é um programa à parte).
+    sessoes: Vec<Sessao>,
+    /// A aba aberta (`None`: a tela inicial, para começar outra).
+    atual: Option<usize>,
     /// Problema no formulário (código errado, programa não encontrado).
     aviso: Option<String>,
     resposta_colada: String,
@@ -327,7 +334,8 @@ impl Janela {
             assistir: Assistir::default(),
             monitores,
             saidas_som: saidas_de_som(),
-            sessao: None,
+            sessoes: Vec::new(),
+            atual: None,
             aviso: None,
             resposta_colada: String::new(),
             novo_conexao: String::new(),
@@ -366,8 +374,10 @@ impl Janela {
 
     fn iniciar(&mut self, ctx: &egui::Context, programa: &str, mut args: Vec<String>, modo: Modo) {
         // Quem assiste: o vídeo abre no lugar desta janela (ver lugar.rs).
-        let lugar_do_video = match (programa, self.hwnd) {
-            ("client", Some(h)) => lugar::retangulo(h).map(|r| (h, r)),
+        // Com outra sessão rodando, esta janela fica (é dela que se controla a
+        // outra), e o vídeo abre ao lado.
+        let lugar_do_video = match (programa, self.hwnd, self.sessoes.iter().any(Sessao::rodando)) {
+            ("client", Some(h), false) => lugar::retangulo(h).map(|r| (h, r)),
             _ => None,
         };
         if let Some((_, (x, y, l, a))) = lugar_do_video {
@@ -378,6 +388,8 @@ impl Janela {
         let onde: Arc<Mutex<Option<lugar::Retangulo>>> = Arc::default();
         let avisar: Aviso = Arc::new(move |linha| {
             match (linha, lugar_do_video) {
+                // Botão da casinha na barra do vídeo: esta janela volta, o vídeo segue.
+                (Some("Mostrar o FSS"), Some((h, _))) => lugar::mostrar(h, None),
                 (Some(l), _) => {
                     if let Some(r) = lugar::ler_retangulo(l) {
                         *onde.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
@@ -403,17 +415,72 @@ impl Janela {
         match aberto {
             Ok(p) => {
                 let mut sessao = Sessao::new(p, programa == "host", modo, &self.cfg);
+                if programa == "client" && modo == Modo::Sala {
+                    sessao.sala_assistida = Some(self.assistir.sala.trim().to_uppercase());
+                }
                 if let Some((h, _)) = lugar_do_video {
                     lugar::permitir_foco(sessao.processo.pid());
                     lugar::esconder(h);
                     sessao.video_no_lugar = true;
                 }
-                self.sessao = Some(sessao);
+                self.sessoes.push(sessao);
+                self.atual = Some(self.sessoes.len() - 1);
                 self.aviso = None;
                 self.resposta_colada.clear();
             }
             Err(e) => self.aviso = Some(format!("Não consegui abrir o programa: {e}")),
         }
+    }
+
+    /// Tira a sessão `i` (soltar encerra o programa dela) e acerta a aba aberta.
+    fn fechar_sessao(&mut self, i: usize) {
+        if i >= self.sessoes.len() {
+            return;
+        }
+        self.sessoes.remove(i);
+        self.atual = match self.atual {
+            Some(a) if a == i => self.sessoes.len().checked_sub(1),
+            Some(a) if a > i => Some(a - 1),
+            outra => outra,
+        };
+    }
+
+    /// As abas: uma por sessão, e a tela inicial para começar outra.
+    fn barra_de_abas(&mut self, ctx: &egui::Context, p: &Paleta) {
+        if self.sessoes.is_empty() {
+            return;
+        }
+        egui::TopBottomPanel::top("abas")
+            .frame(
+                egui::Frame::new()
+                    .fill(p.fundo)
+                    .inner_margin(Margin::symmetric(16, 8)),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (i, s) in self.sessoes.iter().enumerate() {
+                        let (texto, cor) = estado_curto(s, p);
+                        let nome = match (s.host, &s.sala_assistida) {
+                            (true, _) => format!("📡 Compartilhando · {texto}"),
+                            (false, Some(sala)) => format!("▶ Sala {sala} · {texto}"),
+                            (false, None) => format!("▶ Assistindo · {texto}"),
+                        };
+                        let rotulo = RichText::new(nome).color(if s.rodando() { cor } else { p.texto_fraco });
+                        if ui.selectable_label(self.atual == Some(i), rotulo).clicked() {
+                            self.atual = Some(i);
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.atual.is_none(), "＋ Começar outra")
+                        .on_hover_text("Compartilhar enquanto assiste, ou assistir a mais alguém")
+                        .clicked()
+                    {
+                        self.atual = None;
+                        self.tela = Tela::Inicio;
+                    }
+                });
+            });
     }
 
     /// Procura versão nova numa thread; achando, ela baixa e confere.
@@ -445,7 +512,7 @@ impl Janela {
 
     /// Atualização baixada e nenhuma transmissão: instala e reinicia.
     fn instalar_se_puder(&mut self) {
-        if self.sessao.is_some() {
+        if !self.sessoes.is_empty() {
             return;
         }
         if let Atualizacao::Pronta(p) = self.estado_atualizacao() {
@@ -458,7 +525,7 @@ impl Janela {
     /// Aviso no topo: versão nova chegando, ou acabou de atualizar.
     fn faixa_de_aviso(&mut self, ctx: &egui::Context, p: &Paleta) {
         let texto = match (self.estado_atualizacao(), self.atualizado_agora) {
-            (Atualizacao::Pronta(pronta), _) if self.sessao.is_some() => Some(format!(
+            (Atualizacao::Pronta(pronta), _) if !self.sessoes.is_empty() => Some(format!(
                 "Versão {} baixada: instala sozinha quando a transmissão acabar.",
                 pronta.versao
             )),
@@ -516,7 +583,7 @@ impl Janela {
                     |ui| {
                         ui.label(RichText::new("🔥").size(20.0));
                         ui.label(RichText::new(crate::NOME).size(17.0).strong().color(p.texto));
-                        if let Some(s) = &self.sessao {
+                        if let Some(s) = self.atual.and_then(|i| self.sessoes.get(i)) {
                             if s.rodando() {
                                 let (texto, cor) = estado_curto(s, p);
                                 ui.add_space(8.0);
@@ -628,7 +695,17 @@ impl Janela {
             ui.checkbox(&mut self.cfg.som, "Transmitir o som do PC");
             ui.add_space(6.0);
             let tem_chave = self.falta_chave(ui, p);
-            let botao = principal(ui, p, "Compartilhar", self.tema.raio, cfg!(windows) && tem_chave);
+            let ja_compartilha = self.sessoes.iter().any(|s| s.host && s.rodando());
+            if ja_compartilha {
+                ui.colored_label(p.aviso, "Você já está compartilhando (veja a aba de cima).");
+            }
+            let botao = principal(
+                ui,
+                p,
+                "Compartilhar",
+                self.tema.raio,
+                cfg!(windows) && tem_chave && !ja_compartilha,
+            );
             if botao.clicked() {
                 self.iniciar_host(ctx, Modo::Sala);
             }
@@ -774,7 +851,7 @@ impl Janela {
     /// O meio da janela durante a transmissão: o código, o estado, os avisos.
     fn painel_sessao(&mut self, ui: &mut egui::Ui, p: &Paleta) {
         let raio = self.tema.raio;
-        let Some(s) = self.sessao.as_mut() else {
+        let Some(s) = self.atual.and_then(|i| self.sessoes.get_mut(i)) else {
             return;
         };
         let mut enviar_resposta = false;
@@ -1013,7 +1090,7 @@ impl Janela {
             )
             .show_separator_line(false)
             .show(ctx, |ui| {
-                let Some(s) = self.sessao.as_mut() else {
+                let Some(s) = self.atual.and_then(|i| self.sessoes.get_mut(i)) else {
                     return;
                 };
                 let (rodando, host) = (s.rodando(), s.host);
@@ -1040,7 +1117,10 @@ impl Janela {
                     },
                 );
                 if sair {
-                    self.sessao = None; // soltar encerra o programa
+                    // Soltar encerra o programa.
+                    if let Some(i) = self.atual {
+                        self.fechar_sessao(i);
+                    }
                 }
             });
     }
@@ -1772,7 +1852,7 @@ fn saidas_de_som() -> Vec<(usize, String)> {
 impl eframe::App for Janela {
     /// Fechar a janela encerra o host ou o cliente que estiver rodando.
     fn on_exit(&mut self, _: Option<&eframe::glow::Context>) {
-        self.sessao = None;
+        self.sessoes.clear();
     }
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
@@ -1780,15 +1860,19 @@ impl eframe::App for Janela {
             self.tema.aplicar(ctx, self.cfg.aparencia);
             self.aparencia_aplicada = Some(self.cfg.aparencia);
         }
-        if let Some(s) = self.sessao.as_mut() {
+        for s in &mut self.sessoes {
             s.atualizar();
-            // Quem assiste saiu (Sair ou fechou o vídeo): de volta ao início.
-            // Com erro, a sessão fica, para mostrar o que houve.
-            if s.video_no_lugar && s.fim == Some(true) && s.erro.is_none() {
-                self.sessao = None;
-            }
         }
-        if self.sessao.is_some() {
+        // Quem assiste saiu (Sair ou fechou o vídeo): a aba some. Com erro, a
+        // sessão fica, para mostrar o que houve.
+        while let Some(i) = self
+            .sessoes
+            .iter()
+            .position(|s| !s.host && s.fim == Some(true) && s.erro.is_none())
+        {
+            self.fechar_sessao(i);
+        }
+        if !self.sessoes.is_empty() {
             // O programa pode terminar sem imprimir nada.
             ctx.request_repaint_after(Duration::from_millis(250));
         }
@@ -1803,10 +1887,13 @@ impl eframe::App for Janela {
 
         self.barra_de_cima(ctx, &p);
         self.faixa_de_aviso(ctx, &p);
+        if self.configuracoes.is_none() {
+            self.barra_de_abas(ctx, &p);
+        }
         if self.configuracoes.is_some() {
             self.pagina_configuracoes(ctx, &p);
         } else {
-            if self.sessao.is_some() {
+            if self.atual.is_some() {
                 self.barra_de_baixo(ctx, &p);
             }
             egui::CentralPanel::default()
@@ -1818,7 +1905,7 @@ impl eframe::App for Janela {
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         centralizar(ui, LARGURA_CONTEUDO, |ui| {
-                            if self.sessao.is_some() {
+                            if self.atual.is_some() {
                                 self.painel_sessao(ui, &p);
                             } else {
                                 match self.tela {
