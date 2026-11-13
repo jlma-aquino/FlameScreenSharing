@@ -64,3 +64,14 @@ perdido refeito pelo FEC ou inventado, buffer de jitter (ordem, perda com
 FEC, esvaziar aumenta o alvo e estabilidade diminui, excesso descartado),
 conversão de taxa e canais (em blocos, sem saltos nas emendas). Mais o
 teste de ponta a ponta do áudio cifrado em `fluxo-net/tests/loopback.rs`.
+
+## Captura sem o som do FSS
+
+`LoopbackCapture::excluding_process(pid)` usa a captura por processo do Windows
+10 2004+ (`ActivateAudioInterfaceAsync` com
+`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`): tudo o que o PC toca menos
+o processo dado e os filhos dele, em 48 kHz estéreo float. O host usa com o
+número da janela do FSS, para o som de quem você assiste não voltar na sua
+transmissão. Cuidado ao mexer: o `PROPVARIANT` do crate `windows` se limpa
+sozinho e liberaria o bloco de parâmetros (que é nosso, na pilha): ele fica em
+`ManuallyDrop` (sem isso, heap corrompido, `0xC0000374`).

@@ -6,6 +6,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Várias sessões ao mesmo tempo**, em abas: compartilhar enquanto assiste, ou
+  assistir a mais de uma pessoa. A casinha na barra do vídeo traz a janela do FSS de
+  volta sem fechar o vídeo.
+- **Som de quem você assiste fora da sua transmissão** (Windows 10 2004+): o host
+  captura tudo menos o som do FSS (`--som-sem-processo`), sem eco para o amigo.
 - **Compartilhar uma janela** (Windows.Graphics.Capture): no cartão de compartilhar
   e no menu Tela da barra; `fluxo-host --janela-captura HWND` e o comando `janela H`.
   Se a janela fecha, a transmissão volta para a tela 1.
@@ -50,6 +55,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   (Windows e portátil). `DesktopCapturer::release_duplication`.
 
 ### Mudado
+- O cliente escuta numa porta livre na sala e com `--internet` (só na mesma rede
+  continua 9000): dá dois clientes no mesmo PC.
 - **Vídeo lento e piscando em placa sem AV1** (visto numa AMD): o cliente só anuncia
   HEVC/AV1 se a placa tem o perfil de decode; senão o host usa H.264. O codec
   escolhido nas configurações vira preferência (antes, quem não decodificava era

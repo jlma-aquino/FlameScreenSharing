@@ -37,6 +37,23 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
     sem ela, os cartões de sala pedem para colar);
   - **Sobre:** versão, atualizações (ligar ou desligar, Verificar agora).
 
+## Várias sessões
+
+Dá para compartilhar enquanto assiste, ou assistir a mais de uma pessoa: cada
+sessão vira uma aba no topo ("📡 Compartilhando · …", "▶ Sala ABCD · …"), e
+"＋ Começar outra" volta à tela inicial sem fechar nada. No máximo uma
+compartilhando. O vídeo abre no lugar desta janela só quando não há outra
+sessão; com outra rodando, abre ao lado. A casinha na barra do vídeo traz esta
+janela de volta sem fechar o vídeo (o cliente imprime `Mostrar o FSS`).
+
+O som: compartilhando e assistindo ao mesmo tempo, o host captura tudo o que o
+PC toca **menos** a árvore de processos desta janela (`--som-sem-processo`,
+Windows 10 2004+), então o som de quem você assiste não volta na sua
+transmissão. Com uma saída de som escolhida nas configurações, vale a captura
+daquela saída.
+
+Testado: dois clientes na mesma sala no mesmo PC, cada um numa porta livre.
+
 ## Configurações guardadas
 
 Num arquivo de texto, `chave = valor`, gravado a cada mudança:
