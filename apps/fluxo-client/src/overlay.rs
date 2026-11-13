@@ -44,6 +44,7 @@ const RECUO: f32 = 8.0;
 const ICONE_SOM: &str = "\u{E767}";
 const ICONE_MUDO: &str = "\u{E74F}";
 const ICONE_ESTATISTICAS: &str = "\u{E9D9}";
+const ICONE_INICIO: &str = "\u{E80F}";
 const ICONE_TELA_CHEIA: &str = "\u{E740}";
 const ICONE_SAIR_TELA_CHEIA: &str = "\u{E73F}";
 
@@ -361,6 +362,7 @@ impl Overlay {
             let realce = match d.sob_o_mouse {
                 Some(Botao::Mudo) => Some(l.mudo),
                 Some(Botao::Estatisticas) => Some(l.estatisticas),
+                Some(Botao::Inicio) => Some(l.inicio),
                 Some(Botao::TelaCheia) => Some(l.tela_cheia),
                 _ => None,
             };
@@ -397,6 +399,7 @@ impl Overlay {
             self.contexto.FillEllipse(&bolinha, &b.branco);
             escrever(&format!("{nivel}%"), texto, &l.texto_volume, &b.branco);
 
+            escrever(ICONE_INICIO, icones, &l.inicio, &b.branco);
             let estatisticas = if d.estatisticas { &b.destaque } else { &b.branco };
             escrever(ICONE_ESTATISTICAS, icones, &l.estatisticas, estatisticas);
             let tela = if d.tela_cheia {

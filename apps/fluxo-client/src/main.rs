@@ -102,7 +102,8 @@ Opções:
                         lê da entrada, antes de tudo, linhas --opcao valor até a linha fim
                         (a chave e os códigos fora da linha de comando, que outros
                         programas do PC conseguem ler)
-  --porta P       porta UDP onde escutar (padrão 9000)
+  --porta P       porta UDP onde escutar (padrão: 9000 na mesma rede; qualquer
+                  livre na sala e com --internet, para dar dois clientes no mesmo PC)
   --vsync         sincroniza com o monitor (sem tearing; até 1 quadro a mais de atraso)
   --segundos S    fecha sozinho depois de S segundos do primeiro frame (padrão 0 = não)
   --largura L     largura inicial da janela (padrão 1280)
@@ -161,6 +162,7 @@ struct Opts {
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
+    let mut porta_dada = false;
     let mut o = Opts {
         porta: 9000,
         vsync: false,
@@ -186,7 +188,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     while let Some(a) = it.next() {
         let mut valor = || it.next().ok_or(format!("{a} precisa de um valor"));
         match a.as_str() {
-            "--porta" => o.porta = valor()?.parse().map_err(|_| "porta inválida")?,
+            "--porta" => {
+                o.porta = valor()?.parse().map_err(|_| "porta inválida")?;
+                porta_dada = true;
+            }
             "--vsync" => o.vsync = true,
             "--segundos" => o.segundos = valor()?.parse().map_err(|_| "segundos inválido")?,
             "--largura" => o.largura = valor()?.parse().map_err(|_| "largura inválida")?,
@@ -209,6 +214,11 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
+    }
+    // Na sala e com --internet o endereço vai pelo servidor ou no código:
+    // qualquer porta livre serve, e dois clientes cabem no mesmo PC.
+    if !porta_dada && (o.sala.is_some() || o.internet) {
+        o.porta = 0;
     }
     if let (Some(k), None) = (&o.chave, &o.sinal) {
         o.sinal = Some(k.server().to_string());
@@ -480,6 +490,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     mudar_volume(v as i64);
                 }
                 Some(controles::Acao::AlternarEstatisticas) => alternar_painel = !alternar_painel,
+                // A janela do FSS lê esta linha e volta (apps/fluxo/src/janela.rs).
+                Some(controles::Acao::MostrarFss) => println!("Mostrar o FSS"),
                 Some(controles::Acao::AlternarTelaCheia) => alternar_tela_cheia = !alternar_tela_cheia,
                 Some(controles::Acao::Sair) => {
                     janela.close();

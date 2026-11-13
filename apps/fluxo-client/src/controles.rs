@@ -1,5 +1,5 @@
 //! A barra de controles sobre o vídeo, como a do YouTube: mudo, volume,
-//! estatísticas, tela cheia e sair. Ela aparece quando o mouse mexe e some
+//! voltar ao FSS, estatísticas, tela cheia e sair. Ela aparece quando o mouse mexe e some
 //! depois de [`SOME_DEPOIS`] parado (o cursor some junto).
 //!
 //! Aqui fica só a parte que não depende do Windows: onde cada peça está
@@ -59,6 +59,8 @@ impl Retangulo {
 pub enum Botao {
     Mudo,
     Volume,
+    /// Traz a janela do FSS de volta (sem fechar o vídeo).
+    Inicio,
     Estatisticas,
     TelaCheia,
     Sair,
@@ -75,6 +77,7 @@ pub struct Layout {
     pub trilho: Retangulo,
     /// Onde escrever "75%".
     pub texto_volume: Retangulo,
+    pub inicio: Retangulo,
     pub estatisticas: Retangulo,
     pub tela_cheia: Retangulo,
     pub sair: Retangulo,
@@ -98,12 +101,14 @@ impl Layout {
         let sair = Retangulo::novo(w - MARGEM * e - SAIR * e, topo, SAIR * e, BOTAO * e);
         let tela_cheia = quadrado(sair.x0 - ESPACO * e - BOTAO * e);
         let estatisticas = quadrado(tela_cheia.x0 - ESPACO * e - BOTAO * e);
+        let inicio = quadrado(estatisticas.x0 - ESPACO * e - BOTAO * e);
         Self {
             barra,
             mudo,
             volume,
             trilho,
             texto_volume,
+            inicio,
             estatisticas,
             tela_cheia,
             sair,
@@ -116,6 +121,7 @@ impl Layout {
         [
             (self.mudo, Botao::Mudo),
             (self.volume, Botao::Volume),
+            (self.inicio, Botao::Inicio),
             (self.estatisticas, Botao::Estatisticas),
             (self.tela_cheia, Botao::TelaCheia),
             (self.sair, Botao::Sair),
@@ -151,6 +157,7 @@ pub enum Acao {
     AlternarMudo,
     Volume(u32),
     AlternarEstatisticas,
+    MostrarFss,
     AlternarTelaCheia,
     Sair,
 }
@@ -216,6 +223,7 @@ impl Controles {
                 match apertado.filter(|b| Some(*b) == solto) {
                     Some(Botao::Mudo) => Some(Acao::AlternarMudo),
                     Some(Botao::Estatisticas) => Some(Acao::AlternarEstatisticas),
+                    Some(Botao::Inicio) => Some(Acao::MostrarFss),
                     Some(Botao::TelaCheia) => Some(Acao::AlternarTelaCheia),
                     Some(Botao::Sair) => Some(Acao::Sair),
                     _ => None,
@@ -289,7 +297,7 @@ mod tests {
             for par in ordem.windows(2) {
                 assert!(par[0].x1 <= par[1].x0, "{par:?}");
             }
-            assert!(l.texto_volume.x1 <= l.estatisticas.x0);
+            assert!(l.texto_volume.x1 <= l.inicio.x0 && l.inicio.x1 <= l.estatisticas.x0);
             assert!(l.estatisticas.x1 <= l.tela_cheia.x0 && l.tela_cheia.x1 <= l.sair.x0);
             assert!(l.sair.x1 <= w as f32);
         }
