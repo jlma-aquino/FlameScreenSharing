@@ -205,6 +205,12 @@ Medido (link simulado de 8 Mbps, host querendo 20, 15 s):
 
 ## Pareamento e cifra
 
+Limite de palpites (`limite.rs`): o cliente aceita no máximo 5 `PairInit` novos
+por IP a cada 10 s e 40 no total (reenvio do mesmo não conta). Testes de
+robustez (`tests/robustez.rs` aqui e no `fluxo-proto`) passam lixo e pacotes
+corrompidos por todos os decodificadores e pelo servidor de sinalização.
+
+
 Com `SenderConfig`/`ReceiverConfig::pairing_code` (o padrão nos apps), o
 `fluxo-crypto` entra em cena:
 

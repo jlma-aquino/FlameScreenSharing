@@ -6,6 +6,14 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Atualizações assinadas** (ADR-020): cada versão vai com um `MANIFESTO.txt`
+  assinado (Ed25519) com a chave de quem publica; o atualizador recusa assinatura
+  que não confere, versão igual ou mais velha, zip alterado e caminhos perigosos
+  no zip. `fss-assinatura` gera a chave e assina.
+- **Expulsar espectador** (`expulsar N`, botão na janela): o IP dele não entra
+  mais naquela transmissão.
+- Limite de 5 tentativas de pareamento por IP a cada 10 s; testes de robustez
+  com lixo e pacotes corrompidos em todos os decodificadores de rede.
 - **Chave de acesso ao servidor** (ADR-019): o `fluxo-sinal` só atende pedidos
   assinados com uma das chaves dele (`--chaves`, `--nova-chave`); o resto é
   ignorado. A chave (`FSS1-…`) leva o endereço do servidor e o segredo; vai em
@@ -36,6 +44,12 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   (Windows e portátil). `DesktopCapturer::release_duplication`.
 
 ### Mudado
+- A janela passa a chave e os códigos ao host e ao cliente pela entrada padrão
+  (`--segredos-pela-entrada`), não pela linha de comando.
+- `--sem-cifra` só existe em compilação de teste.
+- UPnP desligado por padrão (`--usar-upnp`, opção em Conexão), renovado enquanto
+  o programa roda. "Copiar detalhes" mascara os IPs da internet.
+- LEIA-ME: firewall só em redes privadas.
 - O programa não traz mais o endereço do servidor do projeto: sem chave, as
   salas não funcionam (as formas sem servidor, sim). `fluxo-sinal` sem `--chaves`
   recusa subir, a não ser com `--aberto`.

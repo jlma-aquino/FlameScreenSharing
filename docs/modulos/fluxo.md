@@ -65,6 +65,18 @@ O que faltar vem do tema padrão. Com erro, a janela avisa a linha e usa o
 padrão. Um editor de temas dentro da janela pode vir depois, gravando o mesmo
 arquivo.
 
+## Segurança
+
+- **Segredos:** a chave do servidor e os códigos vão ao host e ao cliente pela
+  entrada padrão (`--segredos-pela-entrada`, `comandos::separar_segredos`), não
+  pela linha de comando, que outros programas do PC conseguem ler.
+- **Copiar detalhes** mascara os IPs da internet (`177.73.*.*`, `2804:14c:*`;
+  `saida::mascarar_ips`); a chave nunca aparece no registro.
+- **Expulsar:** quem compartilha vê quem está assistindo e pode expulsar; o IP
+  do expulso é recusado até o fim da transmissão (atinge todos daquele IP,
+  como os da mesma casa).
+- **UPnP** só com a opção marcada (Conexão).
+
 ## Botões ao vivo
 
 Os botões mandam uma linha pela entrada padrão do programa, que muda na hora e
@@ -78,6 +90,7 @@ confirmação.
 | Pausar / Continuar | `pausar` / `continuar` | `Vídeo: pausado` / `Vídeo: transmitindo` |
 | Qualidade ⏷ | `resolucao R` / `fps F` | `Qualidade: LxA, até F fps` |
 | Volume / mudo | `volume N` (0 a 100) | `Volume: N%` |
+| Expulsar | `expulsar N` | `Espectador N expulso (M no total)` |
 
 Como cada um funciona por dentro está em [fluxo-host](fluxo-host.md#comandos-ao-vivo)
 e [fluxo-client](fluxo-client.md). Decisão: ADR-017.
@@ -87,9 +100,12 @@ e [fluxo-client](fluxo-client.md). Decisão: ADR-017.
 Ao abrir, a janela pergunta à API do GitHub qual é a versão mais nova
 publicada em Releases (`src/atualizacao.rs`). Sendo mais nova:
 
-1. baixa `FlameScreenSharing.zip` e `SHA256SUMS.txt` com o `curl.exe` do Windows;
-2. confere o SHA-256 do zip (não conferiu: nada é trocado);
-3. abre o zip com o `tar.exe` do Windows numa pasta temporária;
+1. baixa o `MANIFESTO.txt` com o `curl.exe` do Windows e confere a assinatura
+   (Ed25519, com a chave pública embutida; ADR-020), que a versão assinada é a
+   anunciada e que é maior que esta. Não conferiu: nem baixa o zip;
+2. baixa `FlameScreenSharing.zip` e confere o SHA-256 assinado;
+3. lista o zip com o `tar.exe` do Windows e recusa qualquer caminho absoluto,
+   com `..`, letra de unidade ou `:`; só então abre numa pasta temporária;
 4. sem transmissão em andamento, troca os arquivos da pasta do programa (cada
    antigo vira `*.antigo`, apagado na abertura seguinte; o Windows deixa
    renomear o .exe em uso) e abre a versão nova, que mostra "Atualizado para
@@ -103,9 +119,9 @@ ser público. Para testar sem publicar, `FSS_ATUALIZACOES=file:///.../versao.jso
 troca o endereço da API.
 
 Teste local (2026-11-12): cópia instalada numa pasta, "versão 9.9.9" falsa por
-`file://` com o zip e o SHA-256 de verdade: baixou, conferiu, trocou os
-arquivos e abriu de novo com `--atualizado`. Com o SHA-256 errado, nada foi
-trocado e o programa seguiu aberto.
+`file://`, assinada com a chave de verdade: atualizou e reabriu com
+`--atualizado`. Com a tag dizendo 9.9.8 (manifesto da 9.9.9) e com o zip
+alterado depois de assinado, nada foi trocado. O manifesto de teste foi apagado.
 
 ## Nome e pacote para testes
 

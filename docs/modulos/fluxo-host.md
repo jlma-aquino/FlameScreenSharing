@@ -125,6 +125,7 @@ transmissão rodando e sem derrubar ninguém:
 | `pausar` / `continuar` | Para o vídeo na última imagem e volta | `Vídeo: pausado` / `Vídeo: transmitindo` |
 | `resolucao R` | Como `--resolucao` (`nativa` volta à da tela) | `Qualidade: LxA, até F fps` |
 | `fps F` | Como `--fps` (1 a 240) | `Qualidade: LxA, até F fps` |
+| `expulsar N` | Tira o espectador N; o IP dele não entra mais nesta transmissão | `Espectador N expulso (M no total)` |
 
 Por dentro:
 

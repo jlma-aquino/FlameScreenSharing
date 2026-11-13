@@ -533,7 +533,7 @@ o que garante os ~22 ms.
 
 ## ADR-018 — Atualização automática pelas Releases do GitHub
 
-**Status:** Aceito (2026-11-12)
+**Status:** Aceito (2026-11-12); a conferência passou a ser a do ADR-020
 
 **Contexto.** Cada versão nova ia por zip, mandado à mão, e todos precisam da
 mesma versão para se conectar. O pedido: verificar se há atualização e, havendo,
@@ -598,6 +598,40 @@ rede).
   resposta; o SPAKE2 protege o pareamento).
 - 🔁 Limite de pedidos por IP e de salas, se uma chave vazar e for usada para
   abusar; chave própria do repassador (relay), quando ele existir.
+
+## ADR-020 — Atualizações assinadas e endurecimento geral
+
+**Status:** Aceito (2026-11-12)
+
+**Contexto.** O atualizador (ADR-018) conferia só o SHA-256 publicado na mesma
+Release: com a conta do GitHub invadida, uma versão falsa seria instalada em
+todos os PCs. Uma revisão de segurança apontou também a chave do servidor na
+linha de comando dos programas, o `--sem-cifra` no programa de produção, o UPnP
+ligado por padrão, a falta de limite de palpites de código, de um jeito de
+tirar alguém da transmissão e IPs no texto de "Copiar detalhes".
+
+**Decisão.**
+- Cada versão leva um `MANIFESTO.txt` assinado com Ed25519 (`ed25519-dalek`):
+  versão, nome e SHA-256 do zip. A chave privada fica só no PC de quem publica
+  (`.secrets\`, `fss-assinatura`); o programa traz a pública. Recusa assinatura
+  que não confere, versão diferente da anunciada ou não maior que a sua, zip
+  com outro SHA-256 e caminhos perigosos dentro do zip.
+- Segredos pela entrada padrão (`--segredos-pela-entrada`); `--sem-cifra` só
+  em compilação de teste; UPnP opcional, renovado enquanto o programa roda;
+  5 `PairInit` novos por IP a cada 10 s; `expulsar N`; IPs mascarados ao copiar.
+
+**Consequências.**
+- ➕ Conta do GitHub invadida não basta para distribuir uma versão.
+- ➕ Nenhuma mudança no protocolo nem no caminho do vídeo (custo zero).
+- ➖ Perder a chave privada impede publicar versões que os programas aceitem:
+  precisa de cópia de segurança. Trocar a chave exige que todos instalem uma
+  versão nova à mão.
+- ➖ Segredos pela entrada não protegem de um programa que já leia a memória
+  dos outros (mesmo usuário); a chave também fica em texto no arquivo de
+  configurações.
+- ➖ Expulsar bloqueia o IP: atinge todos atrás do mesmo IP.
+- 🔁 Assinatura de código do Windows (Authenticode); chave do servidor cifrada
+  no disco (DPAPI); trocar o código da sala sem encerrar.
 
 ---
 
