@@ -15,3 +15,5 @@ unsafe-libopus = "0.2"
 # WASAPI: captura (loopback) e reprodução.
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
+# O callback COM da captura sem o som do FSS (#[implement]).
+windows-core = "0.61"

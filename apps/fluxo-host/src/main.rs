@@ -65,6 +65,9 @@ Opções:
   --sem-audio           não transmite o som do PC (por padrão vai junto, em Opus)
   --audio-dispositivo N captura o som da saída N (padrão: a saída padrão do Windows;
                         a lista aparece em fluxo-bench audio)
+  --som-sem-processo P  captura o som de tudo menos o do processo P e dos filhos dele
+                        (Windows 10 2004+): a janela do FSS passa o número dela, e o
+                        som de quem você assiste não volta na sua transmissão
   --encoder E           auto, nvenc ou mf (padrão auto)
   --codec C             auto, h264, hevc ou av1 (padrão auto: o melhor que a GPU
                         codifica e o cliente decodifica, na ordem AV1, HEVC, H.264)
@@ -123,6 +126,8 @@ struct Opts {
     /// Sem áudio, e de qual saída de som capturar (`None`: a padrão).
     sem_audio: bool,
     audio_dispositivo: Option<usize>,
+    /// Captura o som sem o deste processo e dos filhos dele (a janela do FSS).
+    som_sem_processo: Option<u32>,
     /// TTL dos pedidos até o furo do cliente chegar (0 = normal).
     ttl_furo: u32,
     monitor: usize,
@@ -182,6 +187,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         ttl_furo: fluxo_net::PUNCH_TTL,
         sem_audio: false,
         audio_dispositivo: None,
+        som_sem_processo: None,
         monitor: 0,
         janela_captura: None,
         encoder: Default::default(),
@@ -215,6 +221,13 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--sala" => o.sala = true,
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--sem-audio" => o.sem_audio = true,
+            "--som-sem-processo" => {
+                o.som_sem_processo = Some(
+                    valor()?
+                        .parse()
+                        .map_err(|_| "som-sem-processo: use o número do processo")?,
+                )
+            }
             "--audio-dispositivo" => {
                 o.audio_dispositivo = Some(valor()?.parse().map_err(|_| "audio-dispositivo inválido")?)
             }
@@ -492,6 +505,7 @@ fn codificar(
 fn transmitir_audio(
     tx: &espectadores::Espectadores,
     dispositivo: Option<usize>,
+    sem_processo: Option<u32>,
     parar: &std::sync::atomic::AtomicBool,
     ligado: &std::sync::atomic::AtomicBool,
 ) -> Result<String, fluxo_audio::AudioError> {
@@ -508,7 +522,19 @@ fn transmitir_audio(
         })
         .map(|d| d.name)
         .unwrap_or_default();
-    let mut cap = LoopbackCapture::new(dispositivo)?;
+    // Sem o som do FSS (o de quem você assiste), se pedido e sem saída escolhida.
+    let (mut cap, nome) = match (sem_processo, dispositivo) {
+        (Some(pid), None) => {
+            match LoopbackCapture::excluding_process(pid) {
+                Ok(c) => (c, "tudo o que o PC toca, menos o som do FSS".to_string()),
+                Err(e) => {
+                    println!("  (sem a captura que tira o som do FSS: {e}; o som de quem você assiste volta junto)");
+                    (LoopbackCapture::new(None)?, nome)
+                }
+            }
+        }
+        _ => (LoopbackCapture::new(dispositivo)?, nome),
+    };
     // FEC para ~5% de perda: um quadro perdido é refeito pelo seguinte.
     let mut enc = Encoder::new(DEFAULT_BITRATE, 5)?;
     println!(
@@ -857,10 +883,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             o.audio_dispositivo,
             som_ligado.clone(),
         );
+        let sem_processo = o.som_sem_processo;
         Some(
             std::thread::Builder::new()
                 .name("fluxo-audio".into())
-                .spawn(move || transmitir_audio(&tx, disp, &parar, &som))?,
+                .spawn(move || transmitir_audio(&tx, disp, sem_processo, &parar, &som))?,
         )
     };
 

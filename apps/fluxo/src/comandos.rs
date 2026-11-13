@@ -114,6 +114,10 @@ impl Compartilhar {
         if !self.audio {
             a.push("--sem-audio".to_string());
         }
+        // O som de quem você assiste (um filho desta janela) fica fora da sua transmissão.
+        if c.som_de.is_none() {
+            a.extend(["--som-sem-processo".to_string(), std::process::id().to_string()]);
+        }
         Ok(a)
     }
 }

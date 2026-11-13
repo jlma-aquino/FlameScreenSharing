@@ -244,7 +244,139 @@ pub struct LoopbackCapture {
 /// silêncio para o fluxo não parar.
 const SILENCIO_DEPOIS: Duration = Duration::from_millis(30);
 
+/// Avisa quando a ativação assíncrona do áudio termina (a interface COM que
+/// o Windows chama de volta; ágil, para poder vir de qualquer thread).
+// Objetos do `implement` já são ágeis (IAgileObject) por padrão.
+#[windows_core::implement(windows::Win32::Media::Audio::IActivateAudioInterfaceCompletionHandler)]
+struct Ativado(std::sync::mpsc::SyncSender<()>);
+
+impl windows::Win32::Media::Audio::IActivateAudioInterfaceCompletionHandler_Impl for Ativado_Impl {
+    fn ActivateCompleted(
+        &self,
+        _: windows_core::Ref<'_, windows::Win32::Media::Audio::IActivateAudioInterfaceAsyncOperation>,
+    ) -> windows_core::Result<()> {
+        let _ = self.0.send(());
+        Ok(())
+    }
+}
+
 impl LoopbackCapture {
+    /// Captura o que o PC toca **menos** o som do processo `pid` e dos filhos
+    /// dele (Windows 10 2004+). O FSS passa o número da própria janela: o som
+    /// de quem você está assistindo (um processo filho dela) não volta na sua
+    /// transmissão. Sempre da mistura de todas as saídas, em 48 kHz estéreo.
+    pub fn excluding_process(pid: u32) -> Result<Self, AudioError> {
+        use windows::Win32::Media::Audio::{
+            ActivateAudioInterfaceAsync, IActivateAudioInterfaceCompletionHandler,
+            AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
+            AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
+            PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+        };
+        use windows::Win32::System::Com::StructuredStorage::{
+            PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+        };
+        use windows::Win32::System::Com::BLOB;
+        use windows::Win32::System::Variant::VT_BLOB;
+        use windows_core::Interface;
+
+        // SAFETY: COM do processo; parâmetros vivem até o fim da ativação
+        // (esperada logo abaixo); o formato é nosso, na pilha.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let params = AUDIOCLIENT_ACTIVATION_PARAMS {
+                ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+                Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+                    ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+                        TargetProcessId: pid,
+                        ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+                    },
+                },
+            };
+            // ManuallyDrop: o PROPVARIANT do `windows` se limpa sozinho ao sair de escopo, e
+            // liberaria o blob, que é nosso e está na pilha (heap corrompido).
+            let pv = std::mem::ManuallyDrop::new(PROPVARIANT {
+                Anonymous: PROPVARIANT_0 {
+                    Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
+                        vt: VT_BLOB,
+                        wReserved1: 0,
+                        wReserved2: 0,
+                        wReserved3: 0,
+                        Anonymous: PROPVARIANT_0_0_0 {
+                            blob: BLOB {
+                                cbSize: std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
+                                pBlobData: &params as *const _ as *mut u8,
+                            },
+                        },
+                    }),
+                },
+            });
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let aviso: IActivateAudioInterfaceCompletionHandler = Ativado(tx).into();
+            let op = ActivateAudioInterfaceAsync(
+                VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+                &IAudioClient::IID,
+                Some(&*pv),
+                &aviso,
+            )
+            .map_err(win("pedir a captura sem o som do FSS (Windows 10 2004+)"))?;
+            rx.recv_timeout(Duration::from_secs(5))
+                .map_err(|_| AudioError::Windows {
+                    context: "ativar a captura sem o som do FSS",
+                    message: "o Windows não respondeu".into(),
+                })?;
+            let mut hr = windows_core::HRESULT(0);
+            let mut interface = None;
+            op.GetActivateResult(&mut hr, &mut interface)
+                .map_err(win("ativar a captura sem o som do FSS"))?;
+            hr.ok().map_err(win("ativar a captura sem o som do FSS"))?;
+            let cliente: IAudioClient = interface
+                .ok_or_else(|| AudioError::Windows {
+                    context: "ativar a captura sem o som do FSS",
+                    message: "sem interface".into(),
+                })?
+                .cast()
+                .map_err(win("captura sem o som do FSS"))?;
+            // Este modo não tem formato de mistura: o nosso, float 48 kHz estéreo.
+            let fmt = WAVEFORMATEX {
+                wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
+                nChannels: CHANNELS as u16,
+                nSamplesPerSec: SAMPLE_RATE,
+                nAvgBytesPerSec: SAMPLE_RATE * CHANNELS as u32 * 4,
+                nBlockAlign: (CHANNELS * 4) as u16,
+                wBitsPerSample: 32,
+                cbSize: 0,
+            };
+            cliente
+                .Initialize(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    AUDCLNT_STREAMFLAGS_LOOPBACK,
+                    2_000_000,
+                    0,
+                    &fmt,
+                    None,
+                )
+                .map_err(win("iniciar a captura sem o som do FSS"))?;
+            let captura: IAudioCaptureClient = cliente.GetService().map_err(win("captura do som"))?;
+            cliente.Start().map_err(win("começar a captura do som"))?;
+            let formato = Formato {
+                taxa: SAMPLE_RATE,
+                canais: CHANNELS,
+                amostra: Amostra::F32,
+                bloco: CHANNELS * 4,
+            };
+            Ok(Self {
+                cliente,
+                captura,
+                conv: Converter::new(SAMPLE_RATE, CHANNELS, SAMPLE_RATE, CHANNELS),
+                formato,
+                acumulado: Vec::new(),
+                inicio: Instant::now(),
+                entregues: 0,
+                da_placa: 0,
+            })
+        }
+    }
+
     /// Captura da saída de som `dispositivo` (ver [`output_devices`];
     /// `None`: a padrão do Windows).
     pub fn new(dispositivo: Option<usize>) -> Result<Self, AudioError> {

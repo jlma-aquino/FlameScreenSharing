@@ -1167,6 +1167,7 @@ version = "0.1.0"
 dependencies = [
  "unsafe-libopus",
  "windows",
+ "windows-core",
 ]
 
 [[package]]
