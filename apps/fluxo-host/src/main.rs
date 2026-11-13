@@ -387,17 +387,17 @@ fn codecs_candidatos(
     let decodifica = |c: VideoCodec| mascara & c.bit() != 0;
     match pedido {
         Some(c) if decodifica(c) => Ok(vec![c]),
+        // Pedido que quem assiste não decodifica na placa: vale o melhor que os
+        // dois têm, em vez de recusar (o pedido é uma preferência).
         Some(c) => {
-            let tem: Vec<&str> = VideoCodec::PREFERENCE
+            println!(
+                "(quem assiste não decodifica {} na placa de vídeo; usando o melhor que os dois têm)",
+                c.name()
+            );
+            Ok(VideoCodec::PREFERENCE
                 .into_iter()
                 .filter(|&c| decodifica(c))
-                .map(VideoCodec::name)
-                .collect();
-            Err(format!(
-                "o cliente não decodifica {} (decodifica: {}); use --codec auto",
-                c.name(),
-                tem.join(", ")
-            ))
+                .collect())
         }
         None => Ok(VideoCodec::PREFERENCE
             .into_iter()
@@ -1033,15 +1033,6 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             let comum = tx.codecs_comuns(n.codecs);
-            if codec_pedido.is_some_and(|c| comum & c.bit() == 0) {
-                println!(
-                    "Espectador {} não conectou: não decodifica o codec pedido",
-                    n.numero
-                );
-                ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                std::thread::spawn(move || drop(n.tx));
-                continue;
-            }
             if comum & codec.bit() == 0 {
                 let (novo, aberto) = abrir_com_codec(&device, codec_pedido, Some(comum), |c| {
                     config_para(captura.0, captura.1, c)
@@ -1279,9 +1270,12 @@ mod tests {
     }
 
     #[test]
-    fn pedido_que_o_cliente_nao_decodifica_explica_o_que_ele_tem() {
-        let e = codecs_candidatos(Some(Hevc), Some(H264.bit() | Av1.bit())).unwrap_err();
-        assert!(e.contains("HEVC") && e.contains("AV1, H.264"), "{e}");
+    fn pedido_que_o_cliente_nao_decodifica_vira_o_melhor_comum() {
+        assert_eq!(
+            codecs_candidatos(Some(Hevc), Some(H264.bit() | Av1.bit())),
+            Ok(vec![Av1, H264])
+        );
+        assert_eq!(codecs_candidatos(Some(Av1), Some(H264.bit())), Ok(vec![H264]));
         assert_eq!(codecs_candidatos(Some(Av1), Some(Av1.bit() | 1)), Ok(vec![Av1]));
     }
 }

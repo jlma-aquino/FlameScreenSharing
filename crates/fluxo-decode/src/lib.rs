@@ -37,7 +37,9 @@ use std::fmt;
 mod mf;
 
 #[cfg(windows)]
-pub use mf::{available_decoders, create_device, decodable_codecs, DecodedFrame, VideoDecoder};
+pub use mf::{
+    available_decoders, codecs_da_placa, create_device, decodable_codecs, DecodedFrame, VideoDecoder,
+};
 
 pub use fluxo_proto::VideoCodec;
 

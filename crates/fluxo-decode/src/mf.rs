@@ -520,14 +520,54 @@ pub fn available_decoders() -> Vec<(&'static str, Vec<(String, bool)>)> {
 
 /// Codecs que [`VideoDecoder::with_codec`] consegue abrir nesta máquina,
 /// como máscara de [`VideoCodec::bit`] (o que o cliente anuncia ao host).
-/// H.264 sempre; HEVC e AV1 se houver um decoder síncrono instalado (os de
-/// hardware assíncronos não servem para o nosso laço de decode).
+/// H.264 sempre; HEVC e AV1 só se houver um decoder síncrono instalado (os de
+/// hardware assíncronos não servem para o nosso laço de decode) **e** a placa
+/// de vídeo tiver o perfil de decode do codec. Sem o perfil, a extensão da
+/// Store decodifica pelo processador: lento, e foi o que fez o vídeo ficar
+/// lento e piscando numa placa AMD sem AV1. Aí o host usa outro codec.
 pub fn decodable_codecs() -> u8 {
     iniciar_mf();
+    let placa = codecs_da_placa();
     VideoCodec::PREFERENCE
         .into_iter()
-        .filter(|&c| c == VideoCodec::H264 || !decoders_sincronos(&subtipo(c)).is_empty())
+        .filter(|&c| {
+            c == VideoCodec::H264 || (placa & c.bit() != 0 && !decoders_sincronos(&subtipo(c)).is_empty())
+        })
         .fold(0, |m, c| m | c.bit())
+}
+
+/// Codecs que a placa de vídeo padrão decodifica no hardware (perfis de
+/// decode do D3D11 com saída NV12), como máscara.
+pub fn codecs_da_placa() -> u8 {
+    use windows::Win32::Graphics::Direct3D11::{
+        ID3D11VideoDevice, D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0, D3D11_DECODER_PROFILE_HEVC_VLD_MAIN,
+    };
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
+
+    let Ok(device) = crate::create_device() else {
+        return VideoCodec::H264.bit();
+    };
+    let Ok(video) = device.cast::<ID3D11VideoDevice>() else {
+        return VideoCodec::H264.bit();
+    };
+    let tem = |perfil: windows::core::GUID| {
+        // SAFETY: consultas ao device de vídeo; só leem.
+        unsafe {
+            (0..video.GetVideoDecoderProfileCount())
+                .any(|i| video.GetVideoDecoderProfile(i).is_ok_and(|g| g == perfil))
+                && video
+                    .CheckVideoDecoderFormat(&perfil, DXGI_FORMAT_NV12)
+                    .is_ok_and(|b| b.as_bool())
+        }
+    };
+    let mut m = VideoCodec::H264.bit();
+    if tem(D3D11_DECODER_PROFILE_HEVC_VLD_MAIN) {
+        m |= VideoCodec::Hevc.bit();
+    }
+    if tem(D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0) {
+        m |= VideoCodec::Av1.bit();
+    }
+    m
 }
 
 fn iniciar_mf() {
