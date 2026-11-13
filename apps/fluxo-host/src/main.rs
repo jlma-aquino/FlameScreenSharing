@@ -1266,7 +1266,7 @@ mod tests {
     #[test]
     fn sem_noticia_do_cliente_so_h264() {
         assert_eq!(codecs_candidatos(None, None), Ok(vec![H264]));
-        assert!(codecs_candidatos(Some(Av1), None).is_err());
+        assert_eq!(codecs_candidatos(Some(Av1), None), Ok(vec![H264]));
     }
 
     #[test]
