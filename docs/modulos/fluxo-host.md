@@ -113,6 +113,18 @@ resumo, encode igual (2,2 ms), captura→chegada p50 ~11 ms. Um espectador só c
 H.264 entrando obrigou a troca de AV1 para H.264, sem frame perdido para quem já
 assistia. O quinto foi recusado, e o que caiu saiu da lista.
 
+## Janela em vez do monitor
+
+`--janela-captura H` (ou o comando `janela H`) transmite só a janela H (`fonte.rs`,
+sobre o `WindowCapturer` do fluxo-capture). Testado com a janela do próprio
+FSS: janela, troca para a tela e de volta, janela fechada (voltou para a tela
+1), 907 de 907 quadros decodificados. Com janela, o teto automático de
+bitrate é o da tela.
+
+A cada começo e mudança o host imprime `Configuração: AV1 · 1920x1080 · até
+60 fps · até 20 Mbps`, que a janela do FSS mostra. O codec pedido (`--codec`)
+é uma preferência: quem assiste não decodifica, vale o melhor que os dois têm.
+
 ## Comandos ao vivo
 
 Também pela entrada padrão (são os botões da barra da janela), com a
@@ -121,6 +133,7 @@ transmissão rodando e sem derrubar ninguém:
 | Linha | Faz | Confirma |
 |---|---|---|
 | `tela N` | Transmite o monitor N (o índice de `--monitor`) | `Tela: monitor N+1 (LxA)` |
+| `janela H` | Transmite só a janela H (HWND); se ela fechar, volta para a tela 1 | `Tela: janela H (LxA)` |
 | `som ligado` / `som desligado` | Liga ou desliga o som do PC | `Som: ligado` / `Som: desligado` |
 | `pausar` / `continuar` | Para o vídeo na última imagem e volta | `Vídeo: pausado` / `Vídeo: transmitindo` |
 | `resolucao R` | Como `--resolucao` (`nativa` volta à da tela) | `Qualidade: LxA, até F fps` |

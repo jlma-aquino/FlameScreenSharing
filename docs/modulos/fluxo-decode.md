@@ -23,7 +23,8 @@ decode e ficam de fora. Por que esse caminho: ADR-007 em [DECISOES.md](../DECISO
 | `create_device()` | Device D3D11 na GPU padrão com suporte a vídeo e proteção multithread |
 | `VideoDecoder::new(&device)` | Decoder H.264; o tamanho do vídeo vem do primeiro keyframe |
 | `VideoDecoder::with_codec(&device, codec)` | Decoder de H.264, HEVC ou AV1 (erro se o Windows não tiver) |
-| `decodable_codecs()` | Máscara dos codecs que `with_codec` abre aqui: o que o cliente anuncia ao host |
+| `decodable_codecs()` | Máscara dos codecs que dá para decodificar **na placa** aqui: o que o cliente anuncia ao host. HEVC e AV1 só com o decoder instalado e o perfil de decode na GPU (`codecs_da_placa`); sem o perfil, a extensão da Store decodificaria pelo processador (lento, imagem piscando: visto numa AMD sem AV1) |
+| `codecs_da_placa()` | Codecs com perfil de decode D3D11 (NV12) na placa padrão |
 | `available_decoders()` | Todos os MFTs de cada codec, de hardware e de software (`fluxo-bench encoders`) |
 | `dec.decode(&bytes)` | Um frame completo → `Some(DecodedFrame)` ou `None` (antes do 1º keyframe) |
 | `dec.is_hardware()` / `dec.name()` | Se o DXVA está ativo |

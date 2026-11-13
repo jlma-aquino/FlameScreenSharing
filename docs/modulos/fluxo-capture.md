@@ -52,6 +52,16 @@ AND/XOR; pixels de "inverter o que está embaixo" (cursor de texto) viram
 preto com contorno branco. O host manda isso ao cliente, que desenha o
 ponteiro por cima do vídeo ([fluxo-net](fluxo-net.md), "Cursor").
 
+## Captura de uma janela (`src/janela.rs`)
+
+`WindowCapturer` usa a Windows.Graphics.Capture (Windows 10 1903+): pega uma
+janela mesmo com outras por cima. `list_windows()` lista as janelas de
+programas (visíveis, com título, sem ferramentas nem janelas escondidas pelo
+sistema). Cada frame é copiado na GPU para uma textura nossa de tamanho par
+(o NV12 do encoder exige) e o frame do Windows volta na hora. O cursor vem
+desenhado na imagem. Quando a janela muda de tamanho, o pool acompanha e o
+host recria o encoder (keyframe). Janela fechada: `CaptureError::Window`.
+
 ## Limitações conhecidas
 
 - Captura monitor inteiro (não janela).

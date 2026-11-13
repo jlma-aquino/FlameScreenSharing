@@ -85,7 +85,7 @@ confirmação.
 
 | Botão | Linha | Confirmação |
 |---|---|---|
-| Tela ⏷ | `tela N` (N a partir de 0) | `Tela: monitor N+1 (LxA)` |
+| Tela ⏷ | `tela N` (N a partir de 0) ou `janela H` | `Tela: monitor N+1 (LxA)` / `Tela: janela H (LxA)` |
 | Som | `som ligado` / `som desligado` | `Som: ligado` / `Som: desligado` |
 | Pausar / Continuar | `pausar` / `continuar` | `Vídeo: pausado` / `Vídeo: transmitindo` |
 | Qualidade ⏷ | `resolucao R` / `fps F` | `Qualidade: LxA, até F fps` |

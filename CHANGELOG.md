@@ -6,6 +6,12 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Compartilhar uma janela** (Windows.Graphics.Capture): no cartão de compartilhar
+  e no menu Tela da barra; `fluxo-host --janela-captura HWND` e o comando `janela H`.
+  Se a janela fecha, a transmissão volta para a tela 1.
+- **Indicador da configuração**: "AV1 · 1920x1080 · até 60 fps · até 20 Mbps" no
+  estado da transmissão; o menu Qualidade marca a opção atual; o painel (F2) de quem
+  assiste mostra codec, resolução e se decodifica na GPU.
 - **Atualizações assinadas** (ADR-020): cada versão vai com um `MANIFESTO.txt`
   assinado (Ed25519) com a chave de quem publica; o atualizador recusa assinatura
   que não confere, versão igual ou mais velha, zip alterado e caminhos perigosos
@@ -44,6 +50,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   (Windows e portátil). `DesktopCapturer::release_duplication`.
 
 ### Mudado
+- **Vídeo lento e piscando em placa sem AV1** (visto numa AMD): o cliente só anuncia
+  HEVC/AV1 se a placa tem o perfil de decode; senão o host usa H.264. O codec
+  escolhido nas configurações vira preferência (antes, quem não decodificava era
+  recusado).
 - A janela passa a chave e os códigos ao host e ao cliente pela entrada padrão
   (`--segredos-pela-entrada`), não pela linha de comando.
 - `--sem-cifra` só existe em compilação de teste.
