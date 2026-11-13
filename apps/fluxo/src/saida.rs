@@ -38,6 +38,8 @@ pub enum Evento {
     Pausa(bool),
     /// Host: resolução e fps depois de uma mudança (`1280x720, até 30 fps`).
     Qualidade(String),
+    /// Host: o que está valendo (`AV1 · 1920x1080 · até 60 fps · até 20 Mbps`).
+    Configuracao(String),
     /// Cliente: volume agora, 0 a 100.
     Volume(u32),
     /// Um pedido da janela não deu certo; a transmissão segue.
@@ -130,6 +132,9 @@ pub fn ler(linha: &str) -> Evento {
         "Vídeo: pausado" => return Evento::Pausa(true),
         "Vídeo: transmitindo" => return Evento::Pausa(false),
         _ => {}
+    }
+    if let Some(c) = t.strip_prefix("Configuração: ") {
+        return Evento::Configuracao(c.to_string());
     }
     if let Some(q) = t.strip_prefix("Qualidade: ") {
         return Evento::Qualidade(q.to_string());
@@ -362,6 +367,10 @@ mod tests {
             Evento::Qualidade("1280x720, até 30 fps".into())
         );
         assert_eq!(ler("Volume: 35%"), Evento::Volume(35));
+        assert_eq!(
+            ler("Configuração: AV1 · 1920x1080 · até 60 fps · até 20 Mbps"),
+            Evento::Configuracao("AV1 · 1920x1080 · até 60 fps · até 20 Mbps".into())
+        );
         assert!(matches!(
             ler("Não consegui trocar de tela: monitor 7 não existe"),
             Evento::Recusado(_)

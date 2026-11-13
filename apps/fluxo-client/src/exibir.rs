@@ -122,6 +122,8 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
 
     // Painel sobre a imagem: o texto muda 1×/s; F2 liga e desliga.
     let mut texto_painel = cfg.espera.clone();
+    // Tamanho do último frame mostrado, para o painel.
+    let mut tamanho_video = (0u32, 0u32);
     let mut painel_ligado = false;
     // Já avisou no título que o host pareou (antes da primeira imagem).
     let mut avisou_pareado = false;
@@ -215,7 +217,10 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
                         }
                         let t = Instant::now();
                         match decoder.decode(&f.frame.data) {
-                            Ok(Some(d)) if show => para_mostrar = Some((d, f.frame.timestamp_us)),
+                            Ok(Some(d)) if show => {
+                                tamanho_video = (d.width(), d.height());
+                                para_mostrar = Some((d, f.frame.timestamp_us))
+                            }
                             Ok(_) => escondidos += !show as u64,
                             Err(e) => {
                                 // Bitstream estragado: recomeça no próximo
@@ -294,7 +299,11 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
                 if s.encrypted { " · cifrado" } else { "" },
             ));
             texto_painel = format!(
-                "{frames_seg} fps · {mbps:.1} Mbps\n{latencia}\nRTT {:.1} ms · fila {:.0} ms\nperdidos {} · FEC {}\n{}F2 esconde",
+                "{} · {}x{} · {}\n{frames_seg} fps · {mbps:.1} Mbps\n{latencia}\nRTT {:.1} ms · fila {:.0} ms\nperdidos {} · FEC {}\n{}F2 esconde",
+                decoder.codec().name(),
+                tamanho_video.0,
+                tamanho_video.1,
+                if decoder.is_hardware() { "GPU" } else { "processador" },
                 s.rtt.smoothed_ms, s.queue_delay_ms, s.reassembly.frames_lost, s.reassembly.fec_recovered,
                 if s.encrypted { "cifrado · " } else { "SEM CIFRA · " },
             );

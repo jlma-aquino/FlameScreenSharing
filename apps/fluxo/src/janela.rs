@@ -140,6 +140,11 @@ struct Sessao {
     pausado: bool,
     /// Host: resolução e fps depois de uma mudança.
     qualidade: Option<String>,
+    /// Host: codec, resolução, fps e bitrate valendo agora.
+    configuracao: Option<String>,
+    /// Host: resolução (valor de `--resolucao`) e fps escolhidos, para marcar no menu.
+    resolucao_atual: &'static str,
+    fps_atual: u32,
     /// Cliente: volume escolhido (o mudo não mexe nele).
     volume: u32,
     mudo: bool,
@@ -175,6 +180,9 @@ impl Sessao {
             som: cfg.som,
             pausado: false,
             qualidade: None,
+            configuracao: None,
+            resolucao_atual: RESOLUCOES[cfg.resolucao.min(RESOLUCOES.len() - 1)].1,
+            fps_atual: cfg.fps,
             volume: cfg.volume,
             mudo: false,
             volume_enviado: cfg.volume,
@@ -217,6 +225,7 @@ impl Sessao {
                 Evento::Som(sim) => self.som = sim,
                 Evento::Pausa(sim) => self.pausado = sim,
                 Evento::Qualidade(q) => self.qualidade = Some(q),
+                Evento::Configuracao(c) => self.configuracao = Some(c),
                 Evento::Volume(_) => {}
                 Evento::Recusado(m) => self.aviso = Some(m),
                 Evento::Erro(e) => self.erro = Some(e),
@@ -853,10 +862,16 @@ impl Janela {
                 } else {
                     "sem som".into()
                 });
-                if let Some(q) = &s.qualidade {
-                    linha.push(q.clone());
-                }
                 ui.label(RichText::new(linha.join(" · ")).color(p.texto_fraco));
+                match (&s.configuracao, &s.qualidade) {
+                    (Some(c), _) => {
+                        ui.label(RichText::new(c).strong().color(p.texto));
+                    }
+                    (None, Some(q)) => {
+                        ui.label(RichText::new(q).color(p.texto_fraco));
+                    }
+                    _ => {}
+                }
                 if let Some(r) = &s.relatorio {
                     ui.label(RichText::new(r).color(p.texto_fraco).size(13.0));
                 }
@@ -1415,7 +1430,8 @@ fn controles_host(ui: &mut egui::Ui, s: &mut Sessao, p: &Paleta, raio: u8, monit
         egui::containers::menu::MenuButton::from_button(qualidade).ui(ui, |ui| {
             ui.label(RichText::new("Resolução").strong());
             for (nome, valor) in RESOLUCOES {
-                if ui.button(nome).clicked() {
+                if ui.selectable_label(s.resolucao_atual == valor, nome).clicked() {
+                    s.resolucao_atual = valor;
                     s.mandar(&format!("resolucao {valor}"));
                     ui.close();
                 }
@@ -1423,7 +1439,11 @@ fn controles_host(ui: &mut egui::Ui, s: &mut Sessao, p: &Paleta, raio: u8, monit
             ui.separator();
             ui.label(RichText::new("Quadros por segundo").strong());
             for f in FPS {
-                if ui.button(format!("{f} fps")).clicked() {
+                if ui
+                    .selectable_label(s.fps_atual == f, format!("{f} fps"))
+                    .clicked()
+                {
+                    s.fps_atual = f;
                     s.mandar(&format!("fps {f}"));
                     ui.close();
                 }

@@ -861,6 +861,15 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             false => String::new(),
         }
     );
+    // Para a janela mostrar o que está valendo (ver apps/fluxo/src/saida.rs).
+    println!(
+        "Configuração: {} · {}x{} · até {} fps · até {:.0} Mbps",
+        codec.name(),
+        vw,
+        vh,
+        fps,
+        max_kbps as f64 / 1000.0
+    );
     if tx.stats().encrypted {
         println!("  pareado: só esse cliente recebe, tudo cifrado (ChaCha20-Poly1305)");
     }
@@ -978,6 +987,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 onda_ativa = false;
                 let (vw, vh) = tamanho(captura.0, captura.1);
                 println!("Qualidade: {vw}x{vh}, até {fps} fps");
+                println!(
+                    "Configuração: {} · {}x{} · até {} fps · até {:.0} Mbps",
+                    codec.name(),
+                    tamanho(captura.0, captura.1).0,
+                    tamanho(captura.0, captura.1).1,
+                    fps,
+                    max_kbps as f64 / 1000.0
+                );
             }
         }
         // Com um pendente, espera no máximo até o horário dele; sem pendente,
@@ -1045,6 +1062,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 codec = novo;
                 enc = aberto.encoder;
                 onda_ativa = false;
+                println!(
+                    "Configuração: {} · {}x{} · até {} fps · até {:.0} Mbps",
+                    codec.name(),
+                    tamanho(captura.0, captura.1).0,
+                    tamanho(captura.0, captura.1).1,
+                    fps,
+                    max_kbps as f64 / 1000.0
+                );
             }
             let quantos = tx.adicionar(n.numero, n.tx, n.codecs, adaptativo.then(novo_abr));
             println!("Espectador {} conectou ({quantos} no total)", n.numero);
