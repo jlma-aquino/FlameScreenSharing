@@ -102,8 +102,8 @@ Opções:
                         lê da entrada, antes de tudo, linhas --opcao valor até a linha fim
                         (a chave e os códigos fora da linha de comando, que outros
                         programas do PC conseguem ler)
-  --porta P       porta UDP onde escutar (padrão: 9000 na mesma rede; qualquer
-                  livre na sala e com --internet, para dar dois clientes no mesmo PC)
+  --porta P       porta UDP onde escutar (padrão 9000; na sala e com --internet, se a
+                  9000 estiver ocupada por outro cliente deste PC, qualquer livre)
   --vsync         sincroniza com o monitor (sem tearing; até 1 quadro a mais de atraso)
   --segundos S    fecha sozinho depois de S segundos do primeiro frame (padrão 0 = não)
   --largura L     largura inicial da janela (padrão 1280)
@@ -135,6 +135,8 @@ No PC que compartilha:  fluxo-host --destino <IP deste PC>:9000 --codigo <códig
 
 struct Opts {
     porta: u16,
+    /// A 9000 ocupada (outro cliente neste PC): serve qualquer porta livre.
+    porta_flexivel: bool,
     vsync: bool,
     segundos: f64,
     largura: u32,
@@ -165,6 +167,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut porta_dada = false;
     let mut o = Opts {
         porta: 9000,
+        porta_flexivel: false,
         vsync: false,
         segundos: 0.0,
         largura: 1280,
@@ -215,11 +218,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             outro => return Err(format!("opção desconhecida: {outro}")),
         }
     }
-    // Na sala e com --internet o endereço vai pelo servidor ou no código:
-    // qualquer porta livre serve, e dois clientes cabem no mesmo PC.
-    if !porta_dada && (o.sala.is_some() || o.internet) {
-        o.porta = 0;
-    }
+    // Na sala e com --internet o endereço vai pelo servidor ou no código: a
+    // 9000 primeiro (onde ela passa pelo roteador de quem assiste, a conexão
+    // depende dela), e qualquer porta livre se outro cliente deste PC já a usa.
+    o.porta_flexivel = !porta_dada && (o.sala.is_some() || o.internet);
     if let (Some(k), None) = (&o.chave, &o.sinal) {
         o.sinal = Some(k.server().to_string());
     }
@@ -322,7 +324,10 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
     // e porta aberta por UPnP, se der; só valem para estes sockets, que são
     // os que recebem o vídeo.
     let internet = match o.internet {
-        true => Some(fluxo_net::Internet::open(o.porta, o.usar_upnp)?),
+        true => Some(match fluxo_net::Internet::open(o.porta, o.usar_upnp) {
+            Err(_) if o.porta_flexivel => fluxo_net::Internet::open(0, o.usar_upnp)?,
+            r => r?,
+        }),
         false => None,
     };
     let (v4, v6, keepalive) = match &internet {
@@ -334,7 +339,10 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
         // Pela sinalização, IPv6 também: o endereço dele vai ao host pelo
         // servidor, e costuma passar onde o IPv4 trava.
         None => (
-            std::net::UdpSocket::bind(("0.0.0.0", o.porta))?,
+            match std::net::UdpSocket::bind(("0.0.0.0", o.porta)) {
+                Err(_) if o.porta_flexivel => std::net::UdpSocket::bind(("0.0.0.0", 0))?,
+                r => r?,
+            },
             servidor.and(fluxo_net::ipv6_socket_for_signal()),
             None,
         ),
