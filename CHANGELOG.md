@@ -5,10 +5,6 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-### Corrigido
-- **Placa de vídeo repetida** nas Configurações: com uma tela virtual (Parsec,
-  por exemplo), a mesma placa aparecia duas vezes. Agora aparece uma vez.
-
 ## [0.3.0] — 2026-11-13
 
 ### Adicionado
@@ -18,6 +14,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - **Repassador pelo servidor** (ADR-021): quando o caminho direto entre os dois
   PCs não abre (CGNAT, 4G, roteadores restritivos), o vídeo passa pelo servidor,
   ainda cifrado de ponta a ponta. Automático, depois de 3 s sem o caminho direto.
+
+### Corrigido
+- **Placa de vídeo repetida** nas Configurações: com uma tela virtual (Parsec,
+  por exemplo), a mesma placa aparecia duas vezes. Agora aparece uma vez.
 
 ## [0.2.1] — 2026-11-13
 
