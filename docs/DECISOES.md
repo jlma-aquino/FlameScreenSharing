@@ -633,6 +633,33 @@ tirar alguém da transmissão e IPs no texto de "Copiar detalhes".
 - 🔁 Assinatura de código do Windows (Authenticode); chave do servidor cifrada
   no disco (DPAPI); trocar o código da sala sem encerrar.
 
+## ADR-021 — Repassador pelo servidor de sinalização
+
+**Status:** Aceito (2026-11-13)
+
+**Contexto.** Com amigos em outras redes, o servidor achava os dois lados, mas o
+caminho direto não abria ("o cliente foi achado, mas os pacotes não passaram").
+CGNAT e NAT simétrico mudam a porta a cada destino, e o furo não passa. Nos
+registros, os amigos de hoje chegavam por portas sempre diferentes.
+
+**Decisão.**
+- O host tenta o caminho direto e, com o cliente achado e 3 s sem resposta,
+  pede `RelayBind` da sala ao servidor (assinado com a chave). O servidor só
+  liga o repasse entre aquele socket do host e o cliente que ele mesmo
+  entregou (Found), e responde `RelayReady`.
+- O repasse fica no próprio `fluxo-sinal`, na mesma porta: os dois já falam
+  com ele, então o caminho está aberto nos dois NATs. Ele repete os pacotes
+  sem abrir (o servidor não tem a chave da sessão) e sem mudar o protocolo do
+  vídeo: para o host e o cliente, o servidor é só o endereço do outro lado.
+
+**Consequências.**
+- ➕ Funciona com qualquer rede, inclusive 4G e CGNAT.
+- ➕ Sem servidor novo nem TURN; o vídeo continua cifrado de ponta a ponta.
+- ➖ Mais atraso (ida e volta até São Paulo) e banda do servidor: ~9 GB por
+  hora por espectador em 20 Mbps.
+- ➖ Num repasse, o IP visto é o do servidor: expulsar não bloqueia por IP.
+- 🔁 Limite de banda por chave; repasse em mais de uma região se ficar longe.
+
 ---
 
 ## Modelo

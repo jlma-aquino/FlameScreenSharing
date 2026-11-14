@@ -54,6 +54,15 @@ Quem usa cola a chave nas configurações do FSS (Conexão), ou passa
 
 `--sinal ENDEREÇO` (sem chave) continua valendo para servidores `--aberto`.
 
+## Repasse
+
+Quando o caminho direto entre os dois não abre (CGNAT, 4G, roteadores
+restritivos), o host pede o repasse (`RelayBind`) e o servidor repete os
+pacotes entre os dois, sem abrir: o vídeo segue cifrado de ponta a ponta.
+Só entre os dois que o próprio servidor apresentou; par parado por 30 s
+sai; no máximo 64 pares. Cada espectador repassado em 20 Mbps gasta uns 9 GB
+por hora de saída do servidor. Decisão: ADR-021.
+
 ## Saída
 
 Uma linha por acontecimento (repetições seguidas iguais são omitidas):
@@ -66,6 +75,8 @@ Uma linha por acontecimento (repetições seguidas iguais são omitidas):
 `pacote sem chave válida de IP (ignorado)` aparece no máximo uma vez por
 minuto por IP.
 
+`repassando entre o host … e o cliente …` quando um repasse começa.
+
 `sala vazia` quando um host procura antes de o cliente abrir (ou com o
 código errado, que cai em outra sala); `recusada` quando outro IP tenta uma
 sala ocupada (raro: 1 em ~1 milhão por par de códigos).
@@ -74,8 +85,6 @@ sala ocupada (raro: 1 em ~1 milhão por par de códigos).
 
 - Deve ficar **fora** da rede do cliente: na mesma rede, o endereço visto
   é o local, que não serve para um host de fora.
-- NAT simétrico dos dois lados não fura; o relay de fallback é o próximo
-  item da fase 5.
 - O do projeto roda na Oracle Cloud ([SERVIDOR.md](../SERVIDOR.md)); o
   programa não traz nenhum servidor: sem chave, as salas não funcionam.
   Testado com o servidor na internet e os dois PCs na mesma rede; ainda falta

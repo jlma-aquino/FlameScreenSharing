@@ -193,6 +193,8 @@ cliente                       servidor                        host
   | 4 | Found | servidor → os dois | endereço público do outro lado, lista dos locais dele |
   | 5 | NotFound | servidor → host | — (sala vazia) |
   | 6 | RoomTaken | servidor → cliente | — (sala cheia: 8 esperando) |
+  | 7 | RelayBind | host → servidor | sala (u32); completado com zeros até 100 bytes |
+  | 8 | RelayReady | servidor → host | — (repasse ligado) |
 
   Endereço: família (1 byte, 4 ou 6), IP (4 ou 16 bytes), porta (u16).
   Lista: quantidade (1 byte, até 4) e os endereços. Pedidos com menos de 100
@@ -236,8 +238,16 @@ cliente                       servidor                        host
   candidato que responde com outra chave (outro cliente Fluxo que calhou de
   estar naquele endereço) sai da lista, e o handshake recomeça com os
   outros.
-- **Limites:** NAT simétrico dos dois lados (porta nova a cada destino)
-  não fura assim: fica para o relay (fase 5). O servidor deve ficar fora da
+- **Repasse** (ADR-021): se o cliente já foi achado e não respondeu em 3 s,
+  o host manda RelayBind da sala ao servidor (assinado, como os outros
+  pedidos). O servidor só liga o repasse entre aquele socket do host e o
+  cliente que ele mesmo entregou a ele (Found), responde RelayReady e daí em
+  diante repete, sem abrir, todo pacote que não é Signal vindo de um dos
+  dois para o outro. O host passa a mandar o PairInit também ao servidor; o
+  primeiro caminho que responder vale. O conteúdo segue cifrado de ponta a
+  ponta. Par sem pacotes por 30 s é desfeito; no máximo 64 pares.
+- **Limites:** sem o repasse, NAT simétrico dos dois lados (porta nova a
+  cada destino) não fura. O servidor deve ficar fora da
   rede do cliente; na mesma rede, o endereço "público" visto é o local.
 
 ## 2.3. Sem servidor: código de conexão e STUN público
@@ -416,9 +426,7 @@ A ordem de `frame_id` usa aritmética serial (RFC 1982): `a` é mais novo que
   Um ID de sessão no cabeçalho não foi preciso: pacote de outra sessão não
   decifra.
 - ~~**Sinalização e furo de NAT**~~ — feitos na versão 9 (seção 2.2).
-- **Relay** para quando o furo não passa (NAT simétrico dos dois lados,
-  CGNAT restritivo): o servidor repassaria os pacotes já cifrados, sem a
-  chave.
+- ~~**Relay**~~ — feito (seção 2.2, RelayBind/RelayReady), sem mudar a versão.
 
 ## 6. Histórico de versões
 
