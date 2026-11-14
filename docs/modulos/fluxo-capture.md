@@ -69,8 +69,9 @@ host recria o encoder (keyframe). Janela fechada: `CaptureError::Window`.
 criam o device na placa `gpu`. Num notebook com duas placas, a tela fica
 ligada à integrada e o Desktop Duplication só funciona nela; a
 Windows.Graphics.Capture entrega a imagem na dedicada (a cópia entre placas é
-do Windows). Adaptadores virtuais (o do Parsec, por exemplo) aparecem com o
-nome da placa em que desenham.
+do Windows). Uma tela virtual (a do Parsec, por exemplo) faz o DXGI listar a placa de novo,
+com outro LUID e sem monitor; a lista junta as idênticas (mesmo modelo,
+revisão e memória) e fica com a que tem monitor.
 
 ## Limitações conhecidas
 

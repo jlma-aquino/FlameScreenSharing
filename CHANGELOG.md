@@ -5,6 +5,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Corrigido
+- **Placa de vídeo repetida** nas Configurações: com uma tela virtual (Parsec,
+  por exemplo), a mesma placa aparecia duas vezes. Agora aparece uma vez.
+
 ## [0.3.0] — 2026-11-13
 
 ### Adicionado

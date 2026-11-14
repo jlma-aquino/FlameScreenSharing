@@ -135,8 +135,12 @@ pub struct AdapterInfo {
 pub fn list_adapters() -> Vec<AdapterInfo> {
     use windows::Win32::Graphics::Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE;
     let mut lista = Vec::new();
-    // A mesma placa pode aparecer duas vezes (mesmo LUID): fica a primeira.
-    let mut vistas: Vec<(u32, i32)> = Vec::new();
+    // A mesma placa física pode aparecer mais de uma vez: com o mesmo LUID, ou
+    // com outro quando um programa cria uma tela virtual nela (Parsec, por
+    // exemplo), que o DXGI lista como outra placa idêntica (mesmo fabricante,
+    // modelo, subsistema, revisão e memória) e sem monitor. Fica uma por placa,
+    // a que tem monitor. Duas placas iguais de verdade no mesmo PC viram uma.
+    let mut vistas: Vec<(u32, u32, u32, u32, usize, bool)> = Vec::new();
     // SAFETY: enumeração do DXGI; só lê descrições.
     unsafe {
         let Ok(factory) = CreateDXGIFactory1::<IDXGIFactory1>() else {
@@ -145,14 +149,31 @@ pub fn list_adapters() -> Vec<AdapterInfo> {
         let mut i = 0u32;
         while let Ok(a) = factory.EnumAdapters1(i) {
             if let Ok(d) = a.GetDesc1() {
-                let luid = (d.AdapterLuid.LowPart, d.AdapterLuid.HighPart);
-                if d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 && !vistas.contains(&luid) {
-                    vistas.push(luid);
-                    lista.push(AdapterInfo {
+                if d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 {
+                    let tem_monitor = a.EnumOutputs(0).is_ok();
+                    let chave = (
+                        d.VendorId,
+                        d.DeviceId,
+                        d.SubSysId,
+                        d.Revision,
+                        d.DedicatedVideoMemory,
+                    );
+                    let info = AdapterInfo {
                         index: i as usize,
                         name: wide_to_string(&d.Description),
                         dedicated_mb: d.DedicatedVideoMemory as u64 / (1024 * 1024),
-                    });
+                    };
+                    match vistas.iter().position(|v| (v.0, v.1, v.2, v.3, v.4) == chave) {
+                        None => {
+                            vistas.push((chave.0, chave.1, chave.2, chave.3, chave.4, tem_monitor));
+                            lista.push(info);
+                        }
+                        Some(p) if tem_monitor && !vistas[p].5 => {
+                            vistas[p].5 = true;
+                            lista[p] = info;
+                        }
+                        Some(_) => {}
+                    }
                 }
             }
             i += 1;
