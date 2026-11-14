@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use fluxo_decode::{create_device, VideoDecoder};
+use fluxo_decode::{create_device_on, VideoDecoder};
 use fluxo_net::{clock_diff_us, clock_us, FrameAction, Recovery, RecoveryRequest, VideoReceiver};
 use windows::Win32::Foundation::HWND;
 
@@ -49,6 +49,8 @@ pub struct Config {
     pub vsync: bool,
     /// Fecha sozinho depois disso, contado do primeiro frame (0 = não).
     pub segundos: f64,
+    /// Placa de vídeo do decode e do desenho (`None`: a padrão).
+    pub gpu: Option<usize>,
     /// Texto do painel até chegarem estatísticas (código de pareamento e
     /// endereço para o host).
     pub espera: String,
@@ -77,7 +79,7 @@ impl Serie {
 /// Laço da thread de exibição; volta quando a janela fecha ou o tempo
 /// (`Config::segundos`) acaba, depois de imprimir o resumo.
 pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), Box<dyn Error>> {
-    let device = create_device()?;
+    let device = create_device_on(cfg.gpu)?;
     let mut decoder = VideoDecoder::new(&device)?;
     let hwnd = HWND(cfg.hwnd as *mut _);
     let mut tela = Presenter::new(&device, hwnd, cfg.tamanho, cfg.vsync)?;

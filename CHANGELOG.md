@@ -6,6 +6,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Escolher a placa de vídeo** (Configurações, `--gpu N`): num notebook com duas
+  placas, usar a dedicada para compartilhar (captura e encoder) e assistir (decode
+  e desenho). `fluxo-bench listar` mostra as placas.
 - **Repassador pelo servidor** (ADR-021): quando o caminho direto entre os dois
   PCs não abre (CGNAT, 4G, roteadores restritivos), o vídeo passa pelo servidor,
   ainda cifrado de ponta a ponta. Automático, depois de 3 s sem o caminho direto.

@@ -31,6 +31,9 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
     personalizado;
   - **Compartilhar:** tela, resolução, fps, codec, encoder, bitrate máximo, som
     ligado ao começar e de qual saída capturar o som;
+  - **Placa de vídeo** (em Compartilhar e em Assistir, a mesma escolha):
+    automática (a do Windows) ou uma da lista; num notebook com duas placas,
+    a dedicada. Vai como `--gpu N` ao host e ao cliente.
   - **Assistir:** volume inicial, em qual saída tocar, estatísticas sobre o
     vídeo, janela sempre por cima;
   - **Conexão:** a chave do servidor das salas (`FSS1-…`, conferida na hora;

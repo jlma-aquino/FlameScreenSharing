@@ -62,6 +62,16 @@ sistema). Cada frame é copiado na GPU para uma textura nossa de tamanho par
 desenhado na imagem. Quando a janela muda de tamanho, o pool acompanha e o
 host recria o encoder (keyframe). Janela fechada: `CaptureError::Window`.
 
+## Placa de vídeo escolhida
+
+`list_adapters()` lista as placas (sem as de software, uma vez por LUID);
+`WindowCapturer::new_on(hwnd, gpu)` e `WindowCapturer::for_monitor(i, gpu)`
+criam o device na placa `gpu`. Num notebook com duas placas, a tela fica
+ligada à integrada e o Desktop Duplication só funciona nela; a
+Windows.Graphics.Capture entrega a imagem na dedicada (a cópia entre placas é
+do Windows). Adaptadores virtuais (o do Parsec, por exemplo) aparecem com o
+nome da placa em que desenham.
+
 ## Limitações conhecidas
 
 - Captura monitor inteiro (não janela).

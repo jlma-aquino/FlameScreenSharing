@@ -7,6 +7,11 @@
 //! copiado (na GPU, microssegundos) para uma textura nossa de tamanho par,
 //! o que o NV12 do encoder exige, e o frame do Windows volta na hora.
 //!
+//! Também captura um monitor inteiro ([`WindowCapturer::for_monitor`]) na
+//! placa de vídeo escolhida: num notebook com duas placas, a tela fica na
+//! integrada, e o Desktop Duplication só funciona nela; esta API entrega a
+//! imagem na dedicada (cópia entre placas feita pelo Windows).
+//!
 //! O cursor vem desenhado na imagem (a posição à parte que o cliente
 //! desenha é a do monitor, que aqui não faz sentido).
 
@@ -98,7 +103,10 @@ pub fn list_windows() -> Vec<WindowInfo> {
 
 /// Captura contínua de uma janela.
 pub struct WindowCapturer {
-    hwnd: HWND,
+    /// A janela (com monitor: nenhuma).
+    hwnd: Option<HWND>,
+    /// Capturando um monitor inteiro: o índice dele.
+    monitor: Option<usize>,
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     d3d: IDirect3DDevice,
@@ -119,22 +127,43 @@ fn par(v: i32) -> u32 {
 impl WindowCapturer {
     /// Começa a capturar a janela `hwnd` (de [`list_windows`]).
     pub fn new(hwnd: isize) -> Result<Self, CaptureError> {
-        let hwnd = HWND(hwnd as *mut _);
-        // SAFETY: chamadas COM/WinRT com parâmetros válidos; o HWND é conferido antes.
+        Self::new_on(hwnd, None)
+    }
+
+    /// A janela `hwnd`, entregue na placa `gpu` (`None`: a padrão).
+    pub fn new_on(hwnd: isize, gpu: Option<usize>) -> Result<Self, CaptureError> {
+        let h = HWND(hwnd as *mut _);
+        // SAFETY: só consulta se o HWND é uma janela.
+        if !unsafe { IsWindow(Some(h)) }.as_bool() {
+            return Err(CaptureError::Window("essa janela não existe mais".into()));
+        }
+        Self::abrir(Some(h), None, gpu)
+    }
+
+    /// O monitor `index` inteiro, entregue na placa `gpu`.
+    pub fn for_monitor(index: usize, gpu: Option<usize>) -> Result<Self, CaptureError> {
+        Self::abrir(None, Some(index), gpu)
+    }
+
+    fn abrir(hwnd: Option<HWND>, monitor: Option<usize>, gpu: Option<usize>) -> Result<Self, CaptureError> {
+        // SAFETY: chamadas COM/WinRT com parâmetros válidos.
         unsafe {
-            if !IsWindow(Some(hwnd)).as_bool() {
-                return Err(CaptureError::Window("essa janela não existe mais".into()));
-            }
             if !GraphicsCaptureSession::IsSupported().unwrap_or(false) {
                 return Err(CaptureError::Window(
                     "captura de janela precisa do Windows 10 1903 ou mais novo".into(),
                 ));
             }
-            let (device, context) = criar_device()?;
+            let (device, context) = criar_device(gpu)?;
             let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&device.cast::<IDXGIDevice>()?)?;
             let d3d: IDirect3DDevice = inspectable.cast()?;
             let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
-            let item: GraphicsCaptureItem = interop.CreateForWindow(hwnd)?;
+            let item: GraphicsCaptureItem = match (hwnd, monitor) {
+                (Some(h), _) => interop.CreateForWindow(h)?,
+                (None, Some(m)) => interop.CreateForMonitor(windows::Win32::Graphics::Gdi::HMONITOR(
+                    crate::dxgi::monitor_handle(m)? as *mut _,
+                ))?,
+                (None, None) => return Err(CaptureError::Window("nada para capturar".into())),
+            };
             let pool_size = item.Size()?;
             let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
                 &d3d,
@@ -149,6 +178,7 @@ impl WindowCapturer {
             session.StartCapture()?;
             Ok(Self {
                 hwnd,
+                monitor,
                 device,
                 context,
                 d3d,
@@ -176,8 +206,14 @@ impl WindowCapturer {
         self.tamanho
     }
 
+    /// A janela capturada (0 se for um monitor).
     pub fn hwnd(&self) -> isize {
-        self.hwnd.0 as isize
+        self.hwnd.map_or(0, |h| h.0 as isize)
+    }
+
+    /// O monitor capturado, se for um monitor inteiro.
+    pub fn monitor(&self) -> Option<usize> {
+        self.monitor
     }
 
     /// Espera até `timeout_ms` por um frame novo (a janela mudou). `Ok(None)`:
@@ -186,7 +222,7 @@ impl WindowCapturer {
         let limite = Instant::now() + Duration::from_millis(timeout_ms as u64);
         loop {
             // SAFETY: só consulta se o HWND ainda é uma janela.
-            if !unsafe { IsWindow(Some(self.hwnd)) }.as_bool() {
+            if self.hwnd.is_some_and(|h| !unsafe { IsWindow(Some(h)) }.as_bool()) {
                 return Err(CaptureError::Window("a janela compartilhada fechou".into()));
             }
             if let Ok(frame) = self.pool.TryGetNextFrame() {
@@ -296,7 +332,10 @@ pub fn window_size(hwnd: isize) -> Option<(u32, u32)> {
     Some(((r.right - r.left).max(0) as u32, (r.bottom - r.top).max(0) as u32))
 }
 
-fn criar_device() -> Result<(ID3D11Device, ID3D11DeviceContext), CaptureError> {
+fn criar_device(gpu: Option<usize>) -> Result<(ID3D11Device, ID3D11DeviceContext), CaptureError> {
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
+    let placa = gpu.map(crate::dxgi::adapter).transpose()?;
+    let placa: Option<windows::Win32::Graphics::Dxgi::IDXGIAdapter> = placa.map(|a| a.cast()).transpose()?;
     let niveis: [D3D_FEATURE_LEVEL; 2] = [D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0];
     for flags in [
         D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
@@ -306,8 +345,13 @@ fn criar_device() -> Result<(ID3D11Device, ID3D11DeviceContext), CaptureError> {
         // SAFETY: criação de device com parâmetros válidos.
         let r = unsafe {
             D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
+                placa.as_ref(),
+                // Com uma placa dada, o tipo tem que ser UNKNOWN.
+                if placa.is_some() {
+                    D3D_DRIVER_TYPE_UNKNOWN
+                } else {
+                    D3D_DRIVER_TYPE_HARDWARE
+                },
                 HMODULE::default(),
                 flags,
                 Some(&niveis),

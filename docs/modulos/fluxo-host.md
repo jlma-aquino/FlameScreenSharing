@@ -113,6 +113,13 @@ resumo, encode igual (2,2 ms), captura→chegada p50 ~11 ms. Um espectador só c
 H.264 entrando obrigou a troca de AV1 para H.264, sem frame perdido para quem já
 assistia. O quinto foi recusado, e o que caiu saiu da lista.
 
+## Placa de vídeo (`--gpu N`)
+
+Captura e codifica na placa N (lista em `fluxo-bench listar`). Com `--gpu`, o
+monitor é capturado pela Windows.Graphics.Capture na placa escolhida (o cursor
+vai na imagem): é o que deixa um notebook com duas placas usar a dedicada.
+Testado: `--gpu 0` com NVENC, 60 fps.
+
 ## Janela em vez do monitor
 
 `--janela-captura H` (ou o comando `janela H`) transmite só a janela H (`fonte.rs`,

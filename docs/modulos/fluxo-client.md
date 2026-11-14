@@ -203,6 +203,11 @@ tela e gera nova captura: o host passa a codificar na frequência do monitor
 (até ~165 fps), não nos 60 do `--fps`. Ver a pendência de limite de fps no
 roadmap.
 
+## Placa de vídeo (`--gpu N`)
+
+Decodifica e desenha na placa N (`fluxo_decode::create_device_on`); os codecs
+anunciados ao host também são os dessa placa (`decodable_codecs_on`).
+
 ## Barra de controles sobre o vídeo
 
 Com o mouse sobre o vídeo aparece uma barra embaixo, como a do YouTube:

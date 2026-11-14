@@ -45,7 +45,7 @@ mod dxgi;
 #[cfg(windows)]
 mod janela;
 #[cfg(windows)]
-pub use dxgi::{enable_dpi_awareness, list_monitors, DesktopCapturer, Frame};
+pub use dxgi::{enable_dpi_awareness, list_adapters, list_monitors, AdapterInfo, DesktopCapturer, Frame};
 #[cfg(windows)]
 pub use janela::{list_windows, window_size, WindowCapturer, WindowFrame, WindowInfo};
 
@@ -53,7 +53,8 @@ pub use janela::{list_windows, window_size, WindowCapturer, WindowFrame, WindowI
 mod stub;
 #[cfg(not(windows))]
 pub use stub::{
-    enable_dpi_awareness, list_monitors, list_windows, window_size, DesktopCapturer, Frame, WindowInfo,
+    enable_dpi_awareness, list_adapters, list_monitors, list_windows, window_size, AdapterInfo,
+    DesktopCapturer, Frame, WindowInfo,
 };
 
 /// Um monitor que pode ser capturado.

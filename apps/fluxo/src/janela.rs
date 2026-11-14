@@ -1350,6 +1350,9 @@ impl Janela {
                     escolher_saida(ui, "cfg_som_de", &self.saidas_som, &mut c.som_de);
                     ui.end_row();
                 }
+                ui.label("Placa de vídeo");
+                escolher_gpu(ui, "cfg_gpu_compartilhar", &mut c.gpu);
+                ui.end_row();
             });
         ui.add_space(8.0);
         ui.label(
@@ -1378,6 +1381,9 @@ impl Janela {
                     escolher_saida(ui, "cfg_tocar_em", &self.saidas_som, &mut c.tocar_em);
                     ui.end_row();
                 }
+                ui.label("Placa de vídeo");
+                escolher_gpu(ui, "cfg_gpu_assistir", &mut c.gpu);
+                ui.end_row();
                 ui.label("Estatísticas");
                 ui.checkbox(&mut c.estatisticas, "Mostrar sobre o vídeo (F2 muda)");
                 ui.end_row();
@@ -1795,6 +1801,41 @@ fn escolher_tela(ui: &mut egui::Ui, id: &str, monitores: &[String], monitor: &mu
                 ui.selectable_value(monitor, i, nome);
             }
         });
+}
+
+/// Placa de vídeo: a do Windows ou uma da lista (notebook com duas placas:
+/// escolha a dedicada). A mesma escolha vale para compartilhar e assistir.
+fn escolher_gpu(ui: &mut egui::Ui, id: &str, gpu: &mut Option<usize>) {
+    let placas = fluxo_capture::list_adapters();
+    let nome = |i: usize| {
+        placas
+            .iter()
+            .find(|p| p.index == i)
+            .map(|p| format!("{} · {:.1} GB", p.name, p.dedicated_mb as f64 / 1024.0))
+            .unwrap_or_else(|| format!("Placa {i} (não encontrada)"))
+    };
+    let atual = match gpu {
+        None => "Automática (a do Windows)".to_string(),
+        Some(i) => nome(*i),
+    };
+    ui.vertical(|ui| {
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(atual)
+            .width(300.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(gpu, None, "Automática (a do Windows)");
+                for p in &placas {
+                    ui.selectable_value(gpu, Some(p.index), nome(p.index));
+                }
+            });
+        ui.label(
+            RichText::new(
+                "Num notebook com duas placas, escolha a dedicada (a com mais memória). \
+                 Escolhendo uma, a captura passa a ser outra (o cursor vai na imagem).",
+            )
+            .size(12.0),
+        );
+    });
 }
 
 fn escolher_saida(ui: &mut egui::Ui, id: &str, saidas: &[(usize, String)], escolhida: &mut Option<usize>) {

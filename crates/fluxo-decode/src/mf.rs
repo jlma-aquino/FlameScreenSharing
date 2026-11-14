@@ -58,9 +58,27 @@ fn win_err(context: &'static str) -> impl Fn(windows::core::Error) -> DecodeErro
 /// suporte a vídeo, BGRA e proteção multithread (o MFT usa o device de
 /// threads próprias).
 pub fn create_device() -> Result<ID3D11Device, DecodeError> {
+    create_device_on(None)
+}
+
+/// Como [`create_device`], na placa de índice `gpu` do DXGI (`None`: a padrão).
+/// Num notebook com duas placas, é o que deixa decodificar na dedicada.
+pub fn create_device_on(gpu: Option<usize>) -> Result<ID3D11Device, DecodeError> {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1};
+    // SAFETY: enumeração do DXGI; a placa vive até o device ser criado.
+    let placa: Option<IDXGIAdapter> = match gpu {
+        None => None,
+        Some(i) => unsafe {
+            let f: IDXGIFactory1 = CreateDXGIFactory1().map_err(win_err("CreateDXGIFactory1"))?;
+            let a = f
+                .EnumAdapters1(i as u32)
+                .map_err(win_err("placa de vídeo escolhida (--gpu)"))?;
+            Some(a.cast().map_err(win_err("IDXGIAdapter"))?)
+        },
+    };
     let com_video = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
-    let device = create_device_with_flags(com_video)
-        .or_else(|_| create_device_with_flags(D3D11_CREATE_DEVICE_BGRA_SUPPORT))?;
+    let device = create_device_with_flags(placa.as_ref(), com_video)
+        .or_else(|_| create_device_with_flags(placa.as_ref(), D3D11_CREATE_DEVICE_BGRA_SUPPORT))?;
     // SAFETY: cast e chamada simples sobre um device recém-criado.
     unsafe {
         let mt: ID3D11Multithread = device.cast().map_err(win_err("ID3D11Multithread"))?;
@@ -69,14 +87,21 @@ pub fn create_device() -> Result<ID3D11Device, DecodeError> {
     Ok(device)
 }
 
-fn create_device_with_flags(flags: D3D11_CREATE_DEVICE_FLAG) -> Result<ID3D11Device, DecodeError> {
+fn create_device_with_flags(
+    placa: Option<&windows::Win32::Graphics::Dxgi::IDXGIAdapter>,
+    flags: D3D11_CREATE_DEVICE_FLAG,
+) -> Result<ID3D11Device, DecodeError> {
     let levels: [D3D_FEATURE_LEVEL; 2] = [D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0];
     let mut device = None;
     // SAFETY: parâmetros válidos; o device é devolvido em `device`.
     unsafe {
         D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_HARDWARE,
+            placa,
+            // Com uma placa dada, o tipo tem que ser UNKNOWN.
+            match placa {
+                Some(_) => windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
+                None => D3D_DRIVER_TYPE_HARDWARE,
+            },
             HMODULE::default(),
             flags,
             Some(&levels),
@@ -526,8 +551,13 @@ pub fn available_decoders() -> Vec<(&'static str, Vec<(String, bool)>)> {
 /// Store decodifica pelo processador: lento, e foi o que fez o vídeo ficar
 /// lento e piscando numa placa AMD sem AV1. Aí o host usa outro codec.
 pub fn decodable_codecs() -> u8 {
+    decodable_codecs_on(None)
+}
+
+/// Como [`decodable_codecs`], conferindo na placa `gpu` (`--gpu`).
+pub fn decodable_codecs_on(gpu: Option<usize>) -> u8 {
     iniciar_mf();
-    let placa = codecs_da_placa();
+    let placa = codecs_da_placa_on(gpu);
     VideoCodec::PREFERENCE
         .into_iter()
         .filter(|&c| {
@@ -539,12 +569,17 @@ pub fn decodable_codecs() -> u8 {
 /// Codecs que a placa de vídeo padrão decodifica no hardware (perfis de
 /// decode do D3D11 com saída NV12), como máscara.
 pub fn codecs_da_placa() -> u8 {
+    codecs_da_placa_on(None)
+}
+
+/// Como [`codecs_da_placa`], na placa `gpu`.
+pub fn codecs_da_placa_on(gpu: Option<usize>) -> u8 {
     use windows::Win32::Graphics::Direct3D11::{
         ID3D11VideoDevice, D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0, D3D11_DECODER_PROFILE_HEVC_VLD_MAIN,
     };
     use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 
-    let Ok(device) = crate::create_device() else {
+    let Ok(device) = crate::create_device_on(gpu) else {
         return VideoCodec::H264.bit();
     };
     let Ok(video) = device.cast::<ID3D11VideoDevice>() else {

@@ -48,6 +48,8 @@ pub struct Configuracoes {
     pub mbps: u32,
     /// De qual saída de som capturar (`None`: a padrão do Windows).
     pub som_de: Option<usize>,
+    /// Placa de vídeo para compartilhar e assistir (`None`: a do Windows).
+    pub gpu: Option<usize>,
 
     // Assistir
     pub volume: u32,
@@ -80,6 +82,7 @@ impl Default for Configuracoes {
             encoder: 0,
             mbps: 0,
             som_de: None,
+            gpu: None,
             volume: 100,
             tocar_em: None,
             estatisticas: true,
@@ -136,6 +139,7 @@ impl Configuracoes {
              encoder = {}\n\
              mbps = {}\n\
              som_de = {}\n\
+             gpu = {}\n\
              volume = {}\n\
              tocar_em = {}\n\
              estatisticas = {}\n\
@@ -156,6 +160,7 @@ impl Configuracoes {
                 self.mbps.to_string()
             },
             opcional(self.som_de),
+            opcional(self.gpu),
             self.volume,
             opcional(self.tocar_em),
             sim(self.estatisticas),
@@ -208,6 +213,7 @@ impl Configuracoes {
                     }
                 }
                 "som_de" => c.som_de = opcional(v).unwrap_or(c.som_de),
+                "gpu" => c.gpu = opcional(v).unwrap_or(c.gpu),
                 "volume" => c.volume = v.parse().ok().filter(|v| *v <= 100).unwrap_or(c.volume),
                 "tocar_em" => c.tocar_em = opcional(v).unwrap_or(c.tocar_em),
                 "estatisticas" => c.estatisticas = sim(v).unwrap_or(c.estatisticas),
@@ -238,6 +244,7 @@ mod tests {
             encoder: 1,
             mbps: 35,
             som_de: Some(2),
+            gpu: Some(1),
             volume: 40,
             tocar_em: Some(1),
             estatisticas: false,

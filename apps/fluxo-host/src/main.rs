@@ -59,6 +59,9 @@ Opções:
                         só o cliente com esse código recebe, e tudo vai cifrado
   --sem-cifra           TESTE (só em compilação de teste, não na de produção): sem pareamento nem cifra (o cliente também)
   --monitor N           monitor a transmitir (padrão 0)
+  --gpu N               captura e codifica na placa de vídeo N (a lista aparece em
+                        fluxo-bench listar). Num notebook com duas placas, a dedicada;
+                        a captura passa a ser a Windows.Graphics.Capture (cursor na imagem)
   --janela-captura H    transmite só a janela H (número HWND; a janela do FSS lista as
                         abertas). Pega a janela mesmo com outras por cima; o cursor
                         vai desenhado na imagem. Windows 10 1903+
@@ -133,6 +136,8 @@ struct Opts {
     monitor: usize,
     /// Transmitir só esta janela (HWND), em vez do monitor.
     janela_captura: Option<isize>,
+    /// Placa de vídeo da captura e do encoder (índice do DXGI).
+    gpu: Option<usize>,
     encoder: fluxo_encode::BackendChoice,
     /// Codec pedido (`None`: o melhor que os dois lados suportam).
     codec: Option<fluxo_encode::VideoCodec>,
@@ -190,6 +195,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         som_sem_processo: None,
         monitor: 0,
         janela_captura: None,
+        gpu: None,
         encoder: Default::default(),
         codec: None,
         mbps: None,
@@ -236,6 +242,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
                     Some(fluxo_net::ConnectionCode::parse(valor()?).map_err(|e| format!("--conexao: {e}"))?)
             }
             "--monitor" => o.monitor = valor()?.parse().map_err(|_| "monitor inválido")?,
+            "--gpu" => o.gpu = Some(valor()?.parse().map_err(|_| "gpu: use o número da placa")?),
             "--janela-captura" => {
                 o.janela_captura = Some(
                     valor()?
@@ -646,7 +653,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         Some(h) => Alvo::Janela(h),
         None => Alvo::Tela(o.monitor),
     };
-    let mut cap = Fonte::abrir(alvo)?;
+    let mut cap = Fonte::abrir(alvo, o.gpu)?;
     // Cópias: o frame capturado prende o capturador enquanto existe.
     let mut device = cap.d3d_device().clone();
     let mut context = cap.d3d_context().clone();
@@ -977,8 +984,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     let mut captura = (mw, mh);
     // Controles gerados aqui mesmo (a janela compartilhada fechou: volta para a tela 1).
     let mut internos: Vec<espectadores::Controle> = Vec::new();
-    if matches!(alvo, Alvo::Janela(_)) {
-        // Na janela o cursor vem na imagem: o do cliente fica escondido.
+    if cap.cursor_na_imagem() {
+        // Na janela (e com --gpu) o cursor vem na imagem: o do cliente fica escondido.
         tx.send_cursor_position(0, 0, false);
     }
     let mut intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
@@ -1008,14 +1015,14 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     // duplicar a mesma duas vezes); se a nova falhar, a antiga
                     // se recria sozinha no próximo frame e a transmissão segue.
                     cap.soltar();
-                    match Fonte::abrir(trocar_para.expect("tela ou janela")) {
+                    match Fonte::abrir(trocar_para.expect("tela ou janela"), o.gpu) {
                         Ok(nova) => {
                             cap = nova;
                             device = cap.d3d_device().clone();
                             context = cap.d3d_context().clone();
                             captura = cap.tamanho();
                             // Na janela o cursor vem na imagem; no monitor, o cliente desenha.
-                            if matches!(cap.alvo(), Alvo::Janela(_)) {
+                            if cap.cursor_na_imagem() {
                                 tx.send_cursor_position(0, 0, false);
                             }
                             println!("{}", cap.linha());

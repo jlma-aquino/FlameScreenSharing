@@ -295,6 +295,11 @@ fn cmd_listar() -> Result<(), CaptureError> {
             m.index, m.device_name, m.width, m.height, m.x, m.y, m.adapter_name
         );
     }
+    // Para o --gpu do host e do cliente.
+    println!("\nPlacas de vídeo (--gpu N):");
+    for p in fluxo_capture::list_adapters() {
+        println!("[{}] {}  ({} MB dedicados)", p.index, p.name, p.dedicated_mb);
+    }
     Ok(())
 }
 

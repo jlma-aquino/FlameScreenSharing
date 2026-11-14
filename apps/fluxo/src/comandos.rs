@@ -108,6 +108,9 @@ impl Compartilhar {
         if c.mbps > 0 {
             a.extend(["--mbps".to_string(), c.mbps.to_string()]);
         }
+        if let Some(n) = c.gpu {
+            a.extend(["--gpu".to_string(), n.to_string()]);
+        }
         if let Some(n) = c.som_de {
             a.extend(["--audio-dispositivo".to_string(), n.to_string()]);
         }
@@ -191,6 +194,9 @@ impl Assistir {
             chave_do_servidor(&mut a, c)?;
         }
         a.extend(["--volume".to_string(), c.volume.min(100).to_string()]);
+        if let Some(n) = c.gpu {
+            a.extend(["--gpu".to_string(), n.to_string()]);
+        }
         if let Some(n) = c.tocar_em {
             a.extend(["--saida-som".to_string(), n.to_string()]);
         }

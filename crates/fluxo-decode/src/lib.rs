@@ -38,7 +38,8 @@ mod mf;
 
 #[cfg(windows)]
 pub use mf::{
-    available_decoders, codecs_da_placa, create_device, decodable_codecs, DecodedFrame, VideoDecoder,
+    available_decoders, codecs_da_placa, create_device, create_device_on, decodable_codecs,
+    decodable_codecs_on, DecodedFrame, VideoDecoder,
 };
 
 pub use fluxo_proto::VideoCodec;

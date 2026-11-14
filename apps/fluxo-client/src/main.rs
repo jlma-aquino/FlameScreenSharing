@@ -122,6 +122,8 @@ Opções:
   --volume V      volume do som do host, 0 a 100 (padrão 100; só do Fluxo)
   --saida-som N   toca na saída de som N (padrão: a do Windows; lista em fluxo-bench audio)
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
+  --gpu N         decodifica e desenha na placa de vídeo N (num notebook com duas
+                  placas, a dedicada; a lista aparece em fluxo-bench listar)
   --janela X,Y,L,A  posição e tamanho da janela (externos, em pixels de tela); ao
                   fechar, imprime Janela: X,Y,L,A (a janela do FSS volta ali)
 
@@ -137,6 +139,8 @@ struct Opts {
     porta: u16,
     /// A 9000 ocupada (outro cliente neste PC): serve qualquer porta livre.
     porta_flexivel: bool,
+    /// Placa de vídeo do decode e do desenho (índice do DXGI).
+    gpu: Option<usize>,
     vsync: bool,
     segundos: f64,
     largura: u32,
@@ -168,6 +172,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         porta: 9000,
         porta_flexivel: false,
+        gpu: None,
         vsync: false,
         segundos: 0.0,
         largura: 1280,
@@ -213,6 +218,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--saida-som" => o.saida_som = Some(valor()?.parse().map_err(|_| "saida-som inválida")?),
             "--sem-painel" => o.sem_painel = true,
             "--portatil" => o.portatil = true,
+            "--gpu" => o.gpu = Some(valor()?.parse().map_err(|_| "gpu: use o número da placa")?),
             "--janela" => o.janela = Some(ler_janela(valor()?)?),
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
@@ -298,7 +304,7 @@ struct Preparado {
 fn codecs_aqui(o: &Opts) -> u8 {
     #[cfg(windows)]
     if !o.portatil {
-        return fluxo_decode::decodable_codecs();
+        return fluxo_decode::decodable_codecs_on(o.gpu);
     }
     let _ = o;
     fluxo_net::VideoCodec::H264.bit()
@@ -446,6 +452,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         vsync: o.vsync,
         segundos: o.segundos,
         espera,
+        gpu: o.gpu,
     };
     // Áudio numa thread própria: toca no ritmo da placa, sem esperar o vídeo.
     let audio = match (o.sem_audio, rx.take_audio()) {

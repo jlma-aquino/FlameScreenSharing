@@ -88,3 +88,15 @@ pub fn list_windows() -> Vec<WindowInfo> {
 pub fn window_size(_hwnd: isize) -> Option<(u32, u32)> {
     None
 }
+
+/// Uma placa de vídeo (fora do Windows, nenhuma).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterInfo {
+    pub index: usize,
+    pub name: String,
+    pub dedicated_mb: u64,
+}
+
+pub fn list_adapters() -> Vec<AdapterInfo> {
+    Vec::new()
+}

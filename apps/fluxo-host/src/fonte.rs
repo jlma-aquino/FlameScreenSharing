@@ -16,20 +16,30 @@ pub enum Alvo {
 
 pub enum Fonte {
     Tela(DesktopCapturer),
+    /// Monitor inteiro pela Windows.Graphics.Capture, na placa escolhida
+    /// (`--gpu`): num notebook com duas placas, a dedicada.
+    TelaGpu(WindowCapturer),
     Janela(WindowCapturer),
 }
 
 impl Fonte {
-    pub fn abrir(alvo: Alvo) -> Result<Self, CaptureError> {
-        Ok(match alvo {
-            Alvo::Tela(n) => Fonte::Tela(DesktopCapturer::new(n)?),
-            Alvo::Janela(h) => Fonte::Janela(WindowCapturer::new(h)?),
+    pub fn abrir(alvo: Alvo, gpu: Option<usize>) -> Result<Self, CaptureError> {
+        Ok(match (alvo, gpu) {
+            (Alvo::Tela(n), None) => Fonte::Tela(DesktopCapturer::new(n)?),
+            (Alvo::Tela(n), Some(_)) => Fonte::TelaGpu(WindowCapturer::for_monitor(n, gpu)?),
+            (Alvo::Janela(h), _) => Fonte::Janela(WindowCapturer::new_on(h, gpu)?),
         })
+    }
+
+    /// O cursor vem desenhado na imagem (só o Desktop Duplication o manda à parte).
+    pub fn cursor_na_imagem(&self) -> bool {
+        !matches!(self, Fonte::Tela(_))
     }
 
     pub fn alvo(&self) -> Alvo {
         match self {
             Fonte::Tela(c) => Alvo::Tela(c.monitor().index),
+            Fonte::TelaGpu(c) => Alvo::Tela(c.monitor().unwrap_or(0)),
             Fonte::Janela(c) => Alvo::Janela(c.hwnd()),
         }
     }
@@ -38,21 +48,21 @@ impl Fonte {
     pub fn tamanho(&self) -> (u32, u32) {
         match self {
             Fonte::Tela(c) => (c.monitor().width, c.monitor().height),
-            Fonte::Janela(c) => c.size(),
+            Fonte::TelaGpu(c) | Fonte::Janela(c) => c.size(),
         }
     }
 
     pub fn d3d_device(&self) -> &ID3D11Device {
         match self {
             Fonte::Tela(c) => c.d3d_device(),
-            Fonte::Janela(c) => c.d3d_device(),
+            Fonte::TelaGpu(c) | Fonte::Janela(c) => c.d3d_device(),
         }
     }
 
     pub fn d3d_context(&self) -> &ID3D11DeviceContext {
         match self {
             Fonte::Tela(c) => c.d3d_context(),
-            Fonte::Janela(c) => c.d3d_context(),
+            Fonte::TelaGpu(c) | Fonte::Janela(c) => c.d3d_context(),
         }
     }
 
@@ -69,6 +79,7 @@ impl Fonte {
         let (w, h) = self.tamanho();
         match self {
             Fonte::Tela(c) => format!("Tela: monitor {} ({w}x{h})", c.monitor().index + 1),
+            Fonte::TelaGpu(c) => format!("Tela: monitor {} ({w}x{h})", c.monitor().unwrap_or(0) + 1),
             Fonte::Janela(c) => format!("Tela: janela {} ({w}x{h})", c.hwnd()),
         }
     }
@@ -77,6 +88,7 @@ impl Fonte {
     pub fn descricao(&self) -> String {
         match self {
             Fonte::Tela(c) => format!("monitor {}", c.monitor().index),
+            Fonte::TelaGpu(c) => format!("monitor {}", c.monitor().unwrap_or(0)),
             Fonte::Janela(c) => format!("janela {}", c.hwnd()),
         }
     }
@@ -84,7 +96,7 @@ impl Fonte {
     pub fn proximo(&mut self, espera_ms: u32) -> Result<Option<Quadro<'_>>, CaptureError> {
         Ok(match self {
             Fonte::Tela(c) => c.next_frame(espera_ms)?.map(Quadro::Tela),
-            Fonte::Janela(c) => c.next_frame(espera_ms)?.map(Quadro::Janela),
+            Fonte::TelaGpu(c) | Fonte::Janela(c) => c.next_frame(espera_ms)?.map(Quadro::Janela),
         })
     }
 }

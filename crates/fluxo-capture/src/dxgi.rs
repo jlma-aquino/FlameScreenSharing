@@ -121,6 +121,67 @@ fn walk_outputs<T>(
     }
 }
 
+/// Uma placa de vídeo (não as de software).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterInfo {
+    /// Índice do DXGI (o de `--gpu`).
+    pub index: usize,
+    pub name: String,
+    /// Memória de vídeo dedicada, em MB (integrada: pouca ou nenhuma).
+    pub dedicated_mb: u64,
+}
+
+/// As placas de vídeo de hardware, na ordem do DXGI.
+pub fn list_adapters() -> Vec<AdapterInfo> {
+    use windows::Win32::Graphics::Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE;
+    let mut lista = Vec::new();
+    // A mesma placa pode aparecer duas vezes (mesmo LUID): fica a primeira.
+    let mut vistas: Vec<(u32, i32)> = Vec::new();
+    // SAFETY: enumeração do DXGI; só lê descrições.
+    unsafe {
+        let Ok(factory) = CreateDXGIFactory1::<IDXGIFactory1>() else {
+            return lista;
+        };
+        let mut i = 0u32;
+        while let Ok(a) = factory.EnumAdapters1(i) {
+            if let Ok(d) = a.GetDesc1() {
+                let luid = (d.AdapterLuid.LowPart, d.AdapterLuid.HighPart);
+                if d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 && !vistas.contains(&luid) {
+                    vistas.push(luid);
+                    lista.push(AdapterInfo {
+                        index: i as usize,
+                        name: wide_to_string(&d.Description),
+                        dedicated_mb: d.DedicatedVideoMemory as u64 / (1024 * 1024),
+                    });
+                }
+            }
+            i += 1;
+        }
+    }
+    lista
+}
+
+/// A placa de índice `index` (de [`list_adapters`]).
+pub(crate) fn adapter(index: usize) -> Result<IDXGIAdapter1, CaptureError> {
+    // SAFETY: enumeração do DXGI.
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
+        factory
+            .EnumAdapters1(index as u32)
+            .map_err(|_| CaptureError::Window(format!("placa de vídeo {index} não existe")))
+    }
+}
+
+/// O HMONITOR do monitor `index` (para capturá-lo pela Windows.Graphics.Capture).
+pub(crate) fn monitor_handle(index: usize) -> Result<isize, CaptureError> {
+    walk_outputs(|_, output, info| {
+        // SAFETY: só lê a descrição da saída.
+        (info.index == index).then(|| unsafe { output.GetDesc() }.map(|d| d.Monitor.0 as isize))
+    })?
+    .ok_or(CaptureError::NoSuchMonitor(index))?
+    .map_err(Into::into)
+}
+
 /// Lista os monitores disponíveis para captura.
 ///
 /// O índice de cada [`MonitorInfo`] é o que se passa para
