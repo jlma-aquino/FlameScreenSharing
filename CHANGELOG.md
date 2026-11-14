@@ -5,6 +5,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [0.3.0] — 2026-11-13
+
 ### Adicionado
 - **Escolher a placa de vídeo** (Configurações, `--gpu N`): num notebook com duas
   placas, usar a dedicada para compartilhar (captura e encoder) e assistir (decode
