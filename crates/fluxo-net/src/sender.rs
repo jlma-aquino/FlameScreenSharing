@@ -156,6 +156,10 @@ impl Tentativa {
 /// cliente Fluxo que calhou de estar naquele endereço (um endereço local
 /// que, na nossa rede, é de outro PC): sai da lista, e o handshake recomeça
 /// com os outros.
+/// Sem resposta do cliente por este tempo (já achado pelo servidor), o host
+/// pede o repasse pelo servidor; o caminho direto continua tentando junto.
+pub const RELAY_AFTER: Duration = Duration::from_secs(3);
+
 fn parear(
     socket: &Portas,
     codigo: &PairingCode,
@@ -186,10 +190,22 @@ fn parear(
         None => None,
     };
     // Servidor com chaves: a procura vai assinada.
-    let procura = match (procura, chave) {
-        (Some(p), Some(k)) => Some(k.signed(&p)),
-        (p, _) => p,
+    let assinar = |p: Vec<u8>| match chave {
+        Some(k) => k.signed(&p),
+        None => p,
     };
+    let procura = procura.map(assinar);
+    // Pedido de repasse (o caminho direto não abriu): mesmo esquema.
+    let pedido_repasse = match servidor {
+        Some(_) => Some(assinar(
+            PacketKind::Signal
+                .control(t.id, clock_us())
+                .encode_with_payload(&SignalMessage::RelayBind { room: codigo.room() }.to_bytes())
+                .map_err(NetError::Proto)?,
+        )),
+        None => None,
+    };
+    let mut repasse_pronto = false;
     let mut servidor_respondeu = false;
     let mut recusados: Vec<SocketAddr> = Vec::new();
     // Diagnóstico (com observador): quantos PairInit saíram e quando resumir.
@@ -215,6 +231,15 @@ fn parear(
                 Some(baixo)
             });
             let _ = socket.send_to(p, s);
+            // Cliente achado e nada de resposta: pede o repasse.
+            let achado = servidor_respondeu && !candidatos.is_empty();
+            if let (false, true, Some(r)) = (
+                repasse_pronto,
+                achado && inicio.elapsed() >= RELAY_AFTER,
+                &pedido_repasse,
+            ) {
+                let _ = socket.send_to(r, s);
+            }
             if let (Some(b), Some(v4)) = (baixo, socket.v4()) {
                 let _ = v4.set_ttl(b);
             }
@@ -251,10 +276,24 @@ fn parear(
             match h.kind {
                 PacketKind::Signal if Some(de) == servidor => {
                     servidor_respondeu = true;
-                    if let Ok(SignalMessage::Found { public, locals }) = SignalMessage::from_bytes(payload) {
-                        for c in std::iter::once(public).chain(locals) {
-                            novo_candidato(&mut candidatos, &recusados, c);
+                    match SignalMessage::from_bytes(payload) {
+                        Ok(SignalMessage::Found { public, locals }) => {
+                            for c in std::iter::once(public).chain(locals) {
+                                novo_candidato(&mut candidatos, &recusados, c);
+                            }
                         }
+                        // Repasse ligado: o servidor vira mais um caminho até o
+                        // cliente. Com o TTL normal, que o baixo não chega lá.
+                        Ok(SignalMessage::RelayReady) if !repasse_pronto => {
+                            repasse_pronto = true;
+                            if !candidatos.contains(&de) {
+                                candidatos.push(de);
+                            }
+                            if let (Some(n), Some(v4)) = (ttl_normal.take(), socket.v4()) {
+                                let _ = v4.set_ttl(n);
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 PacketKind::Punch => {

@@ -863,6 +863,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         adaptativo.then(novo_abr),
     );
     println!("Espectador {primeiro_numero} conectou ({quantos} no total)");
+    if Some(destino) == servidor {
+        println!("  (pelo repassador do servidor: o caminho direto não abriu)");
+    }
     {
         let (ocupados, numeros, ttl) = (ocupados.clone(), numeros.clone(), o.ttl_furo);
         std::thread::Builder::new()
@@ -1035,7 +1038,10 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Controle::Expulsar(n) => match tx.expulsar(n) {
                     Some((ip, ficaram)) => {
-                        bloqueados.insert(ip);
+                        // Pelo repasse, o IP é o do servidor: bloquear tiraria todos os repassados.
+                        if Some(ip) != servidor.map(|s| s.ip()) {
+                            bloqueados.insert(ip);
+                        }
                         ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         println!("Espectador {n} expulso ({ficaram} no total)");
                     }
@@ -1146,8 +1152,12 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     max_kbps as f64 / 1000.0
                 );
             }
+            let pelo_servidor = Some(n.tx.peer_addr()) == servidor;
             let quantos = tx.adicionar(n.numero, n.tx, n.codecs, adaptativo.then(novo_abr));
             println!("Espectador {} conectou ({quantos} no total)", n.numero);
+            if pelo_servidor {
+                println!("  (pelo repassador do servidor: o caminho direto não abriu)");
+            }
             keyframe_novo = true;
         }
         if inicio.elapsed() >= proximo_relatorio {

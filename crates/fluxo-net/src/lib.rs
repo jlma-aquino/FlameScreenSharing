@@ -83,8 +83,8 @@ pub use receiver::{
 pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use segredos::{args_with_secrets, read_secret_args, SECRETS_FROM_STDIN};
-pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL};
-pub use signal::{SignalEvent, SignalServer, MAX_PER_ROOM, ROOM_TTL};
+pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL, RELAY_AFTER};
+pub use signal::{SignalEvent, SignalServer, MAX_PER_ROOM, MAX_RELAYED, RELAY_TTL, ROOM_TTL};
 pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
 pub use upnp::{find_gateway, is_private_v4, open_port, Gateway, PortMapping, UpnpOutcome, UPNP_LEASE};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).

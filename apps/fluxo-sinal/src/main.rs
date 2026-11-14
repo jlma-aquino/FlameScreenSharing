@@ -201,6 +201,9 @@ fn main() -> ExitCode {
             SignalEvent::Ignored { from } => {
                 println!("[{t:8.1} s] pacote sem chave válida de {} (ignorado)", from.ip())
             }
+            SignalEvent::Relay { room, host, client } => {
+                println!("[{t:8.1} s] sala {room:05X}: repassando entre o host {host} e o cliente {client} (o caminho direto não abriu)")
+            }
         }
     });
     ExitCode::SUCCESS

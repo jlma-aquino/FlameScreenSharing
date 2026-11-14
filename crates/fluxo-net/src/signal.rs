@@ -11,6 +11,13 @@
 //! NAT que interessa. Depois disso os dois furam os NATs mandando pacotes um
 //! ao outro (ver `sender.rs` e `receiver.rs`); vídeo nunca passa por aqui.
 //!
+//! **Repasse** (quando o furo de NAT não abre): o host pede `RelayBind` da
+//! sala, e o servidor passa a repetir os pacotes entre aquele socket do host e
+//! o cliente que ele mesmo entregou a ele. Os dois mandam ao servidor, cujo
+//! caminho já está aberto nos dois NATs. O conteúdo segue cifrado de ponta a
+//! ponta (o servidor não tem a chave da sessão); ninguém consegue usar o
+//! repasse para mandar pacotes a um endereço que o servidor não apresentou.
+//!
 //! Com chaves ([`SignalServer::with_keys`]), só atende pedidos assinados com
 //! uma delas ([`ServerKey`]); o resto é ignorado em silêncio, sem resposta
 //! (quem não tem a chave não usa o servidor nem o faz responder a terceiros).
@@ -40,6 +47,18 @@ pub const MAX_PER_ROOM: usize = 8;
 /// parear (pareamento que falhou) volta a ficar disponível.
 const POSSE: Duration = Duration::from_secs(35);
 
+/// Um par repassado sem nenhum pacote por este tempo é desfeito.
+pub const RELAY_TTL: Duration = Duration::from_secs(30);
+
+/// Endereços em repasse ao mesmo tempo (dois por par).
+pub const MAX_RELAYED: usize = 128;
+
+/// Um lado de um par repassado.
+struct Repasse {
+    outro: SocketAddr,
+    visto: Instant,
+}
+
 /// O que aconteceu num pedido, para quem roda o servidor mostrar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignalEvent {
@@ -55,6 +74,12 @@ pub enum SignalEvent {
     NotFound { room: u32, host: SocketAddr },
     /// Cliente tentou uma sala cheia ([`MAX_PER_ROOM`]).
     RoomTaken { room: u32, client: SocketAddr },
+    /// O host pediu, e o servidor passou a repassar entre os dois.
+    Relay {
+        room: u32,
+        host: SocketAddr,
+        client: SocketAddr,
+    },
     /// Pacote sem assinatura de uma chave aceita (servidor com chaves): ignorado.
     Ignored { from: SocketAddr },
 }
@@ -75,6 +100,10 @@ pub struct SignalServer {
     chaves: Vec<ServerKey>,
     /// Pacotes ignorados por não virem assinados com uma das chaves.
     ignorados: u64,
+    /// Pares repassados, pelos dois endereços.
+    repasses: HashMap<SocketAddr, Repasse>,
+    /// Bytes repassados desde que o servidor subiu.
+    repassados: u64,
 }
 
 impl SignalServer {
@@ -91,6 +120,16 @@ impl SignalServer {
         self.ignorados
     }
 
+    /// Bytes repassados até agora.
+    pub fn relayed_bytes(&self) -> u64 {
+        self.repassados
+    }
+
+    /// Pares em repasse agora.
+    pub fn relays(&self) -> usize {
+        self.repasses.len() / 2
+    }
+
     /// Trata um datagrama: devolve o que mandar (destino, pacote) e o
     /// evento, se houve. Lixo e pacotes que não são pedidos são ignorados.
     pub fn handle(
@@ -99,6 +138,21 @@ impl SignalServer {
         de: SocketAddr,
         agora: Instant,
     ) -> (Vec<(SocketAddr, Vec<u8>)>, Option<SignalEvent>) {
+        // Repasse primeiro: é o caminho de cada pacote de vídeo. Só o que não é
+        // sinalização (um pedido assinado não passa no decode estrito) segue ao outro.
+        if let Some(outro) = self.repasses.get(&de).map(|r| r.outro) {
+            if PacketHeader::decode(datagrama).is_ok_and(|(h, _)| h.kind != PacketKind::Signal) {
+                for a in [de, outro] {
+                    if let Some(r) = self.repasses.get_mut(&a) {
+                        r.visto = agora;
+                    }
+                }
+                self.repassados += datagrama.len() as u64;
+                return (vec![(outro, datagrama.to_vec())], None);
+            }
+        }
+        self.repasses
+            .retain(|_, r| agora.duration_since(r.visto) < RELAY_TTL);
         for sala in self.salas.values_mut() {
             sala.retain(|c| agora.duration_since(c.visto) < ROOM_TTL);
         }
@@ -191,11 +245,51 @@ impl SignalServer {
                     }
                 }
             }
+            SignalMessage::RelayBind { room } => {
+                // Só entre este socket do host e o cliente que o servidor
+                // entregou a ele nesta sala.
+                let cliente = self.salas.get(&room).and_then(|sala| {
+                    sala.iter()
+                        .find(|c| c.host.is_some_and(|(h, _)| h == de))
+                        .map(|c| c.endereco)
+                });
+                let Some(cliente) = cliente else {
+                    return (Vec::new(), None);
+                };
+                // Pares antigos destes endereços saem (o host tenta de novo num socket novo).
+                for a in [de, cliente] {
+                    if let Some(r) = self.repasses.remove(&a) {
+                        self.repasses.remove(&r.outro);
+                    }
+                }
+                if self.repasses.len() + 2 > MAX_RELAYED {
+                    return (Vec::new(), None);
+                }
+                for (a, b) in [(de, cliente), (cliente, de)] {
+                    self.repasses.insert(
+                        a,
+                        Repasse {
+                            outro: b,
+                            visto: agora,
+                        },
+                    );
+                }
+                let r = resposta(h.frame_id, &SignalMessage::RelayReady);
+                (
+                    vec![(de, r)],
+                    Some(SignalEvent::Relay {
+                        room,
+                        host: de,
+                        client: cliente,
+                    }),
+                )
+            }
             // Respostas não são pedidos: alguém mandando coisa errada.
             SignalMessage::Registered { .. }
             | SignalMessage::Found { .. }
             | SignalMessage::NotFound
-            | SignalMessage::RoomTaken => (Vec::new(), None),
+            | SignalMessage::RoomTaken
+            | SignalMessage::RelayReady => (Vec::new(), None),
         }
     }
 
@@ -252,6 +346,81 @@ mod tests {
     fn ler(p: &[u8]) -> (u32, SignalMessage) {
         let (h, payload) = PacketHeader::decode(p).unwrap();
         (h.frame_id, SignalMessage::from_bytes(payload).unwrap())
+    }
+
+    #[test]
+    fn repasse_so_entre_os_dois_apresentados() {
+        let mut s = SignalServer::default();
+        let t = Instant::now();
+        let (cliente, host, intruso) = (a("200.0.0.1:41000"), a("201.0.0.2:52000"), a("203.0.0.3:1000"));
+        s.handle(
+            &pedido(
+                1,
+                SignalMessage::Register {
+                    room: 9,
+                    locals: vec![],
+                },
+            ),
+            cliente,
+            t,
+        );
+        // Sem o servidor ter entregado o cliente a ele: nada.
+        let (r, _) = s.handle(&pedido(2, SignalMessage::RelayBind { room: 9 }), host, t);
+        assert!(r.is_empty());
+        s.handle(
+            &pedido(
+                3,
+                SignalMessage::Lookup {
+                    room: 9,
+                    locals: vec![],
+                },
+            ),
+            host,
+            t,
+        );
+        let (r, ev) = s.handle(&pedido(4, SignalMessage::RelayBind { room: 9 }), host, t);
+        assert_eq!(ler(&r[0].1), (4, SignalMessage::RelayReady));
+        assert_eq!(
+            ev,
+            Some(SignalEvent::Relay {
+                room: 9,
+                host,
+                client: cliente
+            })
+        );
+        assert_eq!(s.relays(), 1);
+        // Vídeo do host vai ao cliente, e do cliente ao host, sem mudar nada.
+        let video = PacketKind::Ping
+            .control(77, 0)
+            .encode_with_payload(&[1, 2, 3])
+            .unwrap();
+        let (r, _) = s.handle(&video, host, t);
+        assert_eq!(r, vec![(cliente, video.clone())]);
+        let (r, _) = s.handle(&video, cliente, t);
+        assert_eq!(r, vec![(host, video.clone())]);
+        // De quem não está no par, não.
+        let (r, _) = s.handle(&video, intruso, t);
+        assert!(r.is_empty());
+        // Sinalização de quem está no par continua sendo sinalização.
+        let (r, _) = s.handle(
+            &pedido(
+                5,
+                SignalMessage::Register {
+                    room: 9,
+                    locals: vec![],
+                },
+            ),
+            cliente,
+            t,
+        );
+        assert_eq!(ler(&r[0].1).1, SignalMessage::Registered { public: cliente });
+        assert_eq!(s.relayed_bytes(), 2 * video.len() as u64);
+        // Parado por RELAY_TTL: desfeito.
+        let (r, _) = s.handle(&video, intruso, t + RELAY_TTL);
+        assert!(r.is_empty());
+        assert_eq!(s.relays(), 0);
+        let (r, _) = s.handle(&video, host, t + RELAY_TTL);
+        assert!(r.is_empty());
     }
 
     #[test]

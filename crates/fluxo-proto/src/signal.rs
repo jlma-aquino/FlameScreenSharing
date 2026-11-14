@@ -34,6 +34,8 @@ const REGISTERED: u8 = 3;
 const FOUND: u8 = 4;
 const NOT_FOUND: u8 = 5;
 const ROOM_TAKEN: u8 = 6;
+const RELAY_BIND: u8 = 7;
+const RELAY_READY: u8 = 8;
 
 /// Uma mensagem de sinalização.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +57,11 @@ pub enum SignalMessage {
     NotFound,
     /// Servidor → cliente: outro cliente já está nessa sala.
     RoomTaken,
+    /// Host → servidor: o caminho direto não abriu; repasse os pacotes entre
+    /// este socket e o cliente que você me entregou nesta sala.
+    RelayBind { room: u32 },
+    /// Servidor → host: repasse ligado; mande ao servidor o que iria ao cliente.
+    RelayReady,
 }
 
 impl SignalMessage {
@@ -82,6 +89,12 @@ impl SignalMessage {
             }
             Self::NotFound => b.push(NOT_FOUND),
             Self::RoomTaken => b.push(ROOM_TAKEN),
+            Self::RelayBind { room } => {
+                b.push(RELAY_BIND);
+                b.extend_from_slice(&room.to_be_bytes());
+                b.resize(REQUEST_LEN, 0);
+            }
+            Self::RelayReady => b.push(RELAY_READY),
         }
         b
     }
@@ -108,6 +121,15 @@ impl SignalMessage {
             },
             NOT_FOUND => Self::NotFound,
             ROOM_TAKEN => Self::RoomTaken,
+            RELAY_BIND => {
+                if b.len() < REQUEST_LEN {
+                    return Err(ProtoError::BadSignal);
+                }
+                Self::RelayBind {
+                    room: u32::from_be_bytes(r.take(4)?.try_into().map_err(|_| ProtoError::BadSignal)?),
+                }
+            }
+            RELAY_READY => Self::RelayReady,
             _ => return Err(ProtoError::BadSignal),
         };
         Ok(msg)
@@ -203,6 +225,8 @@ mod tests {
             },
             SignalMessage::NotFound,
             SignalMessage::RoomTaken,
+            SignalMessage::RelayBind { room: 0x12345 },
+            SignalMessage::RelayReady,
         ];
         for m in msgs {
             assert_eq!(SignalMessage::from_bytes(&m.to_bytes()).unwrap(), m);

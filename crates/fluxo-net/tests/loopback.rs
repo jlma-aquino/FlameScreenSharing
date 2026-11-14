@@ -1046,3 +1046,95 @@ fn atraso_do_cliente_vai_no_relatorio_ao_host() {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+/// Servidor que esconde os endereços: cada `Found` sai apontando para uma
+/// porta que não leva a lugar nenhum, então o caminho direto nunca abre —
+/// como dois NATs que não deixam o furo passar. Só sobra o repasse.
+struct ServidorQueEsconde {
+    endereco: SocketAddr,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl ServidorQueEsconde {
+    fn novo() -> Self {
+        use fluxo_proto::{PacketHeader, PacketKind, SignalMessage};
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        let endereco = socket.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let s = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut srv = SignalServer::default();
+            let mut buf = [0u8; 2048];
+            let lugar_nenhum: SocketAddr = "127.0.0.1:9".parse().unwrap();
+            while !s.load(Ordering::Relaxed) {
+                let Ok((n, de)) = socket.recv_from(&mut buf) else {
+                    continue;
+                };
+                let (envios, _) = srv.handle(&buf[..n], de, Instant::now());
+                for (para, pacote) in envios {
+                    let pacote = match PacketHeader::decode(&pacote) {
+                        Ok((h, p)) if h.kind == PacketKind::Signal => match SignalMessage::from_bytes(p) {
+                            Ok(SignalMessage::Found { .. }) => PacketKind::Signal
+                                .control(h.frame_id, 0)
+                                .encode_with_payload(
+                                    &SignalMessage::Found {
+                                        public: lugar_nenhum,
+                                        locals: vec![],
+                                    }
+                                    .to_bytes(),
+                                )
+                                .unwrap(),
+                            _ => pacote,
+                        },
+                        _ => pacote,
+                    };
+                    let _ = socket.send_to(&pacote, para);
+                }
+            }
+        });
+        Self {
+            endereco,
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for ServidorQueEsconde {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+#[test]
+fn repasse_pelo_servidor_quando_o_caminho_direto_nao_abre() {
+    let srv = ServidorQueEsconde::novo();
+    let rx = cliente_no_servidor(srv.endereco, "K7M4-QX9P");
+    std::thread::sleep(Duration::from_millis(200));
+    let inicio = Instant::now();
+    let tx = host_pelo_servidor(srv.endereco, "K7M4-QX9P", Duration::from_secs(10))
+        .expect("pareamento pelo repasse");
+    // Pareou pelo servidor, depois de esperar o caminho direto.
+    assert_eq!(tx.peer_addr(), srv.endereco);
+    assert!(
+        inicio.elapsed() >= fluxo_net::RELAY_AFTER,
+        "{:?}",
+        inicio.elapsed()
+    );
+    for n in 0..20 {
+        tx.send_frame(frame(n, 30_000), n == 0, clock_us()).unwrap();
+        let f = rx
+            .recv_frame(Duration::from_secs(1))
+            .unwrap()
+            .expect("frame pelo repasse");
+        assert_eq!(f.frame.data, frame(n, 30_000));
+    }
+    let c = rx.stats();
+    assert!(c.encrypted, "{c:?}");
+    assert_eq!(c.peer, Some(srv.endereco));
+}
