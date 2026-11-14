@@ -153,6 +153,18 @@ sudo netfilter-persistent save
    foi ignorado ("pacote sem chave válida … (ignorado)") e não recebeu nada; com
    a chave, o servidor apresentou os dois e o vídeo chegou a 59 fps.
 
+### 2026-11-13: repassador (ADR-021)
+
+1. Código novo copiado (passo 3 acima). No servidor, os testes do
+   `fluxo-proto` e do `fluxo-net` passaram, incluindo o do repasse pela
+   sinalização. Depois o `fluxo-sinal` foi compilado, instalado com
+   `sudo install` e o serviço reiniciado (~2 s fora do ar). Subiu com
+   "1 chave(s) aceita(s): 4c0684dd".
+2. Quando o caminho direto não abre em 3 s, o host pede o repasse e o vídeo
+   passa pelo servidor. Cada repasse dura até 30 s sem tráfego, e o servidor
+   aceita no máximo 128 ao mesmo tempo. Ainda falta o teste com um amigo atrás
+   de NAT restritivo.
+
 ## Chaves
 
 ```bash
@@ -186,5 +198,5 @@ da máquina.
 
 1. Testar a sala (ADR-016) com um amigo em outra rede e de novo pelo 4G,
    agora com TTL baixo.
-2. Escrever o repassador.
+2. Testar o repassador com um amigo atrás de NAT restritivo (CGNAT).
 4. Fechar na Security List as portas que eram de LiveKit e coturn.
