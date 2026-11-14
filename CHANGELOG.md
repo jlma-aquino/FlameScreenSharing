@@ -5,6 +5,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [0.2.1] — 2026-11-13
+
+### Corrigido
+- **Conexão com amigos de outras redes** voltou a funcionar: na 0.2.0 o cliente
+  passou a usar uma porta aleatória na sala, e onde o roteador de quem assiste só
+  deixava passar a 9000, o caminho direto não abria (tela em "esperando quem
+  compartilha"). Agora ele usa a 9000 e só pega outra se ela estiver ocupada por
+  outro cliente no mesmo PC.
+
 ## [0.2.0] — 2026-11-12
 
 ### Adicionado
