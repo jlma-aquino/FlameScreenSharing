@@ -61,6 +61,10 @@ ninguém:
 Em Configurações (canto de cima) ficam o tema claro ou escuro e os padrões:
 qualidade, codec, de onde vem o som e onde ele toca.
 
+O som: compartilhando a tela inteira, o som do Discord não vai junto (quem
+está na call com você não ouve a própria voz); compartilhando uma janela, vai
+só o som do programa dela.
+
 Importante: quem tem o código vê a tela inteira e ouve o som do PC de quem
 compartilha. Mande o código só para quem você quer, e feche o que não quiser
 mostrar antes de começar.
@@ -89,8 +93,8 @@ SE NÃO CONECTAR
 - Confira o firewall e o antivírus nos dois PCs.
 - Tente de novo: clique em Encerrar (ou Sair) e comece outra vez.
 - Algumas redes (internet de celular, certos provedores) bloqueiam a conexão
-  direta. Tente trocando a rede de um dos lados. Ainda não há como passar o
-  vídeo pelo servidor nesses casos.
+  direta. Nesses casos o vídeo passa sozinho pelo servidor, ainda cifrado
+  (leva uns segundos a mais para começar).
 
 
 PARA AJUDAR NO TESTE
