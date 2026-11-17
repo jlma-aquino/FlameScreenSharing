@@ -132,6 +132,7 @@ caixa de som uns 60–70 ms depois (com o buffer contra variação da rede).
 | Encode NVENC, 1080p a 20 Mbps | 2,3 ms p50, 2,8 ms p99 por quadro; PSNR de luminância 48,8 dB |
 | Decode na GPU (D3D11) | 0,17 ms de CPU por quadro (p50), 255 de 255 quadros |
 | Pela internet, PC de casa para um notebook no 4G do celular | 59,9 fps, 0% de perda, RTT 58 ms, encode 2,4 ms |
+| Pela internet, com amigos em outros estados | cerca de 30 ms de atraso |
 | 4 pessoas assistindo ao mesmo tempo (34 s) | 0 quadros perdidos; a quinta foi recusada |
 | Entre dois PCs no Wi-Fi (30 s) | 40 085 pacotes, 0 quadros perdidos durante o vídeo |
 
@@ -146,7 +147,8 @@ caixa de som uns 60–70 ms depois (com o buffer contra variação da rede).
 Com 3% de pacotes perdidos, a imagem estragada se recupera em média em 31 ms.
 
 **No dia a dia:** o grupo usa o FSS entre casas diferentes pelo servidor de
-salas, no lugar do compartilhamento do Discord. Também foram testados um
+salas, no lugar do compartilhamento do Discord, inclusive com amigos em outros
+estados, com cerca de 30 ms de atraso. Também foram testados um
 notebook Linux assistindo (pela linha de comando, decodificando na CPU) e a
 escolha da placa de vídeo (60 fps, sem perda).
 
