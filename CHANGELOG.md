@@ -5,6 +5,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [0.3.1] — 2026-11-16
+
 ### Adicionado
 - **Ícone do FSS**: um monitor com uma chama e o sinal de Wi-Fi, nos executáveis
   e nas janelas (desenhado pelo `fss-icone`, em `pacote/icone/fss.ico`).
