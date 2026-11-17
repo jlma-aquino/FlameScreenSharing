@@ -18,7 +18,8 @@ menos atraso e sem precisar de conta. Quem compartilha clica em
 em alguns segundos.
 
 - **Pouco atraso:** da captura até a imagem no PC de quem assiste, cerca de 5 ms
-  na mesma rede (medido: 5,1 ms p50 entre dois PCs no Wi-Fi). Pela internet,
+  na mesma rede (medido: 5,1 ms p50 entre dois PCs no Wi-Fi; veja
+  [Resultados](#resultados)). Pela internet,
   soma-se a metade do ping.
 - **Direto entre os PCs:** o vídeo não passa por servidor nenhum quando a rede
   deixa; o servidor só apresenta os dois lados.
@@ -106,6 +107,48 @@ usar está no [LEIA-ME](pacote/LEIA-ME.txt) que vai junto no zip.
 
 Detalhes: [ARQUITETURA](docs/ARQUITETURA.md) e as decisões técnicas em
 [DECISOES](docs/DECISOES.md).
+
+## Resultados
+
+Medições feitas durante o desenvolvimento, quase todas com uma RTX 5050 em
+1080p. O registro completo de cada teste está nos documentos dos módulos.
+
+**Atraso (captura até o quadro completo em quem assiste)**
+
+| Cenário | p50 | p99 |
+|---|---|---|
+| Mesma máquina, área de trabalho | 2,9 ms | 7,1 ms |
+| Mesma máquina, vídeo de jogo a 60 fps | 5,5 ms | 7,6 ms |
+| Entre dois PCs no Wi-Fi | 5,1 ms | 29,9 ms |
+| Até o `Present` na janela de quem assiste (área de trabalho) | 3,1 ms | 9,3 ms |
+
+O som chega cerca de 10 ms depois de capturado, na mesma rede, e sai pela
+caixa de som uns 60–70 ms depois (com o buffer contra variação da rede).
+
+**Cada etapa**
+
+| Etapa | Resultado |
+|---|---|
+| Encode NVENC, 1080p a 20 Mbps | 2,3 ms p50, 2,8 ms p99 por quadro; PSNR de luminância 48,8 dB |
+| Decode na GPU (D3D11) | 0,17 ms de CPU por quadro (p50), 255 de 255 quadros |
+| Pela internet, PC de casa para um notebook no 4G do celular | 59,9 fps, 0% de perda, RTT 58 ms, encode 2,4 ms |
+| 4 pessoas assistindo ao mesmo tempo (34 s) | 0 quadros perdidos; a quinta foi recusada |
+| Entre dois PCs no Wi-Fi (30 s) | 40 085 pacotes, 0 quadros perdidos durante o vídeo |
+
+**Rede ruim** (link simulado de 8 Mbps, com o host pedindo 20):
+
+| | Bitrate fixo | Bitrate adaptativo do FSS |
+|---|---|---|
+| Quadros mostrados | 31 fps | 51 fps |
+| Atraso p99 | 223 ms | 95 ms |
+| Perda depois de estabilizar | 45–65% | 0% |
+
+Com 3% de pacotes perdidos, a imagem estragada se recupera em média em 31 ms.
+
+**No dia a dia:** o grupo usa o FSS entre casas diferentes pelo servidor de
+salas, no lugar do compartilhamento do Discord. Também foram testados um
+notebook Linux assistindo (pela linha de comando, decodificando na CPU) e a
+escolha da placa de vídeo (60 fps, sem perda).
 
 ## Servidor
 
