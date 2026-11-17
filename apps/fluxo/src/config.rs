@@ -48,6 +48,8 @@ pub struct Configuracoes {
     pub mbps: u32,
     /// De qual saída de som capturar (`None`: a padrão do Windows).
     pub som_de: Option<usize>,
+    /// Na tela inteira, deixar o som do Discord fora da transmissão.
+    pub sem_discord: bool,
     /// Placa de vídeo para compartilhar e assistir (`None`: a do Windows).
     pub gpu: Option<usize>,
 
@@ -82,6 +84,7 @@ impl Default for Configuracoes {
             encoder: 0,
             mbps: 0,
             som_de: None,
+            sem_discord: true,
             gpu: None,
             volume: 100,
             tocar_em: None,
@@ -139,6 +142,7 @@ impl Configuracoes {
              encoder = {}\n\
              mbps = {}\n\
              som_de = {}\n\
+             sem_discord = {}\n\
              gpu = {}\n\
              volume = {}\n\
              tocar_em = {}\n\
@@ -160,6 +164,7 @@ impl Configuracoes {
                 self.mbps.to_string()
             },
             opcional(self.som_de),
+            sim(self.sem_discord),
             opcional(self.gpu),
             self.volume,
             opcional(self.tocar_em),
@@ -213,6 +218,7 @@ impl Configuracoes {
                     }
                 }
                 "som_de" => c.som_de = opcional(v).unwrap_or(c.som_de),
+                "sem_discord" => c.sem_discord = sim(v).unwrap_or(c.sem_discord),
                 "gpu" => c.gpu = opcional(v).unwrap_or(c.gpu),
                 "volume" => c.volume = v.parse().ok().filter(|v| *v <= 100).unwrap_or(c.volume),
                 "tocar_em" => c.tocar_em = opcional(v).unwrap_or(c.tocar_em),
@@ -244,6 +250,7 @@ mod tests {
             encoder: 1,
             mbps: 35,
             som_de: Some(2),
+            sem_discord: false,
             gpu: Some(1),
             volume: 40,
             tocar_em: Some(1),

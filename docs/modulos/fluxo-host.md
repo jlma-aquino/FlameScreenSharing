@@ -132,6 +132,23 @@ A cada começo e mudança o host imprime `Configuração: AV1 · 1920x1080 · at
 60 fps · até 20 Mbps`, que a janela do FSS mostra. O codec pedido (`--codec`)
 é uma preferência: quem assiste não decodifica, vale o melhor que os dois têm.
 
+## De onde vem o som (`src/som.rs`)
+
+- Janela: só o som do processo dono dela e dos filhos.
+- Tela inteira: tudo menos o Discord (o processo raiz, `Discord.exe`,
+  `DiscordPTB.exe` ou `DiscordCanary.exe` cujo pai não é Discord, e os filhos);
+  `--com-discord` deixa ele junto. Sem o Discord, tudo menos `--som-sem-processo`.
+- Com `--audio-dispositivo`, na tela inteira: aquela saída inteira.
+
+A thread de áudio olha a cada 250 ms se a tela ou janela mudou e, a cada 3 s,
+se o Discord abriu ou fechou; reabre só a captura (o Opus e a sequência
+seguem) e imprime `Som: ...`. Uma janela minimizada (menor que 64x64) é
+recusada ao trocar, e a transmissão segue no que estava.
+
+Testado com o Discord aberto: tela ("menos o Discord"), `--com-discord`
+("menos o som do FSS"), troca para a janela do Bloco de Notas ("só o
+programa da janela") e de volta para a tela; a janela minimizada foi recusada.
+
 ## Comandos ao vivo
 
 Também pela entrada padrão (são os botões da barra da janela), com a

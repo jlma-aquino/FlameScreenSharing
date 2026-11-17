@@ -1343,7 +1343,17 @@ impl Janela {
                 });
                 ui.end_row();
                 ui.label("Som");
-                ui.checkbox(&mut c.som, "Começar com o som do PC ligado");
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut c.som, "Começar com o som do PC ligado");
+                    ui.checkbox(&mut c.sem_discord, "Não transmitir o som do Discord");
+                    ui.label(
+                        RichText::new(
+                            "Assim quem está na call com você não ouve a própria voz. \
+                             Transmitindo uma janela, vai só o som do programa dela.",
+                        )
+                        .size(12.0),
+                    );
+                });
                 ui.end_row();
                 if !self.saidas_som.is_empty() {
                     ui.label("Capturar o som de");

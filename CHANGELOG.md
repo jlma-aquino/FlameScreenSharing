@@ -5,6 +5,16 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Adicionado
+- **Som sem o Discord**: na tela inteira, o som do Discord fica fora da
+  transmissão (quem está na call com você não ouve mais a própria voz). Dá
+  para desligar em Configurações > Compartilhar.
+- **Som só da janela**: transmitindo uma janela, vai só o som do programa dela.
+
+### Corrigido
+- Escolher uma **janela minimizada** derrubava a transmissão; agora é recusada e
+  a transmissão segue no que estava.
+
 ## [0.3.0] — 2026-11-13
 
 ### Adicionado

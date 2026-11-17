@@ -262,15 +262,27 @@ impl windows::Win32::Media::Audio::IActivateAudioInterfaceCompletionHandler_Impl
 
 impl LoopbackCapture {
     /// Captura o que o PC toca **menos** o som do processo `pid` e dos filhos
-    /// dele (Windows 10 2004+). O FSS passa o número da própria janela: o som
-    /// de quem você está assistindo (um processo filho dela) não volta na sua
-    /// transmissão. Sempre da mistura de todas as saídas, em 48 kHz estéreo.
+    /// dele (Windows 10 2004+). O FSS passa o número da própria janela (o som
+    /// de quem você está assistindo, um processo filho dela, não volta na sua
+    /// transmissão) ou o do Discord (quem está na call não ouve a própria voz).
+    /// Sempre da mistura de todas as saídas, em 48 kHz estéreo.
     pub fn excluding_process(pid: u32) -> Result<Self, AudioError> {
+        Self::por_programa(pid, false)
+    }
+
+    /// Captura **só** o som do processo `pid` e dos filhos dele (Windows 10
+    /// 2004+): ao transmitir uma janela, vai só o som do programa dela.
+    pub fn only_process(pid: u32) -> Result<Self, AudioError> {
+        Self::por_programa(pid, true)
+    }
+
+    fn por_programa(pid: u32, incluir: bool) -> Result<Self, AudioError> {
         use windows::Win32::Media::Audio::{
             ActivateAudioInterfaceAsync, IActivateAudioInterfaceCompletionHandler,
             AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
             AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
-            PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+            PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+            PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
         };
         use windows::Win32::System::Com::StructuredStorage::{
             PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
@@ -288,7 +300,11 @@ impl LoopbackCapture {
                 Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
                     ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
                         TargetProcessId: pid,
-                        ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+                        ProcessLoopbackMode: if incluir {
+                            PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
+                        } else {
+                            PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE
+                        },
                     },
                 },
             };
@@ -318,24 +334,24 @@ impl LoopbackCapture {
                 Some(&*pv),
                 &aviso,
             )
-            .map_err(win("pedir a captura sem o som do FSS (Windows 10 2004+)"))?;
+            .map_err(win("pedir a captura por programa (Windows 10 2004+)"))?;
             rx.recv_timeout(Duration::from_secs(5))
                 .map_err(|_| AudioError::Windows {
-                    context: "ativar a captura sem o som do FSS",
+                    context: "ativar a captura por programa",
                     message: "o Windows não respondeu".into(),
                 })?;
             let mut hr = windows_core::HRESULT(0);
             let mut interface = None;
             op.GetActivateResult(&mut hr, &mut interface)
-                .map_err(win("ativar a captura sem o som do FSS"))?;
-            hr.ok().map_err(win("ativar a captura sem o som do FSS"))?;
+                .map_err(win("ativar a captura por programa"))?;
+            hr.ok().map_err(win("ativar a captura por programa"))?;
             let cliente: IAudioClient = interface
                 .ok_or_else(|| AudioError::Windows {
-                    context: "ativar a captura sem o som do FSS",
+                    context: "ativar a captura por programa",
                     message: "sem interface".into(),
                 })?
                 .cast()
-                .map_err(win("captura sem o som do FSS"))?;
+                .map_err(win("captura por programa"))?;
             // Este modo não tem formato de mistura: o nosso, float 48 kHz estéreo.
             let fmt = WAVEFORMATEX {
                 wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
@@ -355,7 +371,7 @@ impl LoopbackCapture {
                     &fmt,
                     None,
                 )
-                .map_err(win("iniciar a captura sem o som do FSS"))?;
+                .map_err(win("iniciar a captura por programa"))?;
             let captura: IAudioCaptureClient = cliente.GetService().map_err(win("captura do som"))?;
             cliente.Start().map_err(win("começar a captura do som"))?;
             let formato = Formato {

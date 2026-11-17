@@ -49,11 +49,18 @@ compartilhando. O vídeo abre no lugar desta janela só quando não há outra
 sessão; com outra rodando, abre ao lado. A casinha na barra do vídeo traz esta
 janela de volta sem fechar o vídeo (o cliente imprime `Mostrar o FSS`).
 
-O som: compartilhando e assistindo ao mesmo tempo, o host captura tudo o que o
-PC toca **menos** a árvore de processos desta janela (`--som-sem-processo`,
-Windows 10 2004+), então o som de quem você assiste não volta na sua
-transmissão. Com uma saída de som escolhida nas configurações, vale a captura
-daquela saída.
+O som (Windows 10 2004+; ver `fluxo-host`, "De onde vem o som"):
+- tela inteira: tudo o que o PC toca **menos** o Discord (Configurações >
+  Compartilhar > "Não transmitir o som do Discord", ligado por padrão; vai
+  `--com-discord` quando desligado). Quem está na call não ouve a própria voz.
+- sem o Discord aberto: tudo menos a árvore de processos desta janela
+  (`--som-sem-processo`), então o som de quem você assiste não volta na sua
+  transmissão. O Windows só tira um programa por captura: compartilhando,
+  assistindo e na call ao mesmo tempo, sai o Discord e o som de quem você
+  assiste volta junto.
+- uma janela: só o som do programa dela.
+- com uma saída de som escolhida nas configurações, na tela inteira vale a
+  captura daquela saída.
 
 Testado: dois clientes na mesma sala no mesmo PC, cada um numa porta livre.
 

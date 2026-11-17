@@ -24,6 +24,7 @@ mod espectadores;
 mod fonte;
 #[cfg(any(windows, test))]
 mod limite;
+mod som;
 
 use std::process::ExitCode;
 
@@ -71,6 +72,9 @@ Opções:
   --som-sem-processo P  captura o som de tudo menos o do processo P e dos filhos dele
                         (Windows 10 2004+): a janela do FSS passa o número dela, e o
                         som de quem você assiste não volta na sua transmissão
+  --com-discord         transmite também o som do Discord (por padrão, na tela inteira,
+                        ele fica de fora: quem está na call não ouve a própria voz).
+                        Transmitindo uma janela, vai sempre só o som do programa dela
   --encoder E           auto, nvenc ou mf (padrão auto)
   --codec C             auto, h264, hevc ou av1 (padrão auto: o melhor que a GPU
                         codifica e o cliente decodifica, na ordem AV1, HEVC, H.264)
@@ -131,6 +135,8 @@ struct Opts {
     audio_dispositivo: Option<usize>,
     /// Captura o som sem o deste processo e dos filhos dele (a janela do FSS).
     som_sem_processo: Option<u32>,
+    /// Transmitir também o som do Discord (por padrão sai, na tela inteira).
+    com_discord: bool,
     /// TTL dos pedidos até o furo do cliente chegar (0 = normal).
     ttl_furo: u32,
     monitor: usize,
@@ -193,6 +199,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         sem_audio: false,
         audio_dispositivo: None,
         som_sem_processo: None,
+        com_discord: false,
         monitor: 0,
         janela_captura: None,
         gpu: None,
@@ -227,6 +234,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--sala" => o.sala = true,
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--sem-audio" => o.sem_audio = true,
+            "--com-discord" => o.com_discord = true,
             "--som-sem-processo" => {
                 o.som_sem_processo = Some(
                     valor()?
@@ -506,52 +514,77 @@ fn codificar(
     Ok(None)
 }
 
-/// Thread de áudio: captura o que o PC toca, codifica em Opus (quadros de
-/// 10 ms) e manda a todos os espectadores, até `parar`. Devolve o resumo.
+/// Thread de áudio: captura o som (ver `som.rs`: de onde), codifica em Opus
+/// (quadros de 10 ms) e manda a todos os espectadores, até `parar`. Ao trocar
+/// entre tela e janela (`janela`: o HWND transmitido, 0 na tela), ou ao abrir
+/// ou fechar o Discord, a captura é reaberta sem parar a transmissão.
 #[cfg(windows)]
 fn transmitir_audio(
     tx: &espectadores::Espectadores,
     dispositivo: Option<usize>,
     sem_processo: Option<u32>,
+    sem_discord: bool,
+    janela: &std::sync::atomic::AtomicIsize,
     parar: &std::sync::atomic::AtomicBool,
     ligado: &std::sync::atomic::AtomicBool,
 ) -> Result<String, fluxo_audio::AudioError> {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
-    use fluxo_audio::{output_devices, Encoder, LoopbackCapture, DEFAULT_BITRATE};
+    use fluxo_audio::{Encoder, LoopbackCapture, DEFAULT_BITRATE};
 
-    let nome = output_devices()
-        .ok()
-        .and_then(|l| {
-            l.into_iter()
-                .find(|d| dispositivo.map_or(d.default, |i| d.index == i))
+    let abrir = |modo: som::Modo| -> Result<LoopbackCapture, fluxo_audio::AudioError> {
+        let r = match modo {
+            som::Modo::Saida(d) => return LoopbackCapture::new(d),
+            som::Modo::Sem { pid, .. } => LoopbackCapture::excluding_process(pid),
+            som::Modo::So(pid) => LoopbackCapture::only_process(pid),
+        };
+        r.or_else(|e| {
+            println!("  (não deu para separar o som por programa: {e}; vai o som inteiro do PC)");
+            LoopbackCapture::new(dispositivo)
         })
-        .map(|d| d.name)
-        .unwrap_or_default();
-    // Sem o som do FSS (o de quem você assiste), se pedido e sem saída escolhida.
-    let (mut cap, nome) = match (sem_processo, dispositivo) {
-        (Some(pid), None) => {
-            match LoopbackCapture::excluding_process(pid) {
-                Ok(c) => (c, "tudo o que o PC toca, menos o som do FSS".to_string()),
-                Err(e) => {
-                    println!("  (sem a captura que tira o som do FSS: {e}; o som de quem você assiste volta junto)");
-                    (LoopbackCapture::new(None)?, nome)
-                }
-            }
-        }
-        _ => (LoopbackCapture::new(dispositivo)?, nome),
     };
+    let discord = || if sem_discord { som::discord() } else { None };
+    let mut do_discord = discord();
+    let mut olhou_discord = Instant::now();
+    let desejado = |do_discord: Option<u32>| {
+        let h = janela.load(Ordering::Relaxed);
+        let programa = (h != 0).then(|| som::processo_da_janela(h)).flatten();
+        som::escolher(programa, dispositivo, do_discord, sem_processo)
+    };
+    let mut modo = desejado(do_discord);
+    let mut cap = abrir(modo)?;
     // FEC para ~5% de perda: um quadro perdido é refeito pelo seguinte.
     let mut enc = Encoder::new(DEFAULT_BITRATE, 5)?;
     println!(
-        "  áudio: {nome} (Opus {} kbps, quadros de 10 ms)",
+        "  áudio: {} (Opus {} kbps, quadros de 10 ms)",
+        modo.descricao(),
         DEFAULT_BITRATE / 1000
     );
     let (mut seq, mut bytes) = (0u32, 0u64);
+    let (mut da_placa, mut olhou_modo) = (0.0f64, Instant::now());
     let inicio = Instant::now();
     while !parar.load(Ordering::Relaxed) {
         std::thread::sleep(Duration::from_millis(5));
+        if olhou_modo.elapsed() >= Duration::from_millis(250) {
+            olhou_modo = Instant::now();
+            if olhou_discord.elapsed() >= Duration::from_secs(3) {
+                olhou_discord = Instant::now();
+                do_discord = discord();
+            }
+            let novo = desejado(do_discord);
+            if novo != modo {
+                match abrir(novo) {
+                    Ok(c) => {
+                        da_placa += cap.device_seconds();
+                        cap = c;
+                        modo = novo;
+                        println!("Som: {}", modo.descricao());
+                    }
+                    Err(e) => println!("  (não consegui trocar o som: {e})"),
+                }
+            }
+        }
         for mut q in cap.read_frames()? {
             if !ligado.load(Ordering::Relaxed) {
                 q.fill(0.0);
@@ -567,7 +600,7 @@ fn transmitir_audio(
     Ok(format!(
         "áudio: {seq} quadros, {:.0} kbps médio, {:.1} s vieram da placa (o resto foi silêncio)",
         bytes as f64 * 8.0 / t.max(0.001) / 1000.0,
-        cap.device_seconds()
+        da_placa + cap.device_seconds()
     ))
 }
 
@@ -882,6 +915,11 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             })?;
     }
     // Áudio numa thread própria, para todos (pacotes à parte).
+    // A janela transmitida (0: a tela), para o som sair só do programa dela.
+    let janela_som = std::sync::Arc::new(std::sync::atomic::AtomicIsize::new(match cap.alvo() {
+        Alvo::Janela(h) => h,
+        Alvo::Tela(_) => 0,
+    }));
     let parar_audio = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Som ligado ou não (botão da janela). A thread roda mesmo desligado, mandando
     // silêncio: ligar de novo é na hora, sem reabrir nada.
@@ -893,11 +931,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             o.audio_dispositivo,
             som_ligado.clone(),
         );
-        let sem_processo = o.som_sem_processo;
+        let (sem_processo, sem_discord, janela) = (o.som_sem_processo, !o.com_discord, janela_som.clone());
         Some(
             std::thread::Builder::new()
                 .name("fluxo-audio".into())
-                .spawn(move || transmitir_audio(&tx, disp, sem_processo, &parar, &som))?,
+                .spawn(move || {
+                    transmitir_audio(&tx, disp, sem_processo, sem_discord, &janela, &parar, &som)
+                })?,
         )
     };
 
@@ -1016,8 +1056,21 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     // se recria sozinha no próximo frame e a transmissão segue.
                     cap.soltar();
                     match Fonte::abrir(trocar_para.expect("tela ou janela"), o.gpu) {
+                        // Janela minimizada (ex.: 160x28): o encoder não aceita
+                        // menos de 64 pixels; a transmissão segue na tela de antes.
+                        Ok(nova) if nova.tamanho().0 < 64 || nova.tamanho().1 < 64 => {
+                            let (w, h) = nova.tamanho();
+                            println!("Não consegui trocar de tela: a janela está minimizada ou pequena demais ({w}x{h})");
+                        }
                         Ok(nova) => {
                             cap = nova;
+                            janela_som.store(
+                                match cap.alvo() {
+                                    Alvo::Janela(h) => h,
+                                    Alvo::Tela(_) => 0,
+                                },
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
                             device = cap.d3d_device().clone();
                             context = cap.d3d_context().clone();
                             captura = cap.tamanho();
