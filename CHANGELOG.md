@@ -6,6 +6,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Ícone do FSS**: um monitor com uma chama e o sinal de Wi-Fi, nos executáveis
+  e nas janelas (desenhado pelo `fss-icone`, em `pacote/icone/fss.ico`).
 - **Som sem o Discord**: na tela inteira, o som do Discord fica fora da
   transmissão (quem está na call com você não ouve mais a própria voz). Dá
   para desligar em Configurações > Compartilhar.

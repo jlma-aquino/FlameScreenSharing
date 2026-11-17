@@ -1315,6 +1315,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fss-icone"
+version = "0.3.0"
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"

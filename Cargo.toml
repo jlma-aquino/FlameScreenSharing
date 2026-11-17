@@ -20,6 +20,7 @@ members = [
     "apps/fluxo-sinal",
     "apps/fluxo",
     "apps/fss-assinatura",
+    "apps/fss-icone",
 ]
 
 [workspace.package]

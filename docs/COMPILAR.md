@@ -187,3 +187,10 @@ cargo doc --workspace --no-deps --open
 | Erro de compilação dentro de `fluxo-capture/src/dxgi.rs` | Possível diferença de versão do crate `windows`. Copie a mensagem de erro completa para corrigirmos. |
 | `encoders` mostra `[--] nvenc ... driver suporta a API NVENC até X` | Driver NVIDIA antigo: atualize para 531 ou mais novo (ou use `--encoder mf`). |
 | `encoders` mostra `[--] mf ... nenhum encoder H.264 de hardware` | Driver de vídeo sem encoder (VM, driver genérico da Microsoft): instale o driver do fabricante. |
+
+## Ícone
+
+O ícone dos executáveis vem de `pacote/icone/fss.ico`, embutido pelo `build.rs`
+com o `rc.exe` do Windows SDK (vem com as ferramentas de C++ do Visual Studio).
+Para redesenhar: `cargo run --release -p fss-icone` (ver
+[modulos/fss-icone.md](modulos/fss-icone.md)).
