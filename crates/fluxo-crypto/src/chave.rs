@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn texto_de_ida_e_volta() {
         for servidor in [
-            "137.131.152.250:3478",
+            "203.0.113.10:3478",
             "[2001:db8::7]:3478",
             "sinal.exemplo.com:7000",
         ] {
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn colado_com_espacos_e_minusculas() {
-        let k = ServerKey::generate("137.131.152.250:3478").unwrap();
+        let k = ServerKey::generate("203.0.113.10:3478").unwrap();
         let texto = k.to_string();
         let baguncado = format!("  {}\n", texto.to_lowercase().replace('-', " - "));
         assert_eq!(ServerKey::parse(&baguncado).unwrap(), k);
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn erro_de_copia_nao_passa() {
-        let texto = ServerKey::generate("137.131.152.250:3478").unwrap().to_string();
+        let texto = ServerKey::generate("203.0.113.10:3478").unwrap().to_string();
         // Troca um símbolo do meio.
         let mut c: Vec<char> = texto.chars().collect();
         let i = c.len() / 2;
@@ -276,8 +276,8 @@ mod tests {
 
     #[test]
     fn assinatura_so_vale_com_a_mesma_chave() {
-        let a = ServerKey::generate("137.131.152.250:3478").unwrap();
-        let b = ServerKey::generate("137.131.152.250:3478").unwrap();
+        let a = ServerKey::generate("203.0.113.10:3478").unwrap();
+        let b = ServerKey::generate("203.0.113.10:3478").unwrap();
         let pedido = b"registro na sala 42";
         let assinado = a.signed(pedido);
         assert_eq!(assinado.len(), pedido.len() + KEY_TAG_LEN);
@@ -292,9 +292,9 @@ mod tests {
 
     #[test]
     fn debug_nao_mostra_o_segredo() {
-        let k = ServerKey::generate("137.131.152.250:3478").unwrap();
+        let k = ServerKey::generate("203.0.113.10:3478").unwrap();
         let d = format!("{k:?}");
-        assert!(d.contains("137.131.152.250:3478") && d.contains(&k.id()));
+        assert!(d.contains("203.0.113.10:3478") && d.contains(&k.id()));
         assert!(!d.contains(&k.to_string()[5..15]));
     }
 }

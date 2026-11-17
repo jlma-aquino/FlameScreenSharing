@@ -12,7 +12,7 @@ Nenhum segredo fica aqui.
 | Região | Brazil East (São Paulo) |
 | Forma | `VM.Standard.A1.Flex` (ARM `aarch64`): 2 núcleos, 11 GB de RAM, 96 GB de disco |
 | Sistema | Ubuntu 24.04.5 LTS |
-| IP público | `137.131.152.250` |
+| IP público | fora do git, em `.secrets/servidor-ip.txt` (também dentro da chave `FSS1-…`) |
 | Usuário | `ubuntu` (sudo sem senha) |
 
 A Oracle pode recuperar máquinas grátis que ficam ociosas por 7 dias (uso de
@@ -34,7 +34,7 @@ icacls ".secrets\ssh-key-2026-11-12.key" /grant:r "${env:USERNAME}:(R)"
 Entrar:
 
 ```powershell
-ssh -i ".secrets\ssh-key-2026-11-12.key" ubuntu@137.131.152.250
+ssh -i ".secrets\ssh-key-2026-11-12.key" ubuntu@<IP do servidor>
 ```
 
 ## Arquitetura escolhida
@@ -90,7 +90,7 @@ sudo netfilter-persistent save
 
 1. UDP 3478 liberada no iptables e gravada (comando acima). O `fluxo-sinal`
    usa 3478 em vez do padrão 7000 porque a Security List já liberava essa
-   porta. Nos apps, o servidor é `137.131.152.250:3478`.
+   porta. Nos apps, o servidor é `<IP do servidor>:3478`.
 2. Compilador e Rust instalados:
    ```bash
    sudo apt-get install -y build-essential
@@ -100,7 +100,7 @@ sudo netfilter-persistent save
    `.secrets`) e compilado:
    ```bash
    # No PC, na pasta do projeto (Git Bash)
-   git ls-files -z -co --exclude-standard | tar --null -T - -cf - | ssh -i .secrets/ssh-key-2026-11-12.key ubuntu@137.131.152.250 'mkdir -p ~/fss && tar -x -C ~/fss'
+   git ls-files -z -co --exclude-standard | tar --null -T - -cf - | ssh -i .secrets/ssh-key-2026-11-12.key ubuntu@<IP do servidor> 'mkdir -p ~/fss && tar -x -C ~/fss'
    ```
    ```bash
    # No servidor
@@ -138,7 +138,7 @@ sudo netfilter-persistent save
    sudo mkdir -p /etc/fluxo-sinal
    sudo touch /etc/fluxo-sinal/chaves
    sudo chmod 600 /etc/fluxo-sinal/chaves
-   sudo /usr/local/bin/fluxo-sinal --nova-chave 137.131.152.250:3478 --chaves /etc/fluxo-sinal/chaves
+   sudo /usr/local/bin/fluxo-sinal --nova-chave <IP do servidor>:3478 --chaves /etc/fluxo-sinal/chaves
    ```
    A chave (id `4c0684dd`) ficou guardada no PC de casa em
    `.secrets\chave-servidor.txt`, fora do git.
@@ -169,7 +169,7 @@ sudo netfilter-persistent save
 
 ```bash
 # Mais uma chave (uma para cada amigo, se quiser saber quem vazou)
-sudo /usr/local/bin/fluxo-sinal --nova-chave 137.131.152.250:3478 --chaves /etc/fluxo-sinal/chaves
+sudo /usr/local/bin/fluxo-sinal --nova-chave <IP do servidor>:3478 --chaves /etc/fluxo-sinal/chaves
 sudo systemctl restart fluxo-sinal
 # Tirar o acesso: apagar a linha da chave (e o comentário acima dela) e reiniciar
 sudo nano /etc/fluxo-sinal/chaves
