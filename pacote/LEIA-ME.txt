@@ -6,12 +6,22 @@ criar conta. O vídeo vai direto de um PC para o outro. Todos precisam usar esta
 mesma versão.
 
 
-CHAVE DO SERVIDOR
------------------
-As salas precisam da chave do servidor (um texto que começa com FSS1-), que
-vem junto com este arquivo. Na primeira vez, abra Configurações > Conexão e
-cole a chave. Quem compartilha e quem assiste usam a mesma. Não passe a chave
-para quem não for do grupo.
+CHAVE DO SERVIDOR E CONVITE DO GRUPO
+------------------------------------
+As salas precisam da chave do servidor (um texto que começa com FSS1-). Se
+você for de um grupo, recebe também o convite dele (começa com FSSG-). Na
+primeira vez, o programa mostra um campo só: cole ali a mensagem com os dois,
+do jeito que veio. (Depois, ficam em Configurações > Conexão.) Não passe a
+chave nem o convite para quem não for do grupo.
+
+
+GRUPO E PERFIL
+--------------
+Com o convite, a lista à direita mostra quem do grupo está com o FSS aberto e
+quem está ao vivo. Clique na linha de quem está ao vivo para assistir, sem
+código. Em Configurações > Perfil (ou no seu nome, em cima), escolha o seu
+nome e uma foto; também dá para arrastar uma imagem para a janela. A foto
+vai cifrada: só quem tem o convite vê.
 
 
 ATUALIZAÇÕES

@@ -5,6 +5,8 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [0.4.0] — 2026-11-23
+
 ### Adicionado
 - **Grupos**, no jeito dos servidores do Discord (ADR-022): com o **convite do
   grupo** (`FSSG-…`, em Configurações > Conexão, separado da chave do servidor),
@@ -39,6 +41,10 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - **Abas** curtas, com a bolinha de cor do estado (o estado inteiro fica no
   cartão do meio, e saiu da barra de cima).
 - O nome no grupo foi de Conexão para Perfil.
+
+### Corrigido
+- As configurações ignoram o BOM no começo do arquivo (Bloco de Notas antigo):
+  antes, a primeira linha, em geral a chave, sumia.
 
 ## [0.3.1] — 2026-11-16
 
