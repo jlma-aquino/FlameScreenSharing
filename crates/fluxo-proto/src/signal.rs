@@ -16,8 +16,12 @@
 //!
 //! **Grupos** (ADR-022): com o FSS aberto, cada membro manda `Presence` de
 //! tempos em tempos, com a sua nota cifrada (apelido e, compartilhando, o
-//! código da sala); o servidor responde `Members`, a lista do grupo da chave
-//! que assinou o pedido, em páginas que nunca passam do tamanho do pedido.
+//! código da sala) e a versão da lista que já tem. Se a lista não mudou, o
+//! servidor responde só `GroupState` (9 bytes); se mudou, o membro pede as
+//! páginas de `Members` com um `Presence` cheio (1200 bytes), e cada página
+//! cabe no pedido. A foto de cada membro (cifrada, até [`MAX_PHOTO`] bytes)
+//! sobe em partes com `PhotoPut` e desce com `PhotoGet`/`Photo`, só quando
+//! muda (ADR-023).
 //!
 //! [`PacketKind::Signal`]: crate::PacketKind::Signal
 
@@ -43,10 +47,24 @@ const RELAY_BIND: u8 = 7;
 const RELAY_READY: u8 = 8;
 const PRESENCE: u8 = 9;
 const MEMBERS: u8 = 10;
+const GROUP_STATE: u8 = 11;
+const PHOTO_PUT: u8 = 12;
+const PHOTO_GET: u8 = 13;
+const PHOTO: u8 = 14;
 
-/// Tamanho do payload de `Presence` (completado com zeros). As páginas de
-/// `Members` cabem nele: o servidor nunca responde mais do que recebe.
+/// Tamanho do payload de um `Presence` cheio (completado com zeros) e de um
+/// `PhotoGet`. As páginas de `Members` e as partes de `Photo` cabem nele: o
+/// servidor nunca responde mais do que recebe.
 pub const PRESENCE_LEN: usize = 1200;
+
+/// Bytes de foto em cada parte de `PhotoPut`/`Photo`.
+pub const PHOTO_PART: usize = 1024;
+
+/// Partes de uma foto, no máximo.
+pub const MAX_PHOTO_PARTS: usize = 4;
+
+/// Maior foto (cifrada), em bytes.
+pub const MAX_PHOTO: usize = PHOTO_PART * MAX_PHOTO_PARTS;
 
 /// Maior nota de um membro (cifrada), em bytes.
 pub const MAX_NOTE: usize = 120;
@@ -66,6 +84,8 @@ pub struct MemberEntry {
     pub idle_s: u16,
     /// Nota cifrada com o segredo do grupo (o servidor não lê).
     pub note: Vec<u8>,
+    /// Número da foto que o servidor tem dele (0: sem foto).
+    pub photo: u32,
 }
 
 /// Uma mensagem de sinalização.
@@ -94,21 +114,58 @@ pub enum SignalMessage {
     /// Servidor → host: repasse ligado; mande ao servidor o que iria ao cliente.
     RelayReady,
     /// Membro → servidor: "estou aqui" no grupo `group`, com a prova de que
-    /// tem o convite (`tag`, sobre membro ‖ nota), a nota e a página da lista
-    /// que quer de volta.
+    /// tem o convite (`tag`, sobre membro ‖ nota), a nota e a versão da lista
+    /// que já tem (`known`). Curto (`full: false`, [`REQUEST_LEN`]): a
+    /// resposta é `GroupState`. Cheio ([`PRESENCE_LEN`]): a resposta é a
+    /// página `page` de `Members`.
     Presence {
         member: u64,
         page: u8,
         group: u32,
+        known: u32,
+        full: bool,
         tag: [u8; 16],
         note: Vec<u8>,
     },
-    /// Servidor → membro: uma página da lista do grupo.
+    /// Servidor → membro: uma página da lista do grupo, na versão `version`.
     Members {
         name: String,
+        version: u32,
         page: u8,
         pages: u8,
         members: Vec<MemberEntry>,
+    },
+    /// Servidor → membro: a versão atual da lista e a foto que o servidor tem
+    /// deste membro (0: nenhuma). Mesma versão: nada a buscar.
+    GroupState { version: u32, photo: u32 },
+    /// Membro → servidor: a parte `part` (de `parts`) da foto do membro, com a
+    /// prova do convite (sobre "foto" ‖ membro ‖ parte ‖ partes ‖ dados).
+    /// `parts == 0`: apagar a foto. Sem resposta.
+    PhotoPut {
+        member: u64,
+        group: u32,
+        tag: [u8; 16],
+        part: u8,
+        parts: u8,
+        data: Vec<u8>,
+    },
+    /// Membro → servidor: a parte `part` da foto de `owner` (prova sobre
+    /// "pede" ‖ membro ‖ dono ‖ parte). Completado até [`PRESENCE_LEN`].
+    PhotoGet {
+        member: u64,
+        group: u32,
+        tag: [u8; 16],
+        owner: u64,
+        part: u8,
+    },
+    /// Servidor → membro: uma parte da foto `id` de `owner` (`parts == 0`:
+    /// o servidor não tem foto dele).
+    Photo {
+        owner: u64,
+        id: u32,
+        part: u8,
+        parts: u8,
+        data: Vec<u8>,
     },
 }
 
@@ -147,6 +204,8 @@ impl SignalMessage {
                 member,
                 page,
                 group,
+                known,
+                full,
                 tag,
                 note,
             } => {
@@ -154,17 +213,72 @@ impl SignalMessage {
                 b.extend_from_slice(&member.to_be_bytes());
                 b.push(*page);
                 b.extend_from_slice(&group.to_be_bytes());
+                b.extend_from_slice(&known.to_be_bytes());
                 b.extend_from_slice(tag);
                 write_note(&mut b, note);
-                b.resize(b.len().max(PRESENCE_LEN), 0);
+                let tamanho = if *full { PRESENCE_LEN } else { REQUEST_LEN };
+                b.resize(b.len().max(tamanho), 0);
+            }
+            Self::GroupState { version, photo } => {
+                b.push(GROUP_STATE);
+                b.extend_from_slice(&version.to_be_bytes());
+                b.extend_from_slice(&photo.to_be_bytes());
+            }
+            Self::PhotoPut {
+                member,
+                group,
+                tag,
+                part,
+                parts,
+                data,
+            } => {
+                b.push(PHOTO_PUT);
+                b.extend_from_slice(&member.to_be_bytes());
+                b.extend_from_slice(&group.to_be_bytes());
+                b.extend_from_slice(tag);
+                b.push(*part);
+                b.push(*parts);
+                write_part(&mut b, data);
+                b.resize(b.len().max(REQUEST_LEN), 0);
+            }
+            Self::PhotoGet {
+                member,
+                group,
+                tag,
+                owner,
+                part,
+            } => {
+                b.push(PHOTO_GET);
+                b.extend_from_slice(&member.to_be_bytes());
+                b.extend_from_slice(&group.to_be_bytes());
+                b.extend_from_slice(tag);
+                b.extend_from_slice(&owner.to_be_bytes());
+                b.push(*part);
+                b.resize(PRESENCE_LEN, 0);
+            }
+            Self::Photo {
+                owner,
+                id,
+                part,
+                parts,
+                data,
+            } => {
+                b.push(PHOTO);
+                b.extend_from_slice(&owner.to_be_bytes());
+                b.extend_from_slice(&id.to_be_bytes());
+                b.push(*part);
+                b.push(*parts);
+                write_part(&mut b, data);
             }
             Self::Members {
                 name,
+                version,
                 page,
                 pages,
                 members,
             } => {
                 b.push(MEMBERS);
+                b.extend_from_slice(&version.to_be_bytes());
                 b.push(*page);
                 b.push(*pages);
                 let nome = cortar(name, MAX_GROUP_NAME);
@@ -175,6 +289,7 @@ impl SignalMessage {
                 for m in lista {
                     b.extend_from_slice(&m.member.to_be_bytes());
                     b.extend_from_slice(&m.idle_s.to_be_bytes());
+                    b.extend_from_slice(&m.photo.to_be_bytes());
                     write_note(&mut b, &m.note);
                 }
             }
@@ -214,18 +329,57 @@ impl SignalMessage {
             }
             RELAY_READY => Self::RelayReady,
             PRESENCE => {
-                if b.len() < PRESENCE_LEN {
+                if b.len() < REQUEST_LEN {
                     return Err(ProtoError::BadSignal);
                 }
                 Self::Presence {
                     member: r.u64()?,
                     page: r.u8()?,
-                    group: u32::from_be_bytes(r.take(4)?.try_into().map_err(|_| ProtoError::BadSignal)?),
-                    tag: r.take(16)?.try_into().map_err(|_| ProtoError::BadSignal)?,
+                    group: r.u32()?,
+                    known: r.u32()?,
+                    full: b.len() >= PRESENCE_LEN,
+                    tag: r.tag()?,
                     note: r.note()?,
                 }
             }
+            GROUP_STATE => Self::GroupState {
+                version: r.u32()?,
+                photo: r.u32()?,
+            },
+            PHOTO_PUT => {
+                if b.len() < REQUEST_LEN {
+                    return Err(ProtoError::BadSignal);
+                }
+                Self::PhotoPut {
+                    member: r.u64()?,
+                    group: r.u32()?,
+                    tag: r.tag()?,
+                    part: r.u8()?,
+                    parts: r.u8()?,
+                    data: r.part()?,
+                }
+            }
+            PHOTO_GET => {
+                if b.len() < PRESENCE_LEN {
+                    return Err(ProtoError::BadSignal);
+                }
+                Self::PhotoGet {
+                    member: r.u64()?,
+                    group: r.u32()?,
+                    tag: r.tag()?,
+                    owner: r.u64()?,
+                    part: r.u8()?,
+                }
+            }
+            PHOTO => Self::Photo {
+                owner: r.u64()?,
+                id: r.u32()?,
+                part: r.u8()?,
+                parts: r.u8()?,
+                data: r.part()?,
+            },
             MEMBERS => {
+                let version = r.u32()?;
                 let page = r.u8()?;
                 let pages = r.u8()?;
                 let n = r.u8()? as usize;
@@ -241,12 +395,14 @@ impl SignalMessage {
                         Ok(MemberEntry {
                             member: r.u64()?,
                             idle_s: r.u16()?,
+                            photo: r.u32()?,
                             note: r.note()?,
                         })
                     })
                     .collect::<Result<_, ProtoError>>()?;
                 Self::Members {
                     name,
+                    version,
                     page,
                     pages,
                     members,
@@ -270,6 +426,12 @@ fn write_addr(b: &mut Vec<u8>, a: &SocketAddr) {
         }
     }
     b.extend_from_slice(&a.port().to_be_bytes());
+}
+
+fn write_part(b: &mut Vec<u8>, data: &[u8]) {
+    let data = &data[..data.len().min(PHOTO_PART)];
+    b.extend_from_slice(&(data.len() as u16).to_be_bytes());
+    b.extend_from_slice(data);
 }
 
 fn write_note(b: &mut Vec<u8>, note: &[u8]) {
@@ -314,6 +476,24 @@ impl Reader<'_> {
     fn u16(&mut self) -> Result<u16, ProtoError> {
         let b = self.take(2)?;
         Ok(u16::from_be_bytes([b[0], b[1]]))
+    }
+
+    fn u32(&mut self) -> Result<u32, ProtoError> {
+        Ok(u32::from_be_bytes(
+            self.take(4)?.try_into().map_err(|_| ProtoError::BadSignal)?,
+        ))
+    }
+
+    fn tag(&mut self) -> Result<[u8; 16], ProtoError> {
+        self.take(16)?.try_into().map_err(|_| ProtoError::BadSignal)
+    }
+
+    fn part(&mut self) -> Result<Vec<u8>, ProtoError> {
+        let n = self.u16()? as usize;
+        if n > PHOTO_PART {
+            return Err(ProtoError::BadSignal);
+        }
+        Ok(self.take(n)?.to_vec())
     }
 
     fn u64(&mut self) -> Result<u64, ProtoError> {
@@ -387,11 +567,49 @@ mod tests {
                 member: 0x0123_4567_89AB_CDEF,
                 page: 2,
                 group: 0xDEAD_BEEF,
+                known: 77,
+                full: true,
                 tag: [5; 16],
                 note: vec![7; 40],
             },
+            SignalMessage::Presence {
+                member: 3,
+                page: 0,
+                group: 9,
+                known: 0,
+                full: false,
+                tag: [1; 16],
+                note: vec![2; 120],
+            },
+            SignalMessage::GroupState {
+                version: 0xABCD_0001,
+                photo: 42,
+            },
+            SignalMessage::PhotoPut {
+                member: 5,
+                group: 6,
+                tag: [3; 16],
+                part: 1,
+                parts: 3,
+                data: vec![9; PHOTO_PART],
+            },
+            SignalMessage::PhotoGet {
+                member: 5,
+                group: 6,
+                tag: [4; 16],
+                owner: 8,
+                part: 2,
+            },
+            SignalMessage::Photo {
+                owner: 8,
+                id: 0x1234_5678,
+                part: 2,
+                parts: 3,
+                data: vec![1, 2, 3],
+            },
             SignalMessage::Members {
                 name: "Amigos da Flame".into(),
+                version: 5,
                 page: 1,
                 pages: 3,
                 members: vec![
@@ -399,11 +617,13 @@ mod tests {
                         member: 1,
                         idle_s: 4,
                         note: vec![1, 2, 3],
+                        photo: 0,
                     },
                     MemberEntry {
                         member: u64::MAX,
                         idle_s: u16::MAX,
                         note: vec![],
+                        photo: u32::MAX,
                     },
                 ],
             },
@@ -436,12 +656,15 @@ mod tests {
             member: 1,
             page: 0,
             group: 1,
+            known: 0,
+            full: true,
             tag: [0; 16],
             note: vec![],
         }
         .to_bytes();
         let cheia = SignalMessage::Members {
             name: "x".repeat(MAX_GROUP_NAME + 10),
+            version: u32::MAX,
             page: 0,
             pages: 1,
             members: vec![
@@ -449,6 +672,7 @@ mod tests {
                     member: 9,
                     idle_s: 9,
                     note: vec![9; MAX_NOTE + 5],
+                    photo: 9,
                 };
                 MEMBERS_PER_PAGE + 2
             ],
@@ -467,6 +691,7 @@ mod tests {
         // Nome cortado sem partir um caractere de vários bytes.
         let acentos = SignalMessage::Members {
             name: "é".repeat(40),
+            version: 1,
             page: 0,
             pages: 1,
             members: vec![],
@@ -475,17 +700,49 @@ mod tests {
     }
 
     #[test]
-    fn presenca_curta_e_recusada() {
-        let mut p = SignalMessage::Presence {
+    fn presenca_curta_e_cheia() {
+        let curta = SignalMessage::Presence {
             member: 1,
             page: 0,
             group: 1,
+            known: 7,
+            full: false,
             tag: [0; 16],
             note: vec![1; 10],
+        };
+        let b = curta.to_bytes();
+        assert_eq!(b.len(), REQUEST_LEN, "a presença de sempre é pequena");
+        // A resposta a ela (GroupState) é bem menor.
+        assert!(
+            SignalMessage::GroupState { version: 1, photo: 1 }
+                .to_bytes()
+                .len()
+                < 16
+        );
+        let mut cortada = b.clone();
+        cortada.truncate(REQUEST_LEN - 1);
+        assert_eq!(SignalMessage::from_bytes(&cortada), Err(ProtoError::BadSignal));
+        // Um pedido de foto menor que PRESENCE_LEN é recusado: a parte que
+        // volta não pode ser maior que ele.
+        let mut pede = SignalMessage::PhotoGet {
+            member: 1,
+            group: 1,
+            tag: [0; 16],
+            owner: 2,
+            part: 0,
         }
         .to_bytes();
-        p.truncate(PRESENCE_LEN - 1);
-        assert_eq!(SignalMessage::from_bytes(&p), Err(ProtoError::BadSignal));
+        let parte = SignalMessage::Photo {
+            owner: 2,
+            id: 1,
+            part: 0,
+            parts: MAX_PHOTO_PARTS as u8,
+            data: vec![0; PHOTO_PART + 50],
+        }
+        .to_bytes();
+        assert!(parte.len() < pede.len(), "{} bytes", parte.len());
+        pede.truncate(PRESENCE_LEN - 1);
+        assert_eq!(SignalMessage::from_bytes(&pede), Err(ProtoError::BadSignal));
     }
 
     #[test]

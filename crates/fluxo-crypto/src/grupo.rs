@@ -15,7 +15,9 @@
 //! - **notas** ([`GroupKey::seal_note`]): apelido e salas de cada membro,
 //!   cifrados para os outros membros;
 //! - **salas** ([`GroupKey::room`]): o número da sala no servidor depende do
-//!   segredo, então quem não é do grupo, mesmo com o código, procura outra sala.
+//!   segredo, então quem não é do grupo, mesmo com o código, procura outra sala;
+//! - **fotos** ([`GroupKey::seal_photo`], ADR-023): a foto de perfil de cada
+//!   membro, que o servidor guarda sem conseguir ver.
 
 use std::fmt;
 
@@ -117,10 +119,30 @@ impl GroupKey {
     /// (ChaCha20-Poly1305, nonce sorteado). O número do membro vai como dado
     /// autenticado: o servidor não consegue pôr a nota de um em outro.
     pub fn seal_note(&self, membro: u64, nota: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        self.selar(b"fluxo grupo nota v1", membro, nota)
+    }
+
+    /// Abre a nota do membro `membro`; `None` se ela não foi cifrada com este
+    /// convite para ele (forjada, de outro grupo, convite antigo ou alterada).
+    pub fn open_note(&self, membro: u64, nota: &[u8]) -> Option<Vec<u8>> {
+        self.abrir(b"fluxo grupo nota v1", membro, nota)
+    }
+
+    /// Cifra a foto de perfil do membro `membro` (como a nota, com outra chave).
+    pub fn seal_photo(&self, membro: u64, foto: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        self.selar(b"fluxo grupo foto v1", membro, foto)
+    }
+
+    /// Abre a foto do membro `membro`; `None` se não é dele ou deste convite.
+    pub fn open_photo(&self, membro: u64, foto: &[u8]) -> Option<Vec<u8>> {
+        self.abrir(b"fluxo grupo foto v1", membro, foto)
+    }
+
+    fn selar(&self, contexto: &[u8], membro: u64, nota: &[u8]) -> Result<Vec<u8>, CryptoError> {
         use chacha20poly1305::aead::{Aead, KeyInit, Payload};
         let mut nonce = [0u8; 12];
         crate::random_bytes(&mut nonce)?;
-        let cifra = chacha20poly1305::ChaCha20Poly1305::new(&self.derivar(b"fluxo grupo nota v1").into());
+        let cifra = chacha20poly1305::ChaCha20Poly1305::new(&self.derivar(contexto).into());
         let corpo = cifra
             .encrypt(
                 &nonce.into(),
@@ -133,16 +155,14 @@ impl GroupKey {
         Ok([nonce.as_slice(), &corpo].concat())
     }
 
-    /// Abre a nota do membro `membro`; `None` se ela não foi cifrada com este
-    /// convite para ele (forjada, de outro grupo, convite antigo ou alterada).
-    pub fn open_note(&self, membro: u64, nota: &[u8]) -> Option<Vec<u8>> {
+    fn abrir(&self, contexto: &[u8], membro: u64, nota: &[u8]) -> Option<Vec<u8>> {
         use chacha20poly1305::aead::{Aead, KeyInit, Payload};
         if nota.len() < NOTE_OVERHEAD {
             return None;
         }
         let (nonce, corpo) = nota.split_at(12);
         let nonce: [u8; 12] = nonce.try_into().ok()?;
-        let cifra = chacha20poly1305::ChaCha20Poly1305::new(&self.derivar(b"fluxo grupo nota v1").into());
+        let cifra = chacha20poly1305::ChaCha20Poly1305::new(&self.derivar(contexto).into());
         cifra
             .decrypt(
                 &nonce.into(),
@@ -159,6 +179,13 @@ impl GroupKey {
         m.update(contexto);
         m.finalize().into_bytes().into()
     }
+}
+
+/// Número de uma foto cifrada (nunca 0, que quer dizer "sem foto"): quem
+/// baixa confere que os bytes são os que o servidor anunciou.
+pub fn photo_id(cifrada: &[u8]) -> u32 {
+    let h = Sha256::digest(cifrada);
+    u32::from_be_bytes([h[0], h[1], h[2], h[3]]).max(1)
 }
 
 fn tag_com(auth: &[u8; 32], dados: &[u8]) -> [u8; GROUP_TAG_LEN] {
@@ -250,5 +277,18 @@ mod tests {
         assert_ne!(g.room(&codigo), codigo.room(), "sala do grupo não é a sala comum");
         // A auth não abre notas: o servidor não lê.
         assert_ne!(g.auth_key(), g.derivar(b"fluxo grupo nota v1"));
+    }
+
+    #[test]
+    fn foto_so_abre_com_o_convite_e_nao_vira_nota() {
+        let g = GroupKey::generate().unwrap();
+        let jpeg = vec![0xFF, 0xD8, 1, 2, 3];
+        let foto = g.seal_photo(7, &jpeg).unwrap();
+        assert_eq!(g.open_photo(7, &foto), Some(jpeg));
+        assert_eq!(g.open_photo(8, &foto), None);
+        assert_eq!(g.open_note(7, &foto), None, "chave própria para fotos");
+        assert_eq!(GroupKey::generate().unwrap().open_photo(7, &foto), None);
+        assert_ne!(photo_id(&foto), 0);
+        assert_eq!(photo_id(&foto), photo_id(&foto.clone()));
     }
 }

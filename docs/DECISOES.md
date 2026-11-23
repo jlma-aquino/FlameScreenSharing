@@ -721,6 +721,54 @@ mexia no acesso de todos ao servidor, então o convite virou outra coisa.
 
 ---
 
+## ADR-023 — Perfil (nome e foto) e presença econômica no grupo
+
+**Status:** Aceito (2026-11-23)
+
+**Contexto.** Cada pessoa do grupo quer aparecer com nome e foto. A ideia
+inicial era ligar o perfil ao IP, mas o IP muda (a operadora troca), é o mesmo
+para quem mora junto e é o do servidor para quem entra pelo repasse. O
+servidor é uma VM grátis: a prioridade é gastar pouco dado e pouca memória. A
+presença da ADR-022 mandava ~1,2 KB a cada 4 s por FSS aberto e recebia a lista
+inteira de volta toda vez, mesmo sem nada mudar.
+
+**Decisão.**
+- **O perfil é do número de membro** (sorteado por FSS instalado, já usado no
+  grupo e no bloqueio de quem foi expulso), não do IP.
+- **Presença curta:** o `Presence` de sempre tem 100 bytes e leva a versão da
+  lista que o membro já tem; o servidor responde só `GroupState` (versão e a
+  foto que tem do membro, 9 bytes). A versão é um hash de quem está, quem
+  está online, das notas e das fotos: só quando ela muda o membro pede as
+  páginas de `Members`, com o `Presence` cheio de 1200 bytes de antes (a
+  resposta continua nunca maior que o pedido).
+- **Foto:** cortada no meio em quadrado, reduzida para 80×80 e gravada em JPEG
+  de até ~4 KB, pelo WIC do próprio Windows (sem biblioteca de imagem a
+  mais). Vai **cifrada com o convite** (ChaCha20-Poly1305, chave própria, o
+  membro como dado autenticado): o servidor guarda sem conseguir ver.
+- **Sobe uma vez:** em até 4 partes de 1 KB (`PhotoPut`, sem resposta), e de
+  novo só quando o servidor diz que não tem a mesma (reiniciou, ou a foto
+  mudou). Fica na memória do servidor junto com o membro (some em 12 h).
+- **Desce sob demanda:** `Members` traz o número de cada foto; quem vê a lista
+  baixa só as que mudaram, uma de cada vez (`PhotoGet`, completado até 1200
+  bytes, e `Photo`, uma parte menor que o pedido), confere o número (SHA-256
+  da cifrada) e guarda a cifrada em `fotos\` na pasta das configurações. Ao
+  abrir o FSS de novo, nada desce outra vez.
+- Sem foto: círculo com as iniciais numa cor tirada do número de membro.
+
+**Consequências.**
+- ➕ Presença de ~1,4 KB para ~180 bytes a cada 4 s por FSS aberto (pedido +
+  resposta, com cabeçalho e assinatura), cerca de 8 vezes menos; num grupo com
+  8 ou mais membros, mais de 13 vezes menos.
+- ➕ Foto: até 4 KB na memória do servidor por membro (200 KB num grupo
+  cheio), e cada um baixa cada foto uma vez.
+- ➕ O servidor não vê as fotos nem os nomes.
+- ➖ Uma mudança na lista chega em até 4 s (a próxima presença), como antes.
+- ➖ Escolher a foto só no Windows (fora dele, aparecem as iniciais).
+- 🔁 Mostrar o perfil também sem grupo (hoje o nome e a foto só circulam pelo
+  grupo).
+
+---
+
 ## Modelo
 
 ```markdown

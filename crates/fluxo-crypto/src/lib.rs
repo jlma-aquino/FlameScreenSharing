@@ -26,7 +26,7 @@ use std::fmt;
 pub use chave::{ServerKey, KEY_TAG_LEN};
 pub use cifra::{Opener, Sealer, TAG_LEN};
 pub use codigo::{PairingCode, ALFABETO, BITS_DA_SALA};
-pub use grupo::{GroupKey, GROUP_TAG_LEN, NOTE_OVERHEAD};
+pub use grupo::{photo_id, GroupKey, GROUP_TAG_LEN, NOTE_OVERHEAD};
 pub use handshake::{respond, HostHandshake, Session, INIT_LEN, REPLY_LEN};
 pub use manifesto::{de_hex, hex, update_public_key, UpdateManifest, UPDATE_PUBLIC_KEY_LEN};
 

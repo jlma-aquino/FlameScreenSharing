@@ -43,13 +43,15 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
 ## Grupo (`src/grupo.rs`, ADR-022)
 
 Configurações > Conexão tem a chave do servidor e, separado, o **convite do
-grupo** (`FSSG-…`). Com os dois, uma lista à direita
-(janela com 720 px ou mais), no jeito do Discord: o nome do grupo, **ONLINE**
-(● verde, ou vermelho para quem está ao vivo, com **▶ Assistir**) e
-**OFFLINE**. Assistir entra na sala de quem compartilha sem colar código. Uma
+grupo** (`FSSG-…`). Com os dois, uma lista à direita (o botão **Grupo · N**,
+em cima, mostra e esconde; some em janelas com menos de 560 px), no jeito do
+Discord: o nome do grupo, **ONLINE** (a foto com a bolinha verde, ou vermelha
+para quem está ao vivo) e **OFFLINE** (recolhível). A linha de quem está ao
+vivo é um botão: entra na sala sem colar código. A tela inicial também lista
+quem está ao vivo no cartão Entrar numa sala. Uma
 thread fala com o servidor (`fluxo_net::GroupClient`) e conta o apelido e,
 compartilhando numa sala, o código dela. O apelido fica em Configurações >
-Conexão ("Seu nome no grupo"; vazio: o usuário do Windows), e cada FSS tem um
+Perfil (vazio: o usuário do Windows), e cada FSS tem um
 número sorteado na primeira vez (`membro` nas configurações).
 
 Embaixo de quem está ao vivo aparece quem está assistindo (`assistindo: Ana,
@@ -61,6 +63,33 @@ por 10 min, 1 hora ou até encerrar. O vídeo de quem sai fecha com o aviso.
 
 Testado com um servidor local e duas janelas com configurações separadas: as
 duas entraram no grupo e ficaram online, e uma entrou na sala da outra.
+
+## Perfil (`src/perfil.rs`, ADR-023)
+
+Configurações > **Perfil** (ou o nome e a foto no canto de cima): o nome e a
+foto que os outros do grupo veem, ligados ao número de membro deste FSS (não
+ao IP). **Escolher foto…** abre a janela do Windows; também dá para arrastar
+uma imagem para a janela. A foto é cortada em quadrado, reduzida para 80×80 e
+gravada em `foto.jpg` (JPEG de até ~4 KB) na pasta das configurações, tudo
+pelo WIC do Windows. Ela sobe ao grupo cifrada com o convite; as dos outros
+ficam (cifradas) em `fotos`. Sem foto: as iniciais num círculo de cor fixa
+por membro. As fotos aparecem na lista do grupo, no cartão Assistindo de quem
+compartilha (o host conta o número de membro de cada espectador) e em cima.
+
+## Primeira vez
+
+Sem chave, a tela inicial mostra um campo só: cole a mensagem que veio com o
+programa e ele acha a chave (`FSS1-…`) e o convite (`FSSG-…`), em qualquer
+ordem e com outras palavras em volta.
+
+## Durante a transmissão
+
+As abas ficam curtas ("Compartilhando", "Sala XXXX") com a bolinha de cor do
+estado; o estado por extenso fica só no cartão do meio. "Copiar código"
+mostra "Copiado!". O relatório vira **Conexão boa / instável / ruim** (perda
+abaixo de 1% e RTT abaixo de 150 ms; perda de 5% ou mais é ruim), com os
+números ao lado. O cartão **Assistindo · N de 4** mostra a foto, o nome e há
+quanto tempo cada um está assistindo.
 
 ## Várias sessões
 
@@ -196,6 +225,8 @@ avisa ao abrir.
 | `src/tema.rs` | Cores e formas: paletas clara e escura, tema em texto (`tema.txt`) |
 | `src/config.rs` | Configurações padrão e o arquivo onde ficam |
 | `src/lugar.rs` | O vídeo de quem assiste no lugar desta janela (esconder, voltar) |
+| `src/grupo.rs` | A thread que fala com o grupo (presença, lista, fotos) |
+| `src/perfil.rs` | Nome e foto: preparar a foto (WIC), iniciais, círculo da foto |
 | `src/atualizacao.rs` | Verifica, baixa, confere e instala versões novas |
 | `src/comandos.rs` | Monta a linha de comando (escolhas + configurações) e confere os códigos antes de abrir qualquer coisa |
 | `src/saida.rs` | Interpreta as linhas que os programas imprimem (códigos, início, confirmações dos botões, erro) |

@@ -20,6 +20,25 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 - **Expulsar** agora fecha o vídeo de quem sai, com um aviso (antes ficava
   parado na última imagem), e pode **bloquear por um tempo**: 10 min, 1 hora
   ou até encerrar. O bloqueio é pela pessoa do grupo, não pelo IP.
+- **Perfil** (ADR-023): nome e **foto** em Configurações > Perfil (ou no canto
+  de cima). A foto aparece na lista do grupo e para quem compartilha, vai
+  cifrada (o servidor não vê) e cada um baixa uma vez. Sem foto, as iniciais.
+- **Primeira vez mais simples**: um campo só, onde se cola a chave e o convite
+  juntos, do jeito que vieram.
+- **Tela inicial**: quem do grupo está ao vivo aparece no cartão Entrar numa
+  sala, com Assistir.
+- **Durante a transmissão**: conexão boa / instável / ruim, "Copiado!" ao
+  copiar o código, e o cartão Assistindo com foto, "N de 4" e há quanto tempo
+  cada um assiste.
+
+### Mudado
+- **Presença no grupo ~8 vezes mais leve** (ADR-023): a lista só desce quando
+  muda; no resto do tempo, a resposta do servidor tem 9 bytes.
+- **Lista do grupo** com fotos, linha inteira clicável para assistir, offline
+  recolhível e o botão **Grupo** em cima para mostrar ou esconder.
+- **Abas** curtas, com a bolinha de cor do estado (o estado inteiro fica no
+  cartão do meio, e saiu da barra de cima).
+- O nome no grupo foi de Conexão para Perfil.
 
 ## [0.3.1] — 2026-11-16
 

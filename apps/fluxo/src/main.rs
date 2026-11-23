@@ -13,6 +13,7 @@ mod config;
 mod grupo;
 mod janela;
 mod lugar;
+mod perfil;
 mod processo;
 mod saida;
 mod tema;

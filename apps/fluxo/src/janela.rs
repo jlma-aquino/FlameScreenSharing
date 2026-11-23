@@ -10,9 +10,9 @@
 //!
 //! Cores e formas vêm só do [`Tema`] (ver `tema.rs`).
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke};
 
@@ -24,6 +24,7 @@ use crate::comandos::{
 use crate::config::{self, Configuracoes, CODECS, ENCODERS, MBPS};
 use crate::grupo::{self, Grupo};
 use crate::lugar;
+use crate::perfil::{self, Fotos};
 use crate::processo::{caminho_do_programa, Aviso, Processo};
 use crate::saida::{ler, Evento};
 use crate::tema::{Aparencia, Paleta, Tema};
@@ -55,6 +56,7 @@ enum Lado {
 /// Seções da página de configurações.
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Secao {
+    Perfil,
     Aparencia,
     Transmissao,
     Assistir,
@@ -79,7 +81,8 @@ enum Atualizacao {
 }
 
 impl Secao {
-    const TODAS: [Secao; 5] = [
+    const TODAS: [Secao; 6] = [
+        Secao::Perfil,
         Secao::Aparencia,
         Secao::Transmissao,
         Secao::Assistir,
@@ -89,6 +92,7 @@ impl Secao {
 
     fn rotulo(self) -> &'static str {
         match self {
+            Secao::Perfil => "Perfil",
             Secao::Aparencia => "Aparência",
             Secao::Transmissao => "Compartilhar",
             Secao::Assistir => "Assistir",
@@ -97,6 +101,9 @@ impl Secao {
         }
     }
 }
+
+/// A foto escolhida chegando da thread: `None` se a pessoa desistiu.
+type FotoEscolhida = Option<Result<Vec<u8>, String>>;
 
 /// Um `fluxo-host` ou `fluxo-client` rodando (ou que acabou de terminar).
 struct Sessao {
@@ -122,7 +129,11 @@ struct Sessao {
     /// Host: números de quem está assistindo (para expulsar).
     espectadores: Vec<u32>,
     /// Host: o apelido de cada espectador que mandou (FSS com grupo).
-    nomes: std::collections::HashMap<u32, String>,
+    nomes: HashMap<u32, String>,
+    /// Host: o número de membro do grupo de cada espectador (para a foto).
+    membros: HashMap<u32, u64>,
+    /// Host: desde quando cada espectador está assistindo.
+    desde: HashMap<u32, Instant>,
     transmitindo: bool,
     /// Cliente: o vídeo chegou (codec e decoder).
     recebendo: Option<String>,
@@ -176,7 +187,9 @@ impl Sessao {
             respostas: Vec::new(),
             assistindo: 0,
             espectadores: Vec::new(),
-            nomes: std::collections::HashMap::new(),
+            nomes: HashMap::new(),
+            membros: HashMap::new(),
+            desde: HashMap::new(),
             transmitindo: false,
             recebendo: None,
             relatorio: None,
@@ -218,15 +231,21 @@ impl Sessao {
                 Evento::Conectou { numero, total } => {
                     self.assistindo = total;
                     self.espectadores.push(numero);
+                    self.desde.insert(numero, Instant::now());
                     self.respostas.retain(|(n, _)| *n != numero);
                 }
                 Evento::Saiu { numero, total } => {
                     self.assistindo = total;
                     self.espectadores.retain(|n| *n != numero);
                     self.nomes.remove(&numero);
+                    self.membros.remove(&numero);
+                    self.desde.remove(&numero);
                 }
                 Evento::NomeEspectador { numero, nome } => {
                     self.nomes.insert(numero, nome);
+                }
+                Evento::MembroEspectador { numero, membro } => {
+                    self.membros.insert(numero, membro);
                 }
                 Evento::NaoConectou { numero, motivo } => {
                     self.respostas.retain(|(n, _)| *n != numero);
@@ -315,6 +334,21 @@ pub struct Janela {
     grupo: Option<Grupo>,
     /// Por que não deu para entrar no grupo (chave inválida, por exemplo).
     erro_grupo: Option<String>,
+    /// O que o grupo mostrava neste quadro (lido uma vez por quadro).
+    estado_grupo: grupo::Estado,
+    /// A lista do grupo à direita (o botão Grupo, em cima, esconde).
+    mostrar_grupo: bool,
+    /// A foto deste FSS (JPEG) e o número dela.
+    minha_foto: Option<(u32, Vec<u8>)>,
+    /// Texturas das fotos, pelo número do membro.
+    fotos: Fotos,
+    /// Foto sendo escolhida ou preparada (numa thread).
+    escolhendo_foto: Option<mpsc::Receiver<FotoEscolhida>>,
+    erro_foto: Option<String>,
+    /// Primeira vez: o campo onde se cola a chave e o convite.
+    colar: String,
+    /// "Copiar código" clicado: mostra "Copiado" até este instante.
+    copiado_ate: Option<Instant>,
 }
 
 impl Janela {
@@ -355,7 +389,76 @@ impl Janela {
             novo_codigo: String::new(),
             grupo: None,
             erro_grupo: None,
+            estado_grupo: grupo::Estado::default(),
+            mostrar_grupo: true,
+            minha_foto: perfil::ler_foto().map(|j| (fluxo_crypto::photo_id(&j), j)),
+            fotos: Fotos::default(),
+            escolhendo_foto: None,
+            erro_foto: None,
+            colar: String::new(),
+            copiado_ate: None,
         }
+    }
+
+    /// Abre a janela "Abrir" do Windows numa thread e prepara a foto escolhida.
+    fn escolher_foto(&mut self) {
+        if self.escolhendo_foto.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let dono = self.hwnd;
+        let aberta = std::thread::Builder::new()
+            .name("fss-foto".into())
+            .spawn(move || {
+                let r = perfil::escolher_arquivo(dono).map(|c| perfil::trocar_foto(&c));
+                let _ = tx.send(r);
+            });
+        if aberta.is_ok() {
+            self.escolhendo_foto = Some(rx);
+        }
+    }
+
+    /// Prepara a foto de um arquivo arrastado para a janela.
+    fn foto_do_arquivo(&mut self, caminho: std::path::PathBuf) {
+        let (tx, rx) = mpsc::channel();
+        let aberta = std::thread::Builder::new()
+            .name("fss-foto".into())
+            .spawn(move || {
+                let _ = tx.send(Some(perfil::trocar_foto(&caminho)));
+            });
+        if aberta.is_ok() {
+            self.escolhendo_foto = Some(rx);
+        }
+    }
+
+    /// A foto escolhida ficou pronta (ou deu erro, ou a pessoa desistiu).
+    fn foto_pronta(&mut self) {
+        let Some(rx) = &self.escolhendo_foto else { return };
+        match rx.try_recv() {
+            Ok(Some(Ok(jpeg))) => {
+                self.minha_foto = Some((fluxo_crypto::photo_id(&jpeg), jpeg));
+                self.erro_foto = None;
+                self.escolhendo_foto = None;
+            }
+            Ok(Some(Err(e))) => {
+                self.erro_foto = Some(e);
+                self.escolhendo_foto = None;
+            }
+            Ok(None) | Err(mpsc::TryRecvError::Disconnected) => self.escolhendo_foto = None,
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    /// A textura da foto de um membro (a deste FSS vem do arquivo, mesmo sem grupo).
+    fn textura(&mut self, ctx: &egui::Context, membro: u64) -> Option<egui::TextureHandle> {
+        textura_de(
+            &mut self.fotos,
+            &self.estado_grupo,
+            self.minha_foto.as_ref(),
+            self.cfg.membro,
+            ctx,
+            membro,
+        )
     }
 
     /// Mantém o grupo igual à chave das configurações e conta a ele o apelido
@@ -369,7 +472,13 @@ impl Janela {
             self.grupo = None;
             self.erro_grupo = None;
             if tem_grupo {
-                match Grupo::iniciar(&self.cfg.chave, &self.cfg.grupo, self.cfg.membro, ctx.clone()) {
+                match Grupo::iniciar(
+                    &self.cfg.chave,
+                    &self.cfg.grupo,
+                    self.cfg.membro,
+                    perfil::pasta_das_fotos(),
+                    ctx.clone(),
+                ) {
                     Ok(g) => self.grupo = Some(g),
                     Err(e) => self.erro_grupo = Some(e),
                 }
@@ -393,19 +502,21 @@ impl Janela {
                 sala.as_deref(),
                 assistindo.as_deref(),
             );
+            g.foto(self.minha_foto.as_ref().map(|f| f.1.as_slice()));
+            self.estado_grupo = g.ver();
+        } else if self.estado_grupo.nome.is_some() || !self.estado_grupo.membros.is_empty() {
+            self.estado_grupo = grupo::Estado::default();
         }
     }
 
-    /// A lista do grupo, à direita, no jeito do Discord: quem está online, quem
-    /// está ao vivo (com o botão para assistir) e quem está offline.
+    /// A lista do grupo, à direita, no jeito do Discord: foto, nome e o que
+    /// cada um está fazendo. A linha de quem está ao vivo é um botão para
+    /// assistir. Os offline ficam embaixo, recolhíveis.
     fn painel_grupo(&mut self, ctx: &egui::Context, p: &Paleta) {
-        let Some(g) = &self.grupo else {
-            return;
-        };
-        if ctx.screen_rect().width() < 720.0 {
+        if self.grupo.is_none() || !self.mostrar_grupo || ctx.screen_rect().width() < 560.0 {
             return;
         }
-        let estado = g.ver();
+        let estado = self.estado_grupo.clone();
         let assistindo: Vec<String> = self
             .sessoes
             .iter()
@@ -415,11 +526,11 @@ impl Janela {
         let mut entrar: Option<String> = None;
         egui::SidePanel::right("grupo")
             .resizable(false)
-            .exact_width(230.0)
+            .exact_width(240.0)
             .frame(
                 egui::Frame::new()
                     .fill(p.painel)
-                    .inner_margin(Margin::symmetric(14, 12)),
+                    .inner_margin(Margin::symmetric(12, 12)),
             )
             .show(ctx, |ui| {
                 let nome = estado.nome.clone().unwrap_or_else(|| "Grupo".to_string());
@@ -443,85 +554,83 @@ impl Janela {
                             .strong()
                             .color(p.texto_fraco),
                     );
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     for m in &online {
-                        let ao_vivo = m.room.is_some();
-                        ui.horizontal(|ui| {
-                            let bolinha = if ao_vivo { p.perigo } else { p.sucesso };
-                            bolinha_de_estado(ui, bolinha);
-                            let nome = if m.me {
-                                format!("{} (você)", m.nick)
-                            } else {
-                                m.nick.clone()
-                            };
-                            ui.label(RichText::new(nome).color(p.texto));
-                        });
                         // Quem está assistindo este membro (pela nota de cada um).
-                        if let Some(sala) = &m.room {
-                            let quem: Vec<&str> = estado
+                        let quem: Vec<&str> = match &m.room {
+                            Some(sala) => estado
                                 .membros
                                 .iter()
                                 .filter(|o| o.online && o.watching.as_ref() == Some(sala))
                                 .map(|o| o.nick.as_str())
-                                .collect();
-                            if !quem.is_empty() {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.add_space(18.0);
-                                    ui.label(
-                                        RichText::new(format!("assistindo: {}", quem.join(", ")))
-                                            .size(12.0)
-                                            .color(p.texto_fraco),
-                                    );
-                                });
-                            }
-                        }
-                        if let (Some(sala), false) = (&m.room, m.me) {
-                            ui.horizontal(|ui| {
-                                ui.add_space(18.0);
-                                ui.label(RichText::new("ao vivo").size(12.0).strong().color(p.perigo));
-                                let ja = assistindo.iter().any(|a| a == sala);
-                                let botao = if ja {
-                                    botao_desligado(p, "Assistindo", self.tema.raio)
-                                } else {
-                                    botao_comum("▶ Assistir", self.tema.raio)
-                                };
-                                if ui.add_enabled(!ja, botao).clicked() {
-                                    entrar = Some(sala.clone());
-                                }
-                            });
-                        } else if ao_vivo {
-                            ui.horizontal(|ui| {
-                                ui.add_space(18.0);
-                                ui.label(RichText::new("compartilhando").size(12.0).color(p.perigo));
-                            });
-                        }
-                        ui.add_space(2.0);
-                    }
-                    if !offline.is_empty() {
-                        ui.add_space(10.0);
-                        ui.label(
-                            RichText::new(format!("OFFLINE — {}", offline.len()))
-                                .size(11.0)
-                                .strong()
-                                .color(p.texto_fraco),
+                                .collect(),
+                            None => Vec::new(),
+                        };
+                        let ja = m.room.as_ref().is_some_and(|s| assistindo.contains(s));
+                        let subtitulo = match (&m.room, &m.watching) {
+                            (Some(_), _) if ja => Some(("você está assistindo".to_string(), p.sucesso)),
+                            (Some(_), _) if quem.is_empty() => Some(("ao vivo".to_string(), p.perigo)),
+                            (Some(_), _) => Some((format!("ao vivo · {} assistindo", quem.len()), p.perigo)),
+                            (None, Some(sala)) => estado
+                                .membros
+                                .iter()
+                                .find(|o| o.room.as_ref() == Some(sala))
+                                .map(|o| (format!("assistindo {}", o.nick), p.texto_fraco)),
+                            _ => None,
+                        };
+                        let pode_entrar = m.room.is_some() && !m.me && !ja;
+                        let foto = textura_de(
+                            &mut self.fotos,
+                            &estado,
+                            self.minha_foto.as_ref(),
+                            self.cfg.membro,
+                            ctx,
+                            m.member,
                         );
-                        ui.add_space(4.0);
-                        for m in &offline {
-                            ui.horizontal(|ui| {
-                                bolinha_de_estado(ui, p.borda);
-                                ui.label(RichText::new(&m.nick).color(p.texto_fraco));
-                            });
+                        let cor = if m.room.is_some() { p.perigo } else { p.sucesso };
+                        let mut linha = linha_de_membro(ui, p, m, foto.as_ref(), subtitulo, Some(cor), pode_entrar);
+                        if !quem.is_empty() {
+                            linha = linha.on_hover_text(format!("Assistindo: {}", quem.join(", ")));
+                        } else if pode_entrar {
+                            linha = linha.on_hover_text("Clique para assistir");
+                        }
+                        if pode_entrar && linha.clicked() {
+                            entrar = m.room.clone();
                         }
                     }
                     if estado.conectado && online.len() <= 1 {
-                        ui.add_space(12.0);
+                        ui.add_space(8.0);
                         ui.label(
                             RichText::new(
-                                "Só você por aqui. Quem tiver a mesma chave aparece nesta lista ao abrir o FSS.",
+                                "Só você por aqui. Quem tiver o mesmo convite aparece nesta lista ao abrir o FSS.",
                             )
                             .size(12.0)
                             .color(p.texto_fraco),
                         );
+                    }
+                    if !offline.is_empty() {
+                        ui.add_space(8.0);
+                        egui::CollapsingHeader::new(
+                            RichText::new(format!("OFFLINE — {}", offline.len()))
+                                .size(11.0)
+                                .strong()
+                                .color(p.texto_fraco),
+                        )
+                        .id_salt("grupo_offline")
+                        .default_open(offline.len() <= 6)
+                        .show(ui, |ui| {
+                            for m in &offline {
+                                let foto = textura_de(
+                                    &mut self.fotos,
+                                    &estado,
+                                    self.minha_foto.as_ref(),
+                                    self.cfg.membro,
+                                    ctx,
+                                    m.member,
+                                );
+                                linha_de_membro(ui, p, m, foto.as_ref(), None, None, false);
+                            }
+                        });
                     }
                 });
             });
@@ -646,17 +755,27 @@ impl Janela {
             .show_separator_line(false)
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    // Curtas: o estado inteiro está no cartão do meio; aqui,
+                    // a bolinha de cor (e o texto ao passar o mouse).
                     for (i, s) in self.sessoes.iter().enumerate() {
                         let (texto, cor) = estado_curto(s, p);
                         let nome = match (s.host, &s.sala_assistida) {
-                            (true, _) => format!("📡 Compartilhando · {texto}"),
-                            (false, Some(sala)) => format!("▶ Sala {sala} · {texto}"),
-                            (false, None) => format!("▶ Assistindo · {texto}"),
+                            (true, _) => "Compartilhando".to_string(),
+                            (false, Some(sala)) => format!("Sala {sala}"),
+                            (false, None) => "Assistindo".to_string(),
                         };
-                        let rotulo = RichText::new(nome).color(if s.rodando() { cor } else { p.texto_fraco });
-                        if ui.selectable_label(self.atual == Some(i), rotulo).clicked() {
+                        bolinha_de_estado(ui, if s.rodando() { cor } else { p.borda });
+                        let escolhida = self.atual == Some(i);
+                        let rotulo =
+                            RichText::new(nome).color(if escolhida { p.texto } else { p.texto_fraco });
+                        if ui
+                            .selectable_label(escolhida, rotulo)
+                            .on_hover_text(texto)
+                            .clicked()
+                        {
                             self.atual = Some(i);
                         }
+                        ui.add_space(6.0);
                     }
                     if ui
                         .selectable_label(self.atual.is_none(), "+ Começar outra")
@@ -756,6 +875,11 @@ impl Janela {
     // ---------------------------------------------------------------- topo
 
     fn barra_de_cima(&mut self, ctx: &egui::Context, p: &Paleta) {
+        let minha_foto = self.textura(ctx, self.cfg.membro);
+        let apelido = self.cfg.apelido_efetivo();
+        let online = self.estado_grupo.membros.iter().filter(|m| m.online).count();
+        let tem_grupo = self.grupo.is_some();
+        let mut abrir_perfil = false;
         egui::TopBottomPanel::top("topo")
             .frame(
                 egui::Frame::new()
@@ -770,16 +894,9 @@ impl Janela {
                     |ui| {
                         ui.label(RichText::new("🔥").size(20.0));
                         ui.label(RichText::new(crate::NOME).size(17.0).strong().color(p.texto));
-                        if let Some(s) = self.atual.and_then(|i| self.sessoes.get(i)) {
-                            if s.rodando() {
-                                let (texto, cor) = estado_curto(s, p);
-                                ui.add_space(8.0);
-                                bolinha_de_estado(ui, cor);
-                                ui.label(RichText::new(texto).color(cor).size(13.0));
-                            }
-                        }
                     },
                     |ui| {
+                        // Da direita para a esquerda.
                         let aberta = self.configuracoes.is_some();
                         let rotulo = if aberta {
                             "✖  Fechar"
@@ -803,9 +920,35 @@ impl Janela {
                                 false => Some(Secao::Aparencia),
                             };
                         }
+                        if tem_grupo && !aberta {
+                            let botao =
+                                egui::Button::new(RichText::new(format!("Grupo · {online}")).size(14.0))
+                                    .selected(self.mostrar_grupo)
+                                    .min_size(egui::vec2(0.0, 32.0));
+                            if ui
+                                .add(botao)
+                                .on_hover_text("Mostrar ou esconder a lista do grupo")
+                                .clicked()
+                            {
+                                self.mostrar_grupo = !self.mostrar_grupo;
+                            }
+                        }
+                        ui.add_space(4.0);
+                        let nome = ui
+                            .add(
+                                egui::Button::new(RichText::new(&apelido).size(14.0).color(p.texto))
+                                    .frame(false),
+                            )
+                            .on_hover_text("Seu perfil: nome e foto");
+                        let foto = perfil::avatar(ui, self.cfg.membro, &apelido, minha_foto.as_ref(), 28.0)
+                            .on_hover_text("Seu perfil: nome e foto");
+                        abrir_perfil = nome.clicked() || foto.clicked();
                     },
                 );
             });
+        if abrir_perfil {
+            self.configuracoes = Some(Secao::Perfil);
+        }
     }
 
     // -------------------------------------------------------------- início
@@ -826,6 +969,10 @@ impl Janela {
             );
         });
         ui.add_space(24.0);
+        if self.cfg.chave.trim().is_empty() {
+            self.primeira_vez(ui, p);
+            ui.add_space(12.0);
+        }
         let lado_a_lado = ui.available_width() >= 620.0;
         if lado_a_lado {
             ui.columns(2, |c| {
@@ -908,7 +1055,34 @@ impl Janela {
                     .strong()
                     .color(p.texto),
             );
-            ui.label(RichText::new("Digite o código que quem compartilha mandou.").color(p.texto_fraco));
+            // Quem do grupo está ao vivo: um clique, sem código.
+            let ao_vivo: Vec<(u64, String, String)> = self
+                .estado_grupo
+                .membros
+                .iter()
+                .filter(|m| m.online && !m.me)
+                .filter_map(|m| Some((m.member, m.nick.clone(), m.room.clone()?)))
+                .collect();
+            if !ao_vivo.is_empty() {
+                ui.label(RichText::new("Ao vivo no grupo").color(p.texto_fraco));
+                for (membro, nick, sala) in &ao_vivo {
+                    let foto = self.textura(ctx, *membro);
+                    ui.horizontal(|ui| {
+                        perfil::avatar(ui, *membro, nick, foto.as_ref(), 28.0);
+                        ui.label(RichText::new(nick).color(p.texto));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(botao_comum("Assistir", self.tema.raio)).clicked() {
+                                self.assistir.sala = sala.clone();
+                                self.iniciar_cliente(ctx, Modo::Sala);
+                            }
+                        });
+                    });
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new("Ou digite o código que mandaram:").color(p.texto_fraco));
+            } else {
+                ui.label(RichText::new("Digite o código que quem compartilha mandou.").color(p.texto_fraco));
+            }
             ui.add_space(6.0);
             let campo = ui.add(
                 egui::TextEdit::singleline(&mut self.assistir.sala)
@@ -926,6 +1100,53 @@ impl Janela {
             if (principal(ui, p, "Entrar", self.tema.raio, tem_chave).clicked() || enter) && tem_chave {
                 self.iniciar_cliente(ctx, Modo::Sala);
             }
+        });
+    }
+
+    /// Primeira vez (sem chave): um campo só, onde se cola o que veio junto
+    /// com o programa. Ele acha a chave (`FSS1-…`) e o convite (`FSSG-…`).
+    fn primeira_vez(&mut self, ui: &mut egui::Ui, p: &Paleta) {
+        cartao(ui, p, self.tema.raio, |ui| {
+            ui.label(
+                RichText::new("Comece colando a chave")
+                    .size(19.0)
+                    .strong()
+                    .color(p.texto),
+            );
+            ui.label(
+                RichText::new(
+                    "Quem roda o servidor manda uma chave (FSS1-…) e, se você for de um grupo, um convite \
+                     (FSSG-…). Cole aqui os dois juntos, do jeito que vieram.",
+                )
+                .color(p.texto_fraco),
+            );
+            ui.add_space(6.0);
+            let campo = ui.add(
+                egui::TextEdit::multiline(&mut self.colar)
+                    .hint_text("FSS1-…   FSSG-…")
+                    .font(egui::FontId::monospace(14.0))
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            );
+            if campo.changed() {
+                let (chave, convite) = separar_colado(&self.colar);
+                if let Some(c) = chave {
+                    self.cfg.chave = c;
+                    if let Some(g) = convite {
+                        self.cfg.grupo = g;
+                    }
+                    self.colar.clear();
+                }
+            }
+            if !self.colar.trim().is_empty() {
+                ui.colored_label(p.aviso, "Não achei uma chave válida no que foi colado.");
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Sem chave?").color(p.texto_fraco));
+                if ui.link("Outras formas de conectar (sem servidor)").clicked() {
+                    self.tela = Tela::Outras;
+                }
+            });
         });
     }
 
@@ -1039,6 +1260,9 @@ impl Janela {
     /// O meio da janela durante a transmissão: o código, o estado, os avisos.
     fn painel_sessao(&mut self, ui: &mut egui::Ui, p: &Paleta) {
         let raio = self.tema.raio;
+        let ctx = ui.ctx().clone();
+        let copiado = self.copiado_ate.is_some_and(|t| Instant::now() < t);
+        let mut copiou = false;
         let Some(s) = self.atual.and_then(|i| self.sessoes.get_mut(i)) else {
             return;
         };
@@ -1052,8 +1276,10 @@ impl Janela {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("Código da sala").color(p.texto_fraco));
                     ui.label(RichText::new(c).monospace().size(44.0).strong().color(p.texto));
-                    if ui.add(botao_comum("📋  Copiar código", raio)).clicked() {
+                    let texto = if copiado { "Copiado!" } else { "📋  Copiar código" };
+                    if ui.add(botao_comum(texto, raio)).clicked() {
                         ui.ctx().copy_text(c.clone());
+                        copiou = true;
                     }
                     ui.label(
                         RichText::new(format!(
@@ -1155,7 +1381,18 @@ impl Janela {
                     _ => {}
                 }
                 if let Some(r) = &s.relatorio {
-                    ui.label(RichText::new(r).color(p.texto_fraco).size(13.0));
+                    let (texto, cor) = match qualidade_da_conexao(r) {
+                        Some(Conexao::Boa) => ("Conexão boa", p.sucesso),
+                        Some(Conexao::Instavel) => ("Conexão instável", p.aviso),
+                        Some(Conexao::Ruim) => ("Conexão ruim: perdendo pacotes", p.perigo),
+                        None => ("Conexão", p.texto_fraco),
+                    };
+                    ui.horizontal(|ui| {
+                        bolinha_de_estado(ui, cor);
+                        ui.label(RichText::new(texto).color(cor).size(13.0))
+                            .on_hover_text(r);
+                        ui.label(RichText::new(format!("· {r}")).color(p.texto_fraco).size(12.0));
+                    });
                 }
             }
             if let (Some(v), true) = (&s.recebendo, s.rodando()) {
@@ -1174,14 +1411,46 @@ impl Janela {
         if s.host && s.rodando() && !s.espectadores.is_empty() {
             ui.add_space(12.0);
             let mut expulsar = None;
+            let fotos: HashMap<u32, Option<egui::TextureHandle>> = s
+                .espectadores
+                .iter()
+                .map(|n| {
+                    let foto = s.membros.get(n).and_then(|m| {
+                        textura_de(
+                            &mut self.fotos,
+                            &self.estado_grupo,
+                            self.minha_foto.as_ref(),
+                            self.cfg.membro,
+                            &ctx,
+                            *m,
+                        )
+                    });
+                    (*n, foto)
+                })
+                .collect();
             cartao(ui, p, raio, |ui| {
-                ui.label(RichText::new("Assistindo").strong().color(p.texto));
+                ui.label(
+                    RichText::new(format!(
+                        "Assistindo · {} de {MAX_ESPECTADORES}",
+                        s.espectadores.len()
+                    ))
+                    .strong()
+                    .color(p.texto),
+                );
+                ui.add_space(4.0);
                 for n in &s.espectadores {
                     ui.horizontal(|ui| {
-                        match s.nomes.get(n) {
-                            Some(nome) => ui.label(RichText::new(nome).color(p.texto)),
-                            None => ui.label(format!("Espectador {n}")),
-                        };
+                        let nome = s.nomes.get(n).cloned().unwrap_or_else(|| format!("Espectador {n}"));
+                        let membro = s.membros.get(n).copied().unwrap_or(*n as u64);
+                        perfil::avatar(ui, membro, &nome, fotos.get(n).and_then(Option::as_ref), 28.0);
+                        ui.label(RichText::new(&nome).color(p.texto));
+                        if let Some(d) = s.desde.get(n) {
+                            ui.label(
+                                RichText::new(ha_quanto(d.elapsed()))
+                                    .size(12.0)
+                                    .color(p.texto_fraco),
+                            );
+                        }
                         ui.menu_button("Expulsar ⏷", |ui| {
                             for (texto, bloqueio) in [
                                 ("Tirar da transmissão", ""),
@@ -1203,6 +1472,10 @@ impl Janela {
             if let Some(n) = expulsar {
                 s.mandar(&format!("expulsar {n}"));
             }
+        }
+        if copiou {
+            self.copiado_ate = Some(Instant::now() + Duration::from_millis(1500));
+            ctx.request_repaint_after(Duration::from_millis(1600));
         }
 
         // Mais um espectador, nas formas sem sala.
@@ -1375,6 +1648,7 @@ impl Janela {
                     ui.label(RichText::new(secao.rotulo()).size(24.0).strong().color(p.texto));
                     ui.add_space(8.0);
                     match secao {
+                        Secao::Perfil => self.secao_perfil(ui, p),
                         Secao::Aparencia => self.secao_aparencia(ui, p),
                         Secao::Transmissao => self.secao_transmissao(ui, p),
                         Secao::Assistir => self.secao_assistir(ui, p),
@@ -1398,6 +1672,88 @@ impl Janela {
                 });
             });
         });
+    }
+
+    fn secao_perfil(&mut self, ui: &mut egui::Ui, p: &Paleta) {
+        ui.label(
+            RichText::new(
+                "Como os outros do grupo veem você: na lista do grupo e em quem está assistindo. \
+                 O perfil é deste FSS (não do IP: ele muda e é o mesmo para quem mora junto).",
+            )
+            .color(p.texto_fraco),
+        );
+        ui.add_space(12.0);
+        let apelido = self.cfg.apelido_efetivo();
+        let foto = self.textura(ui.ctx(), self.cfg.membro);
+        ui.horizontal(|ui| {
+            perfil::avatar(ui, self.cfg.membro, &apelido, foto.as_ref(), 96.0);
+            ui.add_space(12.0);
+            ui.vertical(|ui| {
+                ui.add_space(8.0);
+                ui.label(RichText::new(&apelido).size(20.0).strong().color(p.texto));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let ocupado = self.escolhendo_foto.is_some();
+                    if ui
+                        .add_enabled(!ocupado, egui::Button::new("Escolher foto…"))
+                        .clicked()
+                    {
+                        self.escolher_foto();
+                    }
+                    if self.minha_foto.is_some()
+                        && ui
+                            .add_enabled(!ocupado, egui::Button::new("Tirar foto"))
+                            .clicked()
+                    {
+                        perfil::tirar_foto();
+                        self.minha_foto = None;
+                        self.fotos.esquecer(self.cfg.membro);
+                    }
+                    if ocupado {
+                        ui.spinner();
+                    }
+                });
+                ui.label(
+                    RichText::new("Ou arraste uma imagem para esta janela.")
+                        .size(12.0)
+                        .color(p.texto_fraco),
+                );
+            });
+        });
+        if let Some(e) = &self.erro_foto {
+            ui.colored_label(p.perigo, e);
+        }
+        ui.add_space(16.0);
+        titulo_campo(ui, p, "Nome", "Vazio: o nome do seu usuário do Windows.");
+        let padrao = {
+            let mut c = self.cfg.clone();
+            c.apelido.clear();
+            c.apelido_efetivo()
+        };
+        ui.add(
+            egui::TextEdit::singleline(&mut self.cfg.apelido)
+                .hint_text(padrao)
+                .char_limit(fluxo_net::MAX_NICK)
+                .desired_width(280.0),
+        );
+        ui.add_space(16.0);
+        ui.label(
+            RichText::new(format!(
+                "A foto é reduzida para {lado}x{lado} e vai cifrada com o convite do grupo: o servidor guarda \
+                 sem conseguir ver, e só quem tem o convite abre. Cada um baixa a sua foto uma vez, e de novo \
+                 só quando ela muda.",
+                lado = perfil::LADO
+            ))
+            .size(12.0)
+            .color(p.texto_fraco),
+        );
+        if self.grupo.is_none() {
+            ui.label(
+                RichText::new("Sem convite de grupo, a foto e o nome só aparecem aqui.")
+                    .size(12.0)
+                    .color(p.aviso),
+            );
+        }
     }
 
     fn secao_aparencia(&mut self, ui: &mut egui::Ui, p: &Paleta) {
@@ -1716,24 +2072,6 @@ impl Janela {
                 }
             }
         }
-        ui.add_space(16.0);
-        titulo_campo(
-            ui,
-            p,
-            "Seu nome no grupo",
-            "Como os outros do grupo veem você na lista. Vazio: o nome do seu usuário do Windows.",
-        );
-        let padrao = {
-            let mut c = self.cfg.clone();
-            c.apelido.clear();
-            c.apelido_efetivo()
-        };
-        ui.add(
-            egui::TextEdit::singleline(&mut self.cfg.apelido)
-                .hint_text(padrao)
-                .char_limit(fluxo_net::MAX_NICK)
-                .desired_width(280.0),
-        );
         ui.add_space(16.0);
         titulo_campo(
             ui,
@@ -2177,6 +2515,16 @@ impl eframe::App for Janela {
             }
         }
         self.instalar_se_puder();
+        self.foto_pronta();
+        if self.escolhendo_foto.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        // Uma imagem arrastada para a janela vira a foto do perfil.
+        let arrastada = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
+        if let Some(c) = arrastada {
+            self.configuracoes = Some(Secao::Perfil);
+            self.foto_do_arquivo(c);
+        }
         self.atualizar_grupo(ctx);
         let p = self.paleta(ctx);
 
@@ -2230,8 +2578,215 @@ impl eframe::App for Janela {
     }
 }
 
+/// A textura da foto de `membro`: a deste FSS vem do arquivo (vale sem
+/// grupo); a dos outros, do grupo.
+fn textura_de(
+    fotos: &mut Fotos,
+    estado: &grupo::Estado,
+    minha: Option<&(u32, Vec<u8>)>,
+    eu: u64,
+    ctx: &egui::Context,
+    membro: u64,
+) -> Option<egui::TextureHandle> {
+    let (id, jpeg) = if membro == eu {
+        minha.map(|(id, j)| (*id, j.as_slice()))?
+    } else {
+        estado.fotos.get(&membro).map(|(id, j)| (*id, j.as_slice()))?
+    };
+    fotos.textura(ctx, membro, id, jpeg)
+}
+
+/// Uma linha da lista do grupo: a foto com a bolinha de estado, o nome e o
+/// que está fazendo. `clicavel`: a linha inteira é um botão (assistir).
+fn linha_de_membro(
+    ui: &mut egui::Ui,
+    p: &Paleta,
+    m: &fluxo_net::GroupMember,
+    foto: Option<&egui::TextureHandle>,
+    subtitulo: Option<(String, Color32)>,
+    estado: Option<Color32>,
+    clicavel: bool,
+) -> egui::Response {
+    let sentido = if clicavel {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, resposta) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 42.0), sentido);
+    if !ui.is_rect_visible(rect) {
+        return resposta;
+    }
+    if clicavel && resposta.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(6), p.controle);
+    }
+    let lado = 30.0;
+    let foto_rect = egui::Rect::from_min_size(
+        rect.min + egui::vec2(4.0, (rect.height() - lado) / 2.0),
+        egui::vec2(lado, lado),
+    );
+    perfil::pintar_avatar(ui, foto_rect, m.member, &m.nick, foto, !m.online);
+    if let Some(cor) = estado {
+        let c = foto_rect.right_bottom() - egui::vec2(4.0, 4.0);
+        ui.painter().circle_filled(c, 6.0, p.painel);
+        ui.painter().circle_filled(c, 4.5, cor);
+    }
+    let direita = if clicavel { 64.0 } else { 4.0 };
+    let texto_rect = egui::Rect::from_min_max(
+        egui::pos2(foto_rect.right() + 10.0, rect.top()),
+        egui::pos2(rect.right() - direita, rect.bottom()),
+    );
+    let pintor = ui.painter().with_clip_rect(texto_rect);
+    let nome = if m.me {
+        format!("{} (você)", m.nick)
+    } else {
+        m.nick.clone()
+    };
+    let cor_nome = if m.online { p.texto } else { p.texto_fraco };
+    match &subtitulo {
+        Some((sub, cor)) => {
+            pintor.text(
+                egui::pos2(texto_rect.left(), rect.center().y - 1.0),
+                egui::Align2::LEFT_BOTTOM,
+                nome,
+                egui::FontId::proportional(14.0),
+                cor_nome,
+            );
+            pintor.text(
+                egui::pos2(texto_rect.left(), rect.center().y + 1.0),
+                egui::Align2::LEFT_TOP,
+                sub,
+                egui::FontId::proportional(11.5),
+                *cor,
+            );
+        }
+        None => {
+            pintor.text(
+                egui::pos2(texto_rect.left(), rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                nome,
+                egui::FontId::proportional(14.0),
+                cor_nome,
+            );
+        }
+    }
+    if clicavel {
+        ui.painter().text(
+            egui::pos2(rect.right() - 8.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            "Assistir",
+            egui::FontId::proportional(13.0),
+            if resposta.hovered() { p.texto } else { p.destaque },
+        );
+    }
+    resposta.on_hover_cursor(if clicavel {
+        egui::CursorIcon::PointingHand
+    } else {
+        egui::CursorIcon::Default
+    })
+}
+
+/// O que se colou na primeira vez: a chave do servidor e o convite do grupo,
+/// em qualquer ordem, com ou sem outras palavras em volta.
+fn separar_colado(texto: &str) -> (Option<String>, Option<String>) {
+    let mut chave = None;
+    let mut convite = None;
+    for palavra in texto.split(|c: char| c.is_whitespace() || c == ',' || c == ';') {
+        let p = palavra.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+        if chave.is_none() && crate::comandos::ler_chave(p).is_ok() {
+            chave = Some(p.to_string());
+        } else if convite.is_none() && matches!(crate::comandos::ler_grupo(p), Ok(Some(_))) {
+            convite = Some(p.to_string());
+        }
+    }
+    (chave, convite)
+}
+
+/// Como está a conexão, pelo relatório do host (perda e RTT).
+#[derive(Debug, PartialEq, Eq)]
+enum Conexao {
+    Boa,
+    Instavel,
+    Ruim,
+}
+
+fn qualidade_da_conexao(relatorio: &str) -> Option<Conexao> {
+    let numero = |depois: &str, ate: char| -> Option<f32> {
+        let resto = relatorio.split(depois).nth(1)?;
+        resto.split(ate).next()?.trim().replace(',', ".").parse().ok()
+    };
+    let perda = numero("perda ", '%')?;
+    let rtt = numero("RTT ", 'm').unwrap_or(0.0);
+    Some(if perda >= 5.0 {
+        Conexao::Ruim
+    } else if perda >= 1.0 || rtt >= 150.0 {
+        Conexao::Instavel
+    } else {
+        Conexao::Boa
+    })
+}
+
+/// "agora", "há 3 min", "há 1 h 5 min".
+fn ha_quanto(d: Duration) -> String {
+    let min = d.as_secs() / 60;
+    match min {
+        0 => "agora".into(),
+        1..=59 => format!("há {min} min"),
+        _ if min % 60 == 0 => format!("há {} h", min / 60),
+        _ => format!("há {} h {} min", min / 60, min % 60),
+    }
+}
+
 /// A bolinha de estado da lista do grupo (desenhada: a fonte não tem "●").
 fn bolinha_de_estado(ui: &mut egui::Ui, cor: Color32) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     ui.painter().circle_filled(r.center(), 4.5, cor);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colar_acha_chave_e_convite_em_qualquer_ordem() {
+        let chave = fluxo_net::ServerKey::generate("203.0.113.10:3478")
+            .unwrap()
+            .to_string();
+        let convite = fluxo_net::GroupKey::generate().unwrap().to_string();
+        let texto = format!("Oi! Convite: {convite}\nChave do servidor: {chave}.");
+        assert_eq!(
+            separar_colado(&texto),
+            (Some(chave.clone()), Some(convite.clone()))
+        );
+        assert_eq!(separar_colado(&chave), (Some(chave), None));
+        assert_eq!(separar_colado("nada aqui"), (None, None));
+    }
+
+    #[test]
+    fn qualidade_pelo_relatorio() {
+        assert_eq!(
+            qualidade_da_conexao("60 fps · 15.8 Mbps · perda 0.0% · RTT 1.89 ms"),
+            Some(Conexao::Boa)
+        );
+        assert_eq!(
+            qualidade_da_conexao("60 fps · 15.8 Mbps · perda 2.5% · RTT 30 ms"),
+            Some(Conexao::Instavel)
+        );
+        assert_eq!(
+            qualidade_da_conexao("60 fps · 15.8 Mbps · perda 0.0% · RTT 210 ms"),
+            Some(Conexao::Instavel)
+        );
+        assert_eq!(
+            qualidade_da_conexao("30 fps · 4.0 Mbps · perda 9.1%"),
+            Some(Conexao::Ruim)
+        );
+        assert_eq!(qualidade_da_conexao("algo estranho"), None);
+    }
+
+    #[test]
+    fn tempo_assistindo() {
+        assert_eq!(ha_quanto(Duration::from_secs(30)), "agora");
+        assert_eq!(ha_quanto(Duration::from_secs(5 * 60)), "há 5 min");
+        assert_eq!(ha_quanto(Duration::from_secs(2 * 3600)), "há 2 h");
+        assert_eq!(ha_quanto(Duration::from_secs(65 * 60)), "há 1 h 5 min");
+    }
 }

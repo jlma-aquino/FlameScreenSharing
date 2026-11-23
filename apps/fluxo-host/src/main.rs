@@ -1249,7 +1249,13 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                         println!("Espectador {numero} expulso ({ficaram} no total)");
                         println!("  ({nome} está bloqueado e tentou entrar)");
                     }
-                    None => println!("Espectador {numero}: {nome}"),
+                    None => {
+                        // O número do membro antes do nome: a janela mostra a foto dele.
+                        if let Some(m) = membro {
+                            println!("Espectador {numero} membro {m:016x}");
+                        }
+                        println!("Espectador {numero}: {nome}");
+                    }
                 }
             }
             for (numero, quantos) in tx.remover_silenciosos(espectadores::SILENCIO_MAXIMO) {

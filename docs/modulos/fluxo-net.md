@@ -268,9 +268,13 @@ O servidor só aparece no começo: depois do `Found`, nada mais passa por ele.
 
 ## Grupos (`grupo.rs`, ADR-022)
 
-`GroupClient` manda `Presence` ao servidor da chave a cada 4 s
-(`PRESENCE_EVERY`), ou logo que o apelido ou a sala mudam, e monta a lista com
-as páginas de `Members`. As notas que não abrem com a chave (forjadas ou de
+`GroupClient` manda o `Presence` curto ao servidor da chave a cada 4 s
+(`PRESENCE_EVERY`), ou logo que o apelido ou a sala mudam, com a versão da
+lista que tem; só quando a versão do `GroupState` muda ele pede as páginas de
+`Members` (ADR-023). Fotos: `set_photo` (sobe uma vez, e de novo só se o
+servidor não tiver a mesma), `photo(membro)`, e `with_photo_cache(pasta)`
+para não baixar de novo ao reabrir. Baixa uma foto de cada vez, confere o
+número e desiste por 60 s de uma que não vem depois de 3 tentativas. As notas que não abrem com a chave (forjadas ou de
 outro grupo) são descartadas. Sem threads: quem usa chama `poll` (o socket
 não bloqueia). O servidor (`SignalServer::with_groups`) guarda os membros de
 cada chave na memória (`MAX_MEMBERS` 50, esquecidos depois de
@@ -279,7 +283,10 @@ cada chave na memória (`MAX_MEMBERS` 50, esquecidos depois de
 Testado (`grupo.rs`): dois membros do mesmo grupo se veem, com o código da
 sala de quem compartilha e sem ele ao parar; um terceiro, de outra chave, não
 vê ninguém; 20 membros vêm em 3 páginas. No servidor: grupo cheio responde e
-não aceita mais ninguém, presença sem chave é ignorada.
+não aceita mais ninguém, presença sem chave é ignorada, a presença curta só
+recebe a versão (que muda com entrada, nota, saída e offline), foto só de quem
+é do grupo e só para quem é do grupo. No cliente: a foto sobe, desce, fica na
+pasta e some quando é tirada.
 
 ## Sem servidor: código de conexão (STUN público)
 

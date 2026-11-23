@@ -46,7 +46,10 @@ pub use packet::{
     MAX_NAME_LEN, PONG_LEN, PROTOCOL_VERSION,
 };
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};
-pub use signal::{MemberEntry, SignalMessage, MAX_GROUP_NAME, MAX_NOTE, MEMBERS_PER_PAGE, PRESENCE_LEN};
+pub use signal::{
+    MemberEntry, SignalMessage, MAX_GROUP_NAME, MAX_NOTE, MAX_PHOTO, MAX_PHOTO_PARTS, MEMBERS_PER_PAGE,
+    PHOTO_PART, PRESENCE_LEN, REQUEST_LEN,
+};
 
 /// Tamanho máximo padrão do *payload* de cada pacote, em bytes.
 ///

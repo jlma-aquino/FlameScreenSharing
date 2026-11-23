@@ -24,6 +24,8 @@ pub enum Evento {
     Saiu { numero: u32, total: usize },
     /// Host: o apelido de quem assiste (FSS com grupo).
     NomeEspectador { numero: u32, nome: String },
+    /// Host: o número de membro do grupo de quem assiste (para a foto).
+    MembroEspectador { numero: u32, membro: u64 },
     /// Host: não deu para parear com `numero`; o resto segue.
     NaoConectou { numero: u32, motivo: String },
     /// Host: a transmissão começou.
@@ -94,6 +96,13 @@ pub fn ler(linha: &str) -> Evento {
         }
         if let Some((n, depois)) = resto.split_once(' ') {
             if let Ok(numero) = n.parse() {
+                // "Espectador 2 membro 00ab…"
+                if let Some(membro) = depois
+                    .strip_prefix("membro ")
+                    .and_then(|m| u64::from_str_radix(m.trim(), 16).ok())
+                {
+                    return Evento::MembroEspectador { numero, membro };
+                }
                 if let Some(motivo) = depois.strip_prefix("não conectou: ") {
                     return Evento::NaoConectou {
                         numero,
@@ -433,6 +442,13 @@ mod tests {
         assert_eq!(
             ler("Espectador 2 expulso (1 no total)"),
             Evento::Saiu { numero: 2, total: 1 }
+        );
+        assert_eq!(
+            ler("Espectador 4 membro 00000000000000ff"),
+            Evento::MembroEspectador {
+                numero: 4,
+                membro: 255
+            }
         );
     }
 

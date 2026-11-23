@@ -195,8 +195,12 @@ cliente                       servidor                        host
   | 6 | RoomTaken | servidor → cliente | — (sala cheia: 8 esperando) |
   | 7 | RelayBind | host → servidor | sala (u32); completado com zeros até 100 bytes |
   | 8 | RelayReady | servidor → host | — (repasse ligado) |
-  | 9 | Presence | membro → servidor | membro (u64), página (u8), grupo (u32), prova (16 bytes), nota; completado com zeros até 1200 bytes |
-  | 10 | Members | servidor → membro | página, páginas, nome do grupo (até 32 bytes), até 8 membros: número (u64), segundos parado (u16), nota |
+  | 9 | Presence | membro → servidor | membro (u64), página (u8), grupo (u32), versão conhecida (u32), prova (16 bytes), nota; completado com zeros até 100 bytes (curto: resposta GroupState) ou 1200 (cheio: resposta Members) |
+  | 10 | Members | servidor → membro | versão (u32), página, páginas, nome do grupo (até 32 bytes), até 8 membros: número (u64), segundos parado (u16), foto (u32, 0 = sem), nota |
+  | 11 | GroupState | servidor → membro | versão da lista (u32), foto que o servidor tem do membro (u32) |
+  | 12 | PhotoPut | membro → servidor | membro (u64), grupo (u32), prova (16), parte (u8), partes (u8; 0 = apagar), tamanho (u16) e até 1024 bytes; até 100 bytes; sem resposta |
+  | 13 | PhotoGet | membro → servidor | membro (u64), grupo (u32), prova (16), dono (u64), parte (u8); completado até 1200 bytes |
+  | 14 | Photo | servidor → membro | dono (u64), número da foto (u32), parte, partes (0 = sem foto), tamanho (u16) e até 1024 bytes |
 
   Endereço: família (1 byte, 4 ou 6), IP (4 ou 16 bytes), porta (u16).
   Lista: quantidade (1 byte, até 4) e os endereços. Pedidos com menos de 100
@@ -252,9 +256,12 @@ cliente                       servidor                        host
   `Presence` (assinado com a chave do servidor) leva o número do grupo e a
   prova do convite: `HMAC-SHA256(conferência, membro ‖ nota)` truncado em 16
   bytes, onde `conferência = HMAC-SHA256(segredo, "fluxo grupo auth v1")` é o
-  que o servidor guarda. Sem prova válida, é ignorado. A cada 4 s ele põe o
-  membro na lista do grupo e pede uma página de
-  `Members`; páginas além da primeira são pedidas logo em seguida. Nota: até
+  que o servidor guarda. Sem prova válida, é ignorado. A cada 4 s o membro
+  manda o `Presence` curto, com a versão da lista que tem; o servidor o põe
+  na lista e responde `GroupState`. Se a versão mudou (hash de quem está,
+  online ou não, notas e fotos), o membro pede as páginas de `Members` com o
+  `Presence` cheio; páginas além da primeira são pedidas logo em seguida
+  (ADR-023). Nota: até
   120 bytes (tamanho u8 e os bytes), `nonce (12) ‖ ChaCha20-Poly1305(chave =
   HMAC-SHA256(segredo do convite, "fluxo grupo nota v1"), AAD = membro (u64 BE))` sobre
   `versão (1) ‖ tamanho ‖ apelido ‖ tamanho ‖ código da sala ‖ tamanho ‖ sala
@@ -262,6 +269,13 @@ cliente                       servidor                        host
   pode faltar, em notas antigas). O servidor não abre a nota. Online: parado há menos de
   15 s. No máximo 50 membros por grupo; quem passa disso recebe a lista, mas
   não entra nela. Servidor aberto (`--aberto`) ignora `Presence`.
+- **Fotos** (ADR-023): JPEG cifrado como a nota, com `HMAC-SHA256(segredo,
+  "fluxo grupo foto v1")` e o membro como AAD; no máximo 4096 bytes, em
+  partes de 1024. Número da foto: os 4 primeiros bytes do SHA-256 da cifrada
+  (nunca 0). Provas: `PhotoPut` sobre `"foto" ‖ membro ‖ parte ‖ partes ‖
+  dados`; `PhotoGet` sobre `"pede" ‖ membro ‖ dono ‖ parte`. O servidor só
+  guarda foto de quem já está na lista; o membro sobe de novo (no máximo a
+  cada 20 s) enquanto o `GroupState` disser outro número.
 - **Sala do grupo:** com o convite, host e cliente usam como sala os 20 bits
   mais altos de `HMAC-SHA256(HMAC-SHA256(segredo, "fluxo grupo sala v1"),
   código)`. Quem não tem o convite calcula outra sala. O servidor também separa

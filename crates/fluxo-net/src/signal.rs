@@ -26,8 +26,16 @@
 //! nome e a chave de conferência do convite ([`SignalServer::with_groups`]).
 //! Quem manda `Presence` (assinado com uma chave do servidor) com a prova do
 //! convite entra na lista do grupo e recebe de volta a lista (`Members`), com
-//! a nota cifrada de cada um. O servidor não tem o convite: não lê as notas. A lista fica só na memória: some ao reiniciar e volta
-//! conforme cada um manda o próximo `Presence`.
+//! a nota cifrada de cada um. O servidor não tem o convite: não lê as notas.
+//! A lista fica só na memória: some ao reiniciar e volta conforme cada um
+//! manda o próximo `Presence`.
+//!
+//! Para gastar pouco (ADR-023): o `Presence` de sempre é curto e leva a versão
+//! da lista que o membro já tem; a resposta é um `GroupState` de 9 bytes. A
+//! lista inteira só desce quando muda (alguém entrou, saiu, ficou offline,
+//! mudou o apelido, a sala ou a foto), pedida com um `Presence` cheio. As
+//! fotos (cifradas, até [`MAX_PHOTO`] bytes por membro) ficam na memória com
+//! o membro e só descem para quem pede.
 //!
 //! [`PairingCode::room`]: fluxo_crypto::PairingCode::room
 
@@ -37,7 +45,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use fluxo_crypto::{GroupKey, ServerKey};
-use fluxo_proto::{MemberEntry, PacketHeader, PacketKind, SignalMessage, MEMBERS_PER_PAGE};
+use fluxo_proto::{
+    MemberEntry, PacketHeader, PacketKind, SignalMessage, MAX_PHOTO, MAX_PHOTO_PARTS, MEMBERS_PER_PAGE,
+    PHOTO_PART,
+};
 
 use crate::{clock_us, is_transient};
 
@@ -73,11 +84,47 @@ pub const MEMBER_ONLINE: Duration = Duration::from_secs(15);
 /// De quanto em quanto tempo o FSS aberto avisa o grupo que está ali.
 pub const PRESENCE_EVERY: Duration = Duration::from_secs(4);
 
-/// Um membro de um grupo, como o servidor vê: o número e a nota cifrada.
+/// Um membro de um grupo, como o servidor vê: o número, a nota e a foto
+/// (as duas cifradas).
 struct Membro {
     numero: u64,
     nota: Vec<u8>,
     visto: Instant,
+    /// Número e bytes da foto.
+    foto: Option<(u32, Vec<u8>)>,
+    /// Foto chegando em partes.
+    chegando: Vec<Option<Vec<u8>>>,
+}
+
+/// O que a prova do convite cobre num `PhotoPut`.
+pub(crate) fn prova_foto(membro: u64, parte: u8, partes: u8, dados: &[u8]) -> Vec<u8> {
+    [b"foto".as_slice(), &membro.to_be_bytes(), &[parte, partes], dados].concat()
+}
+
+/// O que a prova do convite cobre num `PhotoGet`.
+pub(crate) fn prova_pedido(membro: u64, dono: u64, parte: u8) -> Vec<u8> {
+    [
+        b"pede".as_slice(),
+        &membro.to_be_bytes(),
+        &dono.to_be_bytes(),
+        &[parte],
+    ]
+    .concat()
+}
+
+/// Versão da lista de um grupo: muda quando muda o que os membros veem
+/// (quem está, online ou não, nota e foto). Nunca 0 ("não tenho lista").
+fn versao(nome: &str, membros: &[Membro], agora: Instant) -> u32 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    nome.hash(&mut h);
+    for m in membros {
+        m.numero.hash(&mut h);
+        m.nota.hash(&mut h);
+        (agora.duration_since(m.visto) < MEMBER_ONLINE).hash(&mut h);
+        m.foto.as_ref().map(|f| f.0).hash(&mut h);
+    }
+    (h.finish() as u32).max(1)
 }
 
 /// Um lado de um par repassado.
@@ -354,6 +401,8 @@ impl SignalServer {
                 member,
                 page,
                 group: g,
+                known,
+                full,
                 tag,
                 note,
             } => {
@@ -386,12 +435,42 @@ impl SignalServer {
                             numero: member,
                             nota: note,
                             visto: agora,
+                            foto: None,
+                            chegando: Vec::new(),
                         });
                         membros.sort_by_key(|m| m.numero);
                         evento = Some(member);
                     }
                     // Grupo cheio: recebe a lista, mas não entra nela.
                     None => {}
+                }
+                let nome = self.nomes.get(&g).map(|(_, n)| n.clone()).unwrap_or_default();
+                let versao = versao(&nome, membros, agora);
+                let online = membros
+                    .iter()
+                    .filter(|m| agora.duration_since(m.visto) < MEMBER_ONLINE)
+                    .count();
+                let evento = evento.map(|member| SignalEvent::Member {
+                    group: nome.clone(),
+                    member,
+                    from: de,
+                    online,
+                });
+                // O de sempre: só a versão (o membro pede a lista se mudou).
+                if !full || known == versao {
+                    let foto = membros
+                        .iter()
+                        .find(|m| m.numero == member)
+                        .and_then(|m| m.foto.as_ref())
+                        .map_or(0, |f| f.0);
+                    let r = resposta(
+                        h.frame_id,
+                        &SignalMessage::GroupState {
+                            version: versao,
+                            photo: foto,
+                        },
+                    );
+                    return (vec![(de, r)], evento);
                 }
                 let paginas = membros.len().div_ceil(MEMBERS_PER_PAGE).max(1);
                 let pagina = (page as usize).min(paginas - 1);
@@ -403,32 +482,104 @@ impl SignalServer {
                         member: m.numero,
                         idle_s: agora.duration_since(m.visto).as_secs().min(u16::MAX as u64) as u16,
                         note: m.nota.clone(),
+                        photo: m.foto.as_ref().map_or(0, |f| f.0),
                     })
                     .collect();
-                let online = membros
-                    .iter()
-                    .filter(|m| agora.duration_since(m.visto) < MEMBER_ONLINE)
-                    .count();
-                let nome = self.nomes.get(&g).map(|(_, n)| n.clone()).unwrap_or_default();
                 let r = resposta(
                     h.frame_id,
                     &SignalMessage::Members {
-                        name: nome.clone(),
+                        name: nome,
+                        version: versao,
                         page: pagina as u8,
                         pages: paginas as u8,
                         members: lista,
                     },
                 );
-                let evento = evento.map(|member| SignalEvent::Member {
-                    group: nome,
-                    member,
-                    from: de,
-                    online,
-                });
                 (vec![(de, r)], evento)
+            }
+            SignalMessage::PhotoPut {
+                member,
+                group: g,
+                tag,
+                part,
+                parts,
+                data,
+            } => {
+                let valido = self.nomes.get(&g).is_some_and(|(auth, _)| {
+                    GroupKey::verify_with(auth, &prova_foto(member, part, parts, &data), &tag)
+                });
+                // Só quem já está na lista guarda foto (o Presence vem antes).
+                let Some(m) = valido
+                    .then(|| self.grupos.get_mut(&g))
+                    .flatten()
+                    .and_then(|ms| ms.iter_mut().find(|m| m.numero == member))
+                else {
+                    return (Vec::new(), None);
+                };
+                if parts == 0 {
+                    m.foto = None;
+                    m.chegando.clear();
+                    return (Vec::new(), None);
+                }
+                if parts as usize > MAX_PHOTO_PARTS || part >= parts || data.len() > PHOTO_PART {
+                    return (Vec::new(), None);
+                }
+                if m.chegando.len() != parts as usize {
+                    m.chegando = vec![None; parts as usize];
+                }
+                m.chegando[part as usize] = Some(data);
+                if m.chegando.iter().all(Option::is_some) {
+                    let foto: Vec<u8> = m.chegando.drain(..).flatten().flatten().collect();
+                    if foto.len() <= MAX_PHOTO {
+                        m.foto = Some((fluxo_crypto::photo_id(&foto), foto));
+                    }
+                }
+                (Vec::new(), None)
+            }
+            SignalMessage::PhotoGet {
+                member,
+                group: g,
+                tag,
+                owner,
+                part,
+            } => {
+                let valido = self.nomes.get(&g).is_some_and(|(auth, _)| {
+                    GroupKey::verify_with(auth, &prova_pedido(member, owner, part), &tag)
+                });
+                if !valido {
+                    return (Vec::new(), None);
+                }
+                let foto = self
+                    .grupos
+                    .get(&g)
+                    .and_then(|ms| ms.iter().find(|m| m.numero == owner))
+                    .and_then(|m| m.foto.as_ref());
+                let msg = match foto {
+                    Some((id, bytes)) => SignalMessage::Photo {
+                        owner,
+                        id: *id,
+                        part,
+                        parts: bytes.len().div_ceil(PHOTO_PART) as u8,
+                        data: bytes
+                            .chunks(PHOTO_PART)
+                            .nth(part as usize)
+                            .unwrap_or_default()
+                            .to_vec(),
+                    },
+                    None => SignalMessage::Photo {
+                        owner,
+                        id: 0,
+                        part,
+                        parts: 0,
+                        data: Vec::new(),
+                    },
+                };
+                (vec![(de, resposta(h.frame_id, &msg))], None)
             }
             // Respostas não são pedidos: alguém mandando coisa errada.
             SignalMessage::Members { .. }
+            | SignalMessage::GroupState { .. }
+            | SignalMessage::Photo { .. }
             | SignalMessage::Registered { .. }
             | SignalMessage::Found { .. }
             | SignalMessage::NotFound
@@ -501,6 +652,8 @@ mod tests {
                 member: membro,
                 page: 0,
                 group: grupo.id(),
+                known: 0,
+                full: true,
                 tag: grupo.tag(&prova),
                 note: nota,
             },
@@ -541,6 +694,147 @@ mod tests {
         let depois = t + MEMBER_FORGET + Duration::from_secs(1);
         s.handle(&chave.signed(&presenca(&g, 999)), a("200.0.0.1:1000"), depois);
         assert_eq!(s.members(), vec![("Amigos".to_string(), 1)]);
+    }
+
+    fn curta(grupo: &GroupKey, membro: u64, nota: &[u8], conhecida: u32) -> Vec<u8> {
+        let prova = [membro.to_be_bytes().as_slice(), nota].concat();
+        pedido(
+            0,
+            SignalMessage::Presence {
+                member: membro,
+                page: 0,
+                group: grupo.id(),
+                known: conhecida,
+                full: false,
+                tag: grupo.tag(&prova),
+                note: nota.to_vec(),
+            },
+        )
+    }
+
+    fn versao_de(r: &[(SocketAddr, Vec<u8>)]) -> u32 {
+        match ler(&r[0].1).1 {
+            SignalMessage::GroupState { version, .. } => version,
+            outra => panic!("{outra:?}"),
+        }
+    }
+
+    #[test]
+    fn presenca_de_sempre_so_recebe_a_versao_que_muda_com_a_lista() {
+        let chave = ServerKey::generate("203.0.113.10:3478").unwrap();
+        let g = GroupKey::generate().unwrap();
+        let mut s = servidor_com(&chave, &g, "Amigos");
+        let t = Instant::now();
+        let de = a("200.0.0.1:1000");
+        let pedido1 = chave.signed(&curta(&g, 1, b"ana", 0));
+        let (r, _) = s.handle(&pedido1, de, t);
+        let v1 = versao_de(&r);
+        assert!(r[0].1.len() < 60, "resposta curta: {} bytes", r[0].1.len());
+        assert!(pedido1.len() < 200, "pedido curto: {} bytes", pedido1.len());
+        // Nada mudou: a mesma versão.
+        let (r, _) = s.handle(
+            &chave.signed(&curta(&g, 1, b"ana", v1)),
+            de,
+            t + Duration::from_secs(4),
+        );
+        assert_eq!(versao_de(&r), v1);
+        // Outro membro entrou: versão nova.
+        let (r, _) = s.handle(
+            &chave.signed(&curta(&g, 2, b"bia", 0)),
+            de,
+            t + Duration::from_secs(5),
+        );
+        let v2 = versao_de(&r);
+        assert_ne!(v2, v1);
+        // Mudou a nota (apelido ou sala): versão nova.
+        let (r, _) = s.handle(
+            &chave.signed(&curta(&g, 1, b"ana2", v2)),
+            de,
+            t + Duration::from_secs(6),
+        );
+        let v3 = versao_de(&r);
+        assert_ne!(v3, v2);
+        // Bia ficou offline (sem presença por 15 s): versão nova.
+        let (r, _) = s.handle(
+            &chave.signed(&curta(&g, 1, b"ana2", v3)),
+            de,
+            t + Duration::from_secs(25),
+        );
+        assert_ne!(versao_de(&r), v3);
+    }
+
+    #[test]
+    fn foto_so_de_quem_e_do_grupo_e_so_para_quem_e_do_grupo() {
+        let chave = ServerKey::generate("203.0.113.10:3478").unwrap();
+        let g = GroupKey::generate().unwrap();
+        let outro = GroupKey::with_id(g.id()).unwrap();
+        let mut s = servidor_com(&chave, &g, "Amigos");
+        let t = Instant::now();
+        let de = a("200.0.0.1:1000");
+        let put = |k: &GroupKey, membro: u64, parte: u8, partes: u8, dados: &[u8]| {
+            chave.signed(&pedido(
+                0,
+                SignalMessage::PhotoPut {
+                    member: membro,
+                    group: g.id(),
+                    tag: k.tag(&prova_foto(membro, parte, partes, dados)),
+                    part: parte,
+                    parts: partes,
+                    data: dados.to_vec(),
+                },
+            ))
+        };
+        let get = |k: &GroupKey, membro: u64, dono: u64, parte: u8| {
+            chave.signed(&pedido(
+                0,
+                SignalMessage::PhotoGet {
+                    member: membro,
+                    group: g.id(),
+                    tag: k.tag(&prova_pedido(membro, dono, parte)),
+                    owner: dono,
+                    part: parte,
+                },
+            ))
+        };
+        // Quem não está na lista não guarda foto.
+        s.handle(&put(&g, 1, 0, 1, b"foto"), de, t);
+        let (r, _) = s.handle(&chave.signed(&curta(&g, 1, b"ana", 0)), de, t);
+        assert!(matches!(
+            ler(&r[0].1).1,
+            SignalMessage::GroupState { photo: 0, .. }
+        ));
+        // Na lista: duas partes, e a foto fica.
+        let foto = vec![7u8; PHOTO_PART + 10];
+        let (r, _) = s.handle(&put(&g, 1, 1, 2, &foto[PHOTO_PART..]), de, t);
+        assert!(r.is_empty(), "PhotoPut não tem resposta");
+        s.handle(&put(&g, 1, 0, 2, &foto[..PHOTO_PART]), de, t);
+        let (r, _) = s.handle(&chave.signed(&curta(&g, 1, b"ana", 0)), de, t);
+        let id = fluxo_crypto::photo_id(&foto);
+        assert!(matches!(ler(&r[0].1).1, SignalMessage::GroupState { photo, .. } if photo == id));
+        // Convite errado: nem sobe nem desce.
+        s.handle(&put(&outro, 1, 0, 1, b"troca"), de, t);
+        assert!(s.handle(&get(&outro, 2, 1, 0), de, t).0.is_empty());
+        // Do grupo: desce em partes, cada uma menor que o pedido.
+        let pedido_get = get(&g, 2, 1, 1);
+        let (r, _) = s.handle(&pedido_get, de, t);
+        assert!(r[0].1.len() < pedido_get.len());
+        match ler(&r[0].1).1 {
+            SignalMessage::Photo {
+                owner: 1,
+                id: i,
+                part: 1,
+                parts: 2,
+                data,
+            } => {
+                assert_eq!(i, id);
+                assert_eq!(data, foto[PHOTO_PART..]);
+            }
+            outra => panic!("{outra:?}"),
+        }
+        // Apagar.
+        s.handle(&put(&g, 1, 0, 0, &[]), de, t);
+        let (r, _) = s.handle(&get(&g, 2, 1, 0), de, t);
+        assert!(matches!(ler(&r[0].1).1, SignalMessage::Photo { parts: 0, .. }));
     }
 
     #[test]
