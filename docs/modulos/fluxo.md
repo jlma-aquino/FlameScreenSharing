@@ -58,7 +58,7 @@ cartão Assistindo, o nome de cada espectador (o cliente recebe `--apelido`) e
 o botão Expulsar.
 
 Testado com um servidor local e duas janelas com configurações separadas: as
-duas entraram no grupo e ficaram online, e uma assistiu à outra pelo Assistir.
+duas entraram no grupo e ficaram online, e uma entrou na sala da outra.
 
 ## Várias sessões
 
