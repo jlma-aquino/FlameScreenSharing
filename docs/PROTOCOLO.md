@@ -385,12 +385,21 @@ O host escolhe o codec por sessão, entre os que o cliente decodifica:
   Windows); HEVC e AV1 só com a extensão da Microsoft Store instalada
   ("HEVC Video Extensions", "AV1 Video Extension").
 
-### Name (`kind = 15`) — apelido de quem assiste
+### Name (`kind = 15`) — quem está assistindo
 
-Cliente → host, cifrado, junto com cada Caps: o apelido (UTF-8, até 32 bytes),
-para quem compartilha saber quem está assistindo (grupos, ADR-022). O host
-guarda o último por espectador, sem caracteres de controle. Hosts antigos não
-conhecem o tipo e ignoram o pacote.
+Cliente → host, cifrado, junto com cada Caps: o número do membro no grupo
+(u64) e o apelido (UTF-8, até 32 bytes), para quem compartilha saber quem está
+assistindo e poder bloquear (grupos, ADR-022). O host guarda o último por
+espectador, sem caracteres de controle. Hosts antigos não conhecem o tipo e
+ignoram o pacote.
+
+### Kick (`kind = 16`) — expulso
+
+Host → cliente, cifrado, 3 vezes seguidas: payload u32, por quantos segundos o
+cliente não pode voltar (0: pode; `0xFFFFFFFF`: até quem compartilha
+encerrar). O cliente fecha o vídeo explicando; o host para de mandar a ele.
+Bloqueado, o host o tira de novo assim que o Name dele chega (pelo membro do
+grupo) ou, sem grupo, assim que pareia (pelo IP).
 
 ### Reservado: Input (`kind = 12`)
 

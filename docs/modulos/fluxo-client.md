@@ -203,11 +203,15 @@ tela e gera nova captura: o host passa a codificar na frequência do monitor
 (até ~165 fps), não nos 60 do `--fps`. Ver a pendência de limite de fps no
 roadmap.
 
-## Apelido (`--apelido NOME`)
+## Apelido (`--apelido NOME`, `--membro HEX`)
 
-Manda o apelido a quem compartilha, cifrado, junto com os Caps (pacote
-`Name`, até 32 bytes), para ele saber quem está assistindo. A janela passa o
-nome do grupo quando há chave.
+Manda o número do membro no grupo e o apelido a quem compartilha, cifrados,
+junto com os Caps (pacote `Name`), para ele saber quem está assistindo e poder
+bloquear. A janela passa os dois quando há chave.
+
+Expulso por quem compartilha (pacote `Kick`), o cliente fecha o vídeo e
+termina com `erro: quem compartilha tirou você da transmissão` (e, com
+bloqueio, por quanto tempo). A janela do FSS volta e mostra a mensagem.
 
 ## Placa de vídeo (`--gpu N`)
 

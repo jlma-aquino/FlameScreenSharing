@@ -123,6 +123,7 @@ Opções:
   --saida-som N   toca na saída de som N (padrão: a do Windows; lista em fluxo-bench audio)
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
   --apelido NOME  mostra a quem compartilha quem está assistindo
+  --membro HEX    número deste FSS no grupo (vai com o apelido)
   --gpu N         decodifica e desenha na placa de vídeo N (num notebook com duas
                   placas, a dedicada; a lista aparece em fluxo-bench listar)
   --janela X,Y,L,A  posição e tamanho da janela (externos, em pixels de tela); ao
@@ -144,6 +145,8 @@ struct Opts {
     gpu: Option<usize>,
     /// Apelido mandado a quem compartilha (FSS com grupo).
     apelido: Option<String>,
+    /// Número deste FSS no grupo (vai com o apelido; quem compartilha bloqueia por ele).
+    membro: u64,
     vsync: bool,
     segundos: f64,
     largura: u32,
@@ -177,6 +180,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         porta_flexivel: false,
         gpu: None,
         apelido: None,
+        membro: 0,
         vsync: false,
         segundos: 0.0,
         largura: 1280,
@@ -224,6 +228,10 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--portatil" => o.portatil = true,
             "--gpu" => o.gpu = Some(valor()?.parse().map_err(|_| "gpu: use o número da placa")?),
             "--apelido" => o.apelido = Some(valor()?.clone()),
+            "--membro" => {
+                o.membro =
+                    u64::from_str_radix(valor()?, 16).map_err(|_| "membro: use o número em hexadecimal")?
+            }
             "--janela" => o.janela = Some(ler_janela(valor()?)?),
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
@@ -371,7 +379,7 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
             // O host escolhe o codec entre os que este PC decodifica.
             codecs: codecs_aqui(o),
-            name: o.apelido.clone(),
+            name: o.apelido.clone().map(|a| (o.membro, a)),
             ..ReceiverConfig::default()
         },
     )?;
@@ -658,8 +666,32 @@ fn tocar_audio(
     ))
 }
 
+/// O que dizer a quem foi tirado da transmissão (pacote Kick).
+pub fn motivo_expulso(bloqueio_s: u32) -> String {
+    let base = "quem compartilha tirou você da transmissão";
+    match bloqueio_s {
+        0 => base.to_string(),
+        fluxo_net::KICK_UNTIL_END => format!("{base}, e você só pode voltar quando a transmissão recomeçar"),
+        s if s < 90 => format!("{base}; você pode voltar daqui a {s} s"),
+        s if s < 5400 => format!("{base}; você pode voltar daqui a {} min", s.div_ceil(60)),
+        s => format!("{base}; você pode voltar daqui a {} h", s.div_ceil(3600)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mensagem_de_quem_foi_expulso() {
+        assert_eq!(
+            super::motivo_expulso(0),
+            "quem compartilha tirou você da transmissão"
+        );
+        assert!(super::motivo_expulso(600).ends_with("daqui a 10 min"));
+        assert!(super::motivo_expulso(3600).ends_with("daqui a 60 min"));
+        assert!(super::motivo_expulso(30).ends_with("daqui a 30 s"));
+        assert!(super::motivo_expulso(fluxo_net::KICK_UNTIL_END).contains("recomeçar"));
+    }
+
     use super::{ler_janela, ler_volume};
 
     #[test]

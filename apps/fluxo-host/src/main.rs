@@ -1030,8 +1030,8 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut intervalo_frame = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
     // Vídeo pausado pela janela: a última imagem fica na tela de quem assiste.
-    // IPs de espectadores expulsos (não entram de novo nesta transmissão).
-    let mut bloqueados: std::collections::HashSet<std::net::IpAddr> = std::collections::HashSet::new();
+    // Quem foi expulso com tempo: pelo membro do grupo ou, sem ele, pelo IP.
+    let mut bloqueados: Vec<Bloqueio> = Vec::new();
     let mut pausado = false;
 
     while !duracao.is_some_and(|d| inicio.elapsed() >= d) {
@@ -1096,11 +1096,16 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
                     linhas_c.set(linhas);
                     reabrir = true;
                 }
-                Controle::Expulsar(n) => match tx.expulsar(n) {
-                    Some((ip, ficaram)) => {
-                        // Pelo repasse, o IP é o do servidor: bloquear tiraria todos os repassados.
-                        if Some(ip) != servidor.map(|s| s.ip()) {
-                            bloqueados.insert(ip);
+                Controle::Expulsar {
+                    numero: n,
+                    bloqueio_s,
+                } => match tx.expulsar(n, bloqueio_s) {
+                    Some((ip, membro, ficaram)) => {
+                        // Pelo repasse, o IP é o do servidor: bloquear por ele tiraria
+                        // todos os repassados. Com o membro do grupo, bloqueia só a pessoa.
+                        let ip = (membro.is_none() && Some(ip) != servidor.map(|s| s.ip())).then_some(ip);
+                        if bloqueio_s > 0 && (membro.is_some() || ip.is_some()) {
+                            bloqueados.push(Bloqueio::novo(membro, ip, bloqueio_s));
                         }
                         ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         println!("Espectador {n} expulso ({ficaram} no total)");
@@ -1183,9 +1188,12 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         // (quem já assistia troca de decoder sozinho, no keyframe).
         let mut keyframe_novo = false;
         while let Ok(n) = novos.try_recv() {
-            // Expulso volta com o código? Do mesmo IP, não entra mais nesta transmissão.
-            if bloqueados.contains(&n.tx.peer_addr().ip()) {
-                println!("Espectador {} não conectou: foi expulso antes", n.numero);
+            // Bloqueado pelo IP (sem grupo)? Não entra; o vídeo dele fecha explicando.
+            bloqueados.retain(|b| !b.venceu());
+            let ip = n.tx.peer_addr().ip();
+            if let Some(b) = bloqueados.iter().find(|b| b.ip == Some(ip)) {
+                println!("Espectador {} não conectou: está bloqueado", n.numero);
+                n.tx.kick(b.restante_s());
                 ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 std::thread::spawn(move || drop(n.tx));
                 continue;
@@ -1221,8 +1229,21 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             keyframe_novo = true;
         }
         if inicio.elapsed() >= proximo_relatorio {
-            for (numero, nome) in tx.nomes_novos() {
-                println!("Espectador {numero}: {nome}");
+            bloqueados.retain(|b| !b.venceu());
+            for (numero, membro, nome) in tx.nomes_novos() {
+                // Bloqueado pelo membro do grupo: sai na hora, com a explicação.
+                let bloqueio = bloqueados
+                    .iter()
+                    .find(|b| b.membro.is_some() && b.membro == membro)
+                    .map(Bloqueio::restante_s);
+                match bloqueio.and_then(|s| tx.expulsar(numero, s)) {
+                    Some((_, _, ficaram)) => {
+                        ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        println!("Espectador {numero} expulso ({ficaram} no total)");
+                        println!("  ({nome} está bloqueado e tentou entrar)");
+                    }
+                    None => println!("Espectador {numero}: {nome}"),
+                }
             }
             for (numero, quantos) in tx.remover_silenciosos(espectadores::SILENCIO_MAXIMO) {
                 println!("Espectador {numero} saiu ({quantos} no total)");
@@ -1475,5 +1496,38 @@ mod testes_resolucao {
         assert_eq!(parse_resolucao("900"), Ok(Some(900)));
         assert!(parse_resolucao("8000").is_err());
         assert!(parse_resolucao("alta").is_err());
+    }
+}
+
+/// Alguém que não pode voltar: pelo membro do grupo ou, sem ele, pelo IP.
+#[cfg(windows)]
+struct Bloqueio {
+    membro: Option<u64>,
+    ip: Option<std::net::IpAddr>,
+    /// `None`: até encerrar.
+    ate: Option<std::time::Instant>,
+}
+
+#[cfg(windows)]
+impl Bloqueio {
+    fn novo(membro: Option<u64>, ip: Option<std::net::IpAddr>, bloqueio_s: u32) -> Self {
+        let ate = (bloqueio_s != fluxo_net::KICK_UNTIL_END)
+            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(bloqueio_s as u64));
+        Self { membro, ip, ate }
+    }
+
+    fn venceu(&self) -> bool {
+        self.ate.is_some_and(|t| std::time::Instant::now() >= t)
+    }
+
+    /// Segundos que faltam, como vão no aviso ao cliente.
+    fn restante_s(&self) -> u32 {
+        match self.ate {
+            None => fluxo_net::KICK_UNTIL_END,
+            Some(t) => t
+                .saturating_duration_since(std::time::Instant::now())
+                .as_secs()
+                .max(1) as u32,
+        }
     }
 }

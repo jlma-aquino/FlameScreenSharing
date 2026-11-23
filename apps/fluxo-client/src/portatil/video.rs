@@ -120,6 +120,9 @@ pub fn laco(
     let (mut descartes, mut frames_descartados) = (0u64, 0u64);
 
     while !c.fechar.load(Ordering::Relaxed) {
+        if let Some(b) = rx.kicked() {
+            return Err(crate::motivo_expulso(b).into());
+        }
         if inicio.zip(duracao).is_some_and(|(t, d)| t.elapsed() >= d) {
             break;
         }

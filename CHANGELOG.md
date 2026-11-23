@@ -18,6 +18,9 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   por chave).
 - **Quem está assistindo**: quem compartilha vê o nome de cada espectador, com
   o botão Expulsar, e todos do grupo veem quem assiste quem na lista.
+- **Expulsar** agora fecha o vídeo de quem sai, com um aviso (antes ficava
+  parado na última imagem), e pode **bloquear por um tempo**: 10 min, 1 hora
+  ou até encerrar. O bloqueio é pela pessoa do grupo, não pelo IP.
 
 ## [0.3.1] — 2026-11-16
 

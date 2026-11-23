@@ -203,6 +203,7 @@ impl Assistir {
         // Com grupo, quem compartilha vê o seu nome na lista de quem assiste.
         if !c.chave.trim().is_empty() {
             a.extend(["--apelido".to_string(), c.apelido_efetivo()]);
+            a.extend(["--membro".to_string(), format!("{:x}", c.membro)]);
         }
         if let Some(n) = c.tocar_em {
             a.extend(["--saida-som".to_string(), n.to_string()]);
@@ -428,7 +429,9 @@ mod tests {
                 "--volume",
                 "100",
                 "--apelido",
-                "Ana"
+                "Ana",
+                "--membro",
+                "0"
             ]
         );
         // Sala sem chave, ou com a chave errada: explica.
@@ -469,6 +472,8 @@ mod tests {
                 "30",
                 "--apelido",
                 "Ana",
+                "--membro",
+                "0",
                 "--saida-som",
                 "1",
                 "--sem-painel",
@@ -500,7 +505,15 @@ mod tests {
         assert!(!comuns.iter().any(|x| x.contains(&k) || x.contains(&codigo)));
         assert_eq!(
             comuns,
-            ["--volume", "100", "--apelido", "Ana", "--segredos-pela-entrada"]
+            [
+                "--volume",
+                "100",
+                "--apelido",
+                "Ana",
+                "--membro",
+                "0",
+                "--segredos-pela-entrada"
+            ]
         );
         assert_eq!(
             linhas,

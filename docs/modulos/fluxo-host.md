@@ -149,11 +149,19 @@ Testado com o Discord aberto: tela ("menos o Discord"), `--com-discord`
 ("menos o som do FSS"), troca para a janela do Bloco de Notas ("só o
 programa da janela") e de volta para a tela; a janela minimizada foi recusada.
 
-## Nome de quem assiste
+## Nome de quem assiste e expulsar
 
-Com grupo, o cliente manda o apelido (pacote `Name`). O host imprime
-`Espectador N: nome` quando o nome chega ou muda (conferido a cada relatório),
-e a janela troca "Espectador N" pelo nome. `expulsar N` continua pelo número.
+Com grupo, o cliente manda o número do membro e o apelido (pacote `Name`). O
+host imprime `Espectador N: nome` quando o nome chega ou muda (conferido a
+cada relatório), e a janela troca "Espectador N" pelo nome.
+
+`expulsar N [segundos|sempre]` manda ao espectador o aviso (pacote `Kick`):
+o vídeo dele fecha com a explicação, em vez de ficar parado na última imagem.
+Com tempo, ele não volta por esse tempo (`sempre`: até encerrar). O bloqueio é
+pelo membro do grupo, então outras pessoas no mesmo IP (ou passando pelo
+repassador) continuam entrando; sem grupo, é pelo IP (menos o do servidor).
+Quem está bloqueado e tenta de novo pareia, é tirado assim que o nome chega e
+o registro mostra `(fulano está bloqueado e tentou entrar)`.
 
 ## Comandos ao vivo
 

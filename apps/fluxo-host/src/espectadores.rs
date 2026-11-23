@@ -77,13 +77,14 @@ impl Espectadores {
         l.len()
     }
 
-    /// Espectadores cujo apelido chegou ou mudou desde a última chamada.
-    pub fn nomes_novos(&self) -> Vec<(u32, String)> {
+    /// Espectadores cujo apelido chegou ou mudou desde a última chamada:
+    /// número, membro no grupo e apelido.
+    pub fn nomes_novos(&self) -> Vec<(u32, Option<u64>, String)> {
         let mut novos = Vec::new();
         for e in self.lista().iter_mut() {
             if let Some(n) = e.tx.client_name().filter(|n| e.nome.as_ref() != Some(n)) {
                 e.nome = Some(n.clone());
-                novos.push((e.numero, n));
+                novos.push((e.numero, e.tx.client_member(), n));
             }
         }
         novos
@@ -190,15 +191,19 @@ impl Espectadores {
 
     /// Tira quem está calado há mais de `limite`. Devolve o número de cada um
     /// e quantos sobraram depois dele.
-    /// Tira o espectador `numero`; devolve o IP dele e quantos ficaram.
-    pub fn expulsar(&self, numero: u32) -> Option<(std::net::IpAddr, usize)> {
+    /// Tira o espectador `numero`, avisando a ele por quantos segundos não
+    /// pode voltar (o vídeo dele fecha com a explicação). Devolve o IP, o
+    /// número do membro no grupo (se ele mandou) e quantos ficaram.
+    pub fn expulsar(&self, numero: u32, bloqueio_s: u32) -> Option<(std::net::IpAddr, Option<u64>, usize)> {
         let mut l = self.lista();
         let i = l.iter().position(|e| e.numero == numero)?;
         let e = l.remove(i);
+        e.tx.kick(bloqueio_s);
         let ip = e.tx.peer_addr().ip();
+        let membro = e.tx.client_member();
         let ficaram = l.len();
         std::thread::spawn(move || drop(e));
-        Some((ip, ficaram))
+        Some((ip, membro, ficaram))
     }
 
     pub fn remover_silenciosos(&self, limite: Duration) -> Vec<(u32, usize)> {
@@ -334,9 +339,10 @@ pub enum Controle {
     Fps(u32),
     /// `janela HWND`: passa a transmitir só essa janela (ver `fonte.rs`).
     Janela(isize),
-    /// `expulsar N`: tira o espectador N e recusa o IP dele até o fim da
-    /// transmissão.
-    Expulsar(u32),
+    /// `expulsar N [segundos|sempre]`: tira o espectador N (o vídeo dele
+    /// fecha com a explicação) e, com tempo, não o deixa voltar por esse tempo
+    /// (`sempre`: até encerrar). Bloqueia pelo membro do grupo ou, sem ele, pelo IP.
+    Expulsar { numero: u32, bloqueio_s: u32 },
 }
 
 /// Se a linha é um [`Controle`]: `None` quando é outra coisa (um pedido).
@@ -358,10 +364,21 @@ pub fn ler_controle(linha: &str) -> Option<Result<Controle, String>> {
             .parse()
             .map(Controle::Janela)
             .map_err(|_| "janela: use o número da janela (HWND)".to_string()),
-        ("expulsar", Some(n)) => n
-            .parse()
-            .map(Controle::Expulsar)
-            .map_err(|_| "expulsar: use o número do espectador".to_string()),
+        ("expulsar", Some(n)) => {
+            let bloqueio = match p.next() {
+                None => Ok(0),
+                Some("sempre") => Ok(fluxo_net::KICK_UNTIL_END),
+                Some(s) => s
+                    .parse::<u32>()
+                    .map(|s| s.min(fluxo_net::KICK_UNTIL_END - 1))
+                    .map_err(|_| "expulsar: o tempo é em segundos (ou sempre)".to_string()),
+            };
+            match (n.parse(), bloqueio) {
+                (Ok(numero), Ok(bloqueio_s)) => Ok(Controle::Expulsar { numero, bloqueio_s }),
+                (Err(_), _) => Err("expulsar: use o número do espectador".to_string()),
+                (_, Err(e)) => Err(e),
+            }
+        }
         ("fps", Some(f)) => match f.parse() {
             Ok(f) if (1..=240).contains(&f) => Ok(Controle::Fps(f)),
             _ => Err("fps: use um número de 1 a 240".to_string()),
@@ -670,7 +687,28 @@ mod tests {
             Some(Ok(Controle::Resolucao(None)))
         );
         assert_eq!(ler_controle("fps 30"), Some(Ok(Controle::Fps(30))));
-        assert_eq!(ler_controle("expulsar 2"), Some(Ok(Controle::Expulsar(2))));
+        assert_eq!(
+            ler_controle("expulsar 2"),
+            Some(Ok(Controle::Expulsar {
+                numero: 2,
+                bloqueio_s: 0
+            }))
+        );
+        assert_eq!(
+            ler_controle("expulsar 2 600"),
+            Some(Ok(Controle::Expulsar {
+                numero: 2,
+                bloqueio_s: 600
+            }))
+        );
+        assert_eq!(
+            ler_controle("expulsar 3 sempre"),
+            Some(Ok(Controle::Expulsar {
+                numero: 3,
+                bloqueio_s: fluxo_net::KICK_UNTIL_END
+            }))
+        );
+        assert!(matches!(ler_controle("expulsar 2 dez"), Some(Err(_))));
         assert_eq!(ler_controle("janela 132456"), Some(Ok(Controle::Janela(132456))));
         assert!(matches!(ler_controle("expulsar x"), Some(Err(_))));
         for errado in [

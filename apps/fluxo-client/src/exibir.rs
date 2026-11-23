@@ -135,6 +135,11 @@ pub fn exibir(rx: VideoReceiver, cfg: Config, c: &Compartilhado) -> Result<(), B
     let mut cursor_redesenhos = 0u64;
 
     while !c.fechar.load(Ordering::Relaxed) {
+        // Quem compartilha tirou este cliente: fecha explicando (a janela do
+        // FSS mostra o erro).
+        if let Some(b) = rx.kicked() {
+            return Err(crate::motivo_expulso(b).into());
+        }
         let quer_painel = c.painel.load(Ordering::Relaxed);
         if quer_painel != painel_ligado {
             painel_ligado = quer_painel;

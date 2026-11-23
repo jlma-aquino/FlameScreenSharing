@@ -1179,15 +1179,21 @@ impl Janela {
                             Some(nome) => ui.label(RichText::new(nome).color(p.texto)),
                             None => ui.label(format!("Espectador {n}")),
                         };
-                        if ui
-                            .small_button("Expulsar")
-                            .on_hover_text(
-                                "Tira da transmissão; do mesmo IP, não entra de novo até você encerrar",
-                            )
-                            .clicked()
-                        {
-                            expulsar = Some(*n);
-                        }
+                        ui.menu_button("Expulsar ⏷", |ui| {
+                            for (texto, bloqueio) in [
+                                ("Tirar da transmissão", ""),
+                                ("Tirar e bloquear por 10 min", " 600"),
+                                ("Tirar e bloquear por 1 hora", " 3600"),
+                                ("Tirar e bloquear até eu encerrar", " sempre"),
+                            ] {
+                                if ui.button(texto).clicked() {
+                                    expulsar = Some(format!("{n}{bloqueio}"));
+                                    ui.close();
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("O vídeo de quem sai fecha com um aviso; bloqueado, ele não entra de novo pelo tempo escolhido");
                     });
                 }
             });

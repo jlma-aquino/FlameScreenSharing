@@ -697,6 +697,11 @@ grupos deve ser limitado por quem roda o servidor.
   `Espectador N: nome`, e a janela mostra a lista com o nome e Expulsar. A
   nota de cada membro também diz a sala que ele assiste, então todos do grupo
   veem embaixo de quem está ao vivo quem está assistindo.
+- **Expulsar de verdade**: o host manda `Kick` (tipo 16, cifrado) e o vídeo de
+  quem sai fecha com o aviso. Bloquear por um tempo é pelo número do membro no
+  grupo (vai no `Name`), não pelo IP: pessoas na mesma casa ou no repassador
+  não são bloqueadas juntas. Quem altera o próprio FSS consegue mudar o número
+  e voltar; para tirar de vez, troca-se a chave do grupo.
 - Limites: 50 membros por grupo; quem some por 12 h sai da lista. A lista fica
   só na memória do servidor (volta sozinha depois de reiniciar, conforme cada
   um manda o próximo `Presence`).

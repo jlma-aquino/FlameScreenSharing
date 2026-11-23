@@ -176,14 +176,22 @@ pub enum PacketKind {
     /// Cliente → host: os codecs que o cliente decodifica (payload: 1 byte,
     /// máscara de [`VideoCodec::bit`]). Repetido de tempos em tempos. Cifrado.
     Caps = 14,
-    /// Cliente → host: o apelido de quem assiste (payload: UTF-8, até
-    /// [`MAX_NAME_LEN`] bytes), para quem compartilha saber quem é. Repetido
-    /// junto com os Caps. Cifrado. Hosts antigos ignoram.
+    /// Cliente → host: quem está assistindo (payload: número do membro no
+    /// grupo, u64, e o apelido em UTF-8, até [`MAX_NAME_LEN`] bytes), para quem
+    /// compartilha saber quem é e poder bloquear. Repetido junto com os Caps.
+    /// Cifrado. Hosts antigos ignoram.
     Name = 15,
+    /// Host → cliente: você foi tirado da transmissão (payload: u32, por
+    /// quantos segundos não pode voltar; 0 = pode, [`KICK_UNTIL_END`] = até
+    /// quem compartilha encerrar). Cifrado.
+    Kick = 16,
 }
 
 /// Maior apelido num pacote [`PacketKind::Name`], em bytes.
 pub const MAX_NAME_LEN: usize = 32;
+
+/// Bloqueio de um [`PacketKind::Kick`] que vale até o fim da transmissão.
+pub const KICK_UNTIL_END: u32 = u32::MAX;
 
 impl PacketKind {
     fn from_u8(v: u8) -> Option<Self> {
@@ -202,6 +210,7 @@ impl PacketKind {
             13 => Some(Self::Audio),
             14 => Some(Self::Caps),
             15 => Some(Self::Name),
+            16 => Some(Self::Kick),
             _ => None,
         }
     }
@@ -373,14 +382,15 @@ impl PacketHeader {
             PacketKind::Pong => Some(PONG_LEN),
             PacketKind::Feedback => Some(crate::feedback::FEEDBACK_LEN),
             PacketKind::Caps => Some(1),
+            PacketKind::Kick => Some(4),
             _ => None,
         };
         if let Some(declared) = esperado.filter(|&e| e != actual) {
             return Err(ProtoError::LengthMismatch { declared, actual });
         }
-        if self.kind == PacketKind::Name && actual > MAX_NAME_LEN {
+        if self.kind == PacketKind::Name && !(8..=8 + MAX_NAME_LEN).contains(&actual) {
             return Err(ProtoError::LengthMismatch {
-                declared: MAX_NAME_LEN,
+                declared: 8 + MAX_NAME_LEN,
                 actual,
             });
         }

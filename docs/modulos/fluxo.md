@@ -54,8 +54,9 @@ número sorteado na primeira vez (`membro` nas configurações).
 Embaixo de quem está ao vivo aparece quem está assistindo (`assistindo: Ana,
 Bia`), pela sala assistida que cada um conta ao grupo. A sala só aceita quem é
 do grupo (o servidor separa as salas por chave). Quem compartilha vê, no
-cartão Assistindo, o nome de cada espectador (o cliente recebe `--apelido`) e
-o botão Expulsar.
+cartão Assistindo, o nome de cada espectador (o cliente recebe `--apelido` e
+`--membro`) e o menu **Expulsar**: tirar da transmissão, ou tirar e bloquear
+por 10 min, 1 hora ou até encerrar. O vídeo de quem sai fecha com o aviso.
 
 Testado com um servidor local e duas janelas com configurações separadas: as
 duas entraram no grupo e ficaram online, e uma entrou na sala da outra.

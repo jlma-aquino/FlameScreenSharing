@@ -422,8 +422,8 @@ pub(crate) struct Shared {
     /// Codecs que o cliente decodifica (máscara de `VideoCodec::bit`; 0 =
     /// ainda não disse).
     codecs_cliente: std::sync::atomic::AtomicU8,
-    /// Apelido que o cliente mandou (pacotes Name).
-    nome_cliente: Mutex<Option<String>>,
+    /// Número do membro e apelido que o cliente mandou (pacotes Name).
+    nome_cliente: Mutex<Option<(u64, String)>>,
     /// Pacotes de vídeo/paridade que tentamos mandar (inclui os descartados
     /// pelas simulações), contados um a um na hora em que saem: base da
     /// conta de perda.
@@ -726,7 +726,27 @@ impl VideoSender {
 
     /// O apelido de quem assiste, se ele mandou (FSS com grupo).
     pub fn client_name(&self) -> Option<String> {
-        self.shared.nome_cliente.lock().ok()?.clone()
+        Some(self.shared.nome_cliente.lock().ok()?.as_ref()?.1.clone())
+    }
+
+    /// O número do membro no grupo de quem assiste, se ele mandou (para bloquear).
+    pub fn client_member(&self) -> Option<u64> {
+        Some(self.shared.nome_cliente.lock().ok()?.as_ref()?.0)
+    }
+
+    /// Avisa o cliente que ele foi tirado da transmissão e por quantos
+    /// segundos não pode voltar (0: pode; [`fluxo_proto::KICK_UNTIL_END`]:
+    /// até o fim). Vai 3 vezes, para resistir a uma perda; depois disso, solte
+    /// este `VideoSender`.
+    pub fn kick(&self, bloqueio_s: u32) {
+        if let Ok(p) = PacketKind::Kick
+            .control(0, clock_us())
+            .encode_with_payload(&bloqueio_s.to_be_bytes())
+        {
+            for _ in 0..3 {
+                let _ = self.saida_cursor.send(&p);
+            }
+        }
     }
 
     /// `true` (uma vez) se o cliente perdeu algo e pediu para limpar a
@@ -1221,27 +1241,32 @@ fn on_packet(
         | PacketKind::PairReply
         | PacketKind::Signal
         | PacketKind::Punch
-        | PacketKind::Audio => {}
+        | PacketKind::Audio
+        | PacketKind::Kick => {}
         PacketKind::Caps => {
             if let Some(&m) = payload.first() {
                 // Bit 0 (H.264) sempre: um cliente sem nenhum codec não existe.
                 shared.codecs_cliente.store(m | 1, Ordering::Relaxed);
             }
         }
-        PacketKind::Name => {
+        PacketKind::Name if payload.len() >= 8 => {
+            let (membro, nome) = payload.split_at(8);
+            let membro = u64::from_be_bytes(membro.try_into().unwrap_or_default());
             // Só texto de uma linha: o host imprime o nome para a janela ler.
-            if let Ok(nome) = std::str::from_utf8(payload) {
+            if let Ok(nome) = std::str::from_utf8(nome) {
                 let limpo: String = nome.chars().filter(|c| !c.is_control()).collect();
                 let limpo = limpo.trim();
                 if !limpo.is_empty() {
                     if let Ok(mut n) = shared.nome_cliente.lock() {
-                        if n.as_deref() != Some(limpo) {
-                            *n = Some(limpo.to_string());
+                        if n.as_ref().map(|(m, s)| (*m, s.as_str())) != Some((membro, limpo)) {
+                            *n = Some((membro, limpo.to_string()));
                         }
                     }
                 }
             }
         }
+        // Curto demais para ter o número do membro: ignorado.
+        PacketKind::Name => {}
     }
 }
 

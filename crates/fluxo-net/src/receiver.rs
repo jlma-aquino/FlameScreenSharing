@@ -66,9 +66,10 @@ pub struct ReceiverConfig {
     /// [`VideoCodec::bit`](fluxo_proto::VideoCodec::bit)), mandados ao host
     /// junto com cada ping. Padrão: só H.264.
     pub codecs: u8,
-    /// Apelido de quem assiste, mandado ao host junto com os Caps (para quem
-    /// compartilha saber quem é). `None`: não manda.
-    pub name: Option<String>,
+    /// Número do membro no grupo e apelido de quem assiste, mandados ao host
+    /// junto com os Caps (para quem compartilha saber quem é e poder
+    /// bloquear). `None`: não manda.
+    pub name: Option<(u64, String)>,
 }
 
 /// Intervalo dos pedidos de [`ReceiverConfig::keepalive_to`].
@@ -210,6 +211,8 @@ pub struct ReceiverStats {
 }
 
 struct Shared {
+    /// Quem compartilha tirou este cliente (pacote Kick): segundos de bloqueio.
+    expulso: std::sync::OnceLock<u32>,
     stats: Mutex<ReceiverStats>,
     rtt: Mutex<RttEstimator>,
     stop: AtomicBool,
@@ -329,6 +332,7 @@ impl VideoReceiver {
             .map_err(NetError::io("configurar socket"))?;
         let local = socket.local_addr().map_err(NetError::io("endereço local"))?;
         let shared = Arc::new(Shared {
+            expulso: std::sync::OnceLock::new(),
             atraso_processamento_us: AtomicU32::new(0),
             stats: Mutex::new(ReceiverStats::default()),
             rtt: Mutex::new(RttEstimator::default()),
@@ -449,6 +453,12 @@ impl VideoReceiver {
             Err(RecvTimeoutError::Timeout) => Ok(None),
             Err(RecvTimeoutError::Disconnected) => Err(NetError::Closed),
         }
+    }
+
+    /// Quem compartilha tirou este cliente da transmissão: por quantos segundos
+    /// ele não pode voltar (0: pode; [`fluxo_proto::KICK_UNTIL_END`]: até o fim).
+    pub fn kicked(&self) -> Option<u32> {
+        self.shared.expulso.get().copied()
     }
 
     /// Cópia das estatísticas atuais.
@@ -675,14 +685,15 @@ fn recv_loop(
                     .control(0, clock_us())
                     .encode_with_payload(&[cfg.codecs]);
                 let _ = caps.map(|pkt| shared.enviar(&socket, pkt, p));
-                if let Some(nome) = cfg.name.as_deref() {
+                if let Some((membro, nome)) = cfg.name.as_ref() {
                     let mut fim = nome.len().min(fluxo_proto::MAX_NAME_LEN);
                     while !nome.is_char_boundary(fim) {
                         fim -= 1;
                     }
+                    let payload = [membro.to_be_bytes().as_slice(), &nome.as_bytes()[..fim]].concat();
                     let pkt = PacketKind::Name
                         .control(0, clock_us())
-                        .encode_with_payload(&nome.as_bytes()[..fim]);
+                        .encode_with_payload(&payload);
                     let _ = pkt.map(|pkt| shared.enviar(&socket, pkt, p));
                 }
                 ping_id = ping_id.wrapping_add(1);
@@ -857,6 +868,11 @@ fn recv_loop(
             | PacketKind::Punch
             | PacketKind::Caps
             | PacketKind::Name => {}
+            PacketKind::Kick => {
+                if let Ok(b) = <[u8; 4]>::try_from(payload) {
+                    let _ = shared.expulso.set(u32::from_be_bytes(b));
+                }
+            }
             PacketKind::Cursor => on_cursor(payload, &socket, from, &shared),
             PacketKind::Audio => {
                 let received_us = clock_us();
