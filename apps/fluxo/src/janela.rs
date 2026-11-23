@@ -427,7 +427,7 @@ impl Janela {
                         let ao_vivo = m.room.is_some();
                         ui.horizontal(|ui| {
                             let bolinha = if ao_vivo { p.perigo } else { p.sucesso };
-                            ui.label(RichText::new("●").color(bolinha));
+                            bolinha_de_estado(ui, bolinha);
                             let nome = if m.me {
                                 format!("{} (você)", m.nick)
                             } else {
@@ -468,7 +468,7 @@ impl Janela {
                         ui.add_space(4.0);
                         for m in &offline {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("●").color(p.borda));
+                                bolinha_de_estado(ui, p.borda);
                                 ui.label(RichText::new(&m.nick).color(p.texto_fraco));
                             });
                         }
@@ -2154,4 +2154,10 @@ impl eframe::App for Janela {
             self.cfg_salva = self.cfg.clone();
         }
     }
+}
+
+/// A bolinha de estado da lista do grupo (desenhada: a fonte não tem "●").
+fn bolinha_de_estado(ui: &mut egui::Ui, cor: Color32) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+    ui.painter().circle_filled(r.center(), 4.5, cor);
 }
