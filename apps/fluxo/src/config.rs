@@ -224,6 +224,9 @@ impl Configuracoes {
             n => n.parse().ok().map(Some),
         };
         let indice = |lista: &[Option<&str>], v: &str| lista.iter().position(|x| x.unwrap_or("auto") == v);
+        // O Bloco de Notas antigo grava um BOM no começo: sem tirar, a
+        // primeira linha (a chave, em geral) não seria reconhecida.
+        let texto = texto.strip_prefix('\u{feff}').unwrap_or(texto);
         for linha in texto.lines() {
             let linha = linha.trim();
             if linha.starts_with('#') {
@@ -276,6 +279,13 @@ impl Configuracoes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bom_no_comeco_nao_estraga_a_primeira_linha() {
+        let c = Configuracoes::de_texto("\u{feff}apelido = Ana\nmonitor = 2\n");
+        assert_eq!(c.apelido, "Ana");
+        assert_eq!(c.monitor, 2);
+    }
 
     #[test]
     fn ida_e_volta() {

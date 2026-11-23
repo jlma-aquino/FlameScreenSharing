@@ -165,6 +165,35 @@ sudo netfilter-persistent save
    aceita no máximo 128 ao mesmo tempo. Ainda falta o teste com um amigo atrás
    de NAT restritivo.
 
+### 2026-11-23: grupos e perfil (ADR-022, ADR-023)
+
+1. Código da branch `fase24/perfil` copiado (passo 3 acima). No servidor,
+   os testes do `fluxo-proto`, `fluxo-crypto`, `fluxo-net` e `fluxo-sinal`
+   passaram. Um teste de vídeo por loopback (`frames_chegam_inteiros_e_em_ordem`)
+   falhou uma vez com tudo rodando em paralelo e passou nas 3 vezes seguintes,
+   sozinho e na rodada completa.
+2. `fluxo-sinal` compilado e instalado. Arquivo de grupos só do root e o
+   primeiro grupo, **TTeam** (número `42119204`):
+   ```bash
+   sudo touch /etc/fluxo-sinal/grupos
+   sudo chmod 600 /etc/fluxo-sinal/grupos
+   sudo /usr/local/bin/fluxo-sinal --novo-grupo "TTeam" --grupos /etc/fluxo-sinal/grupos
+   ```
+   O convite ficou no PC de casa em `.secrets\convite-tteam.txt`, fora do git.
+   O servidor guarda só a chave de conferência, não o convite.
+3. O serviço recebe o arquivo do mesmo jeito que as chaves (cópia da unidade
+   antiga em `/etc/fluxo-sinal/fluxo-sinal.service.antes-grupos`):
+   ```ini
+   LoadCredential=chaves:/etc/fluxo-sinal/chaves
+   LoadCredential=grupos:/etc/fluxo-sinal/grupos
+   ExecStart=/usr/local/bin/fluxo-sinal --porta 3478 --chaves ${CREDENTIALS_DIRECTORY}/chaves --grupos ${CREDENTIALS_DIRECTORY}/grupos
+   ```
+   `daemon-reload` e `restart`: subiu com "1 grupo(s): TTeam (42119204)".
+4. Teste do PC de casa: uma janela com a chave real e o convite do TTeam
+   entrou no grupo ("conectado"), e o registro mostrou
+   `grupo TTeam: membro d9ff online`. O serviço foi reiniciado de novo para o
+   membro de teste não ficar na lista.
+
 ## Chaves
 
 ```bash
@@ -177,6 +206,28 @@ sudo systemctl restart fluxo-sinal
 ```
 
 O registro mostra só o id de cada chave, nunca a chave.
+
+## Grupos
+
+Cada grupo tem um convite próprio (`FSSG-…`); a chave do servidor é a mesma
+para todos. Quem é de vários grupos cola o convite do grupo que quer ver.
+
+```bash
+# Criar outro grupo (mostra o convite: mande só para quem é do grupo)
+sudo /usr/local/bin/fluxo-sinal --novo-grupo "Nome do grupo" --grupos /etc/fluxo-sinal/grupos
+sudo systemctl restart fluxo-sinal
+# Tirar alguém de um grupo: convite novo (pelo nome ou pelo número), mande
+# aos que ficam; quem tem o antigo some do grupo, mas continua com a chave
+sudo /usr/local/bin/fluxo-sinal --novo-convite "Nome do grupo" --grupos /etc/fluxo-sinal/grupos
+sudo systemctl restart fluxo-sinal
+# Apagar um grupo: apagar a linha dele e reiniciar
+sudo nano /etc/fluxo-sinal/grupos
+sudo systemctl restart fluxo-sinal
+```
+
+Reiniciar deixa o servidor ~2 s fora do ar e esvazia as listas e as fotos
+dos grupos, que voltam sozinhas em alguns segundos (cada FSS aberto manda a
+presença e sobe a foto de novo).
 
 ## Operar o `fluxo-sinal`
 
