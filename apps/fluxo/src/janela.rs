@@ -1150,18 +1150,14 @@ impl Janela {
         });
     }
 
-    /// Sem chave do servidor, a sala não funciona: avisa e leva às configurações.
+    /// Sem chave do servidor, a sala não funciona: o botão fica apagado, com
+    /// uma linha curta apontando para o campo de cima (`primeira_vez`).
     /// Devolve se há chave.
     fn falta_chave(&mut self, ui: &mut egui::Ui, p: &Paleta) -> bool {
         if !self.cfg.chave.trim().is_empty() {
             return true;
         }
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Falta a chave do servidor.").color(p.aviso));
-            if ui.link("Colar a chave").clicked() {
-                self.configuracoes = Some(Secao::Conexao);
-            }
-        });
+        ui.label(RichText::new("Cole a chave acima para usar.").size(12.0).color(p.texto_fraco));
         false
     }
 
