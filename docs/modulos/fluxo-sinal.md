@@ -54,6 +54,25 @@ Quem usa cola a chave nas configurações do FSS (Conexão), ou passa
 
 `--sinal ENDEREÇO` (sem chave) continua valendo para servidores `--aberto`.
 
+## Grupos (ADR-022)
+
+Cada chave é um grupo. O nome vem depois da chave, na mesma linha do arquivo:
+
+```text
+# 203.0.113.5:3478 (id 4c0684dd)
+FSS1-XXXXX-…  Amigos da Flame
+```
+
+Sem nome, aparece `Grupo <id>`. `--nova-chave ENDEREÇO --nome "Amigos"` já grava
+com o nome. Quem abre o FSS com a chave entra na lista do grupo e o registro
+mostra `grupo Amigos: membro 6e65 online de <IP> (2 online)` (uma vez por
+entrada; quem fica 15 s sem avisar e volta aparece de novo). O servidor não vê
+o apelido nem o código da sala (vão cifrados com o segredo da chave). A lista
+fica só na memória: depois de reiniciar, ela se refaz em segundos.
+
+Para tirar alguém do grupo: gere outra chave para o grupo, troque a linha no
+arquivo, reinicie e mande a nova aos que ficam.
+
 ## Repasse
 
 Quando o caminho direto entre os dois não abre (CGNAT, 4G, roteadores

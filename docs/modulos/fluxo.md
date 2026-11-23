@@ -40,6 +40,20 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
     sem ela, os cartões de sala pedem para colar);
   - **Sobre:** versão, atualizações (ligar ou desligar, Verificar agora).
 
+## Grupo (`src/grupo.rs`, ADR-022)
+
+A chave das configurações é o convite do grupo. Com ela, uma lista à direita
+(janela com 720 px ou mais), no jeito do Discord: o nome do grupo, **ONLINE**
+(● verde, ou vermelho para quem está ao vivo, com **▶ Assistir**) e
+**OFFLINE**. Assistir entra na sala de quem compartilha sem colar código. Uma
+thread fala com o servidor (`fluxo_net::GroupClient`) e conta o apelido e,
+compartilhando numa sala, o código dela. O apelido fica em Configurações >
+Conexão ("Seu nome no grupo"; vazio: o usuário do Windows), e cada FSS tem um
+número sorteado na primeira vez (`membro` nas configurações).
+
+Testado com um servidor local e duas janelas com configurações separadas: as
+duas entraram no grupo e ficaram online.
+
 ## Várias sessões
 
 Dá para compartilhar enquanto assiste, ou assistir a mais de uma pessoa: cada

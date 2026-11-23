@@ -662,6 +662,49 @@ registros, os amigos de hoje chegavam por portas sempre diferentes.
 
 ---
 
+## ADR-022 — Grupos: cada chave é um grupo
+
+**Status:** Aceito (2026-11-23)
+
+**Contexto.** Para assistir, quem compartilha copia o código da sala e manda
+pelo Discord ou pelo WhatsApp. A ideia é algo no jeito dos servidores do
+Discord: abrir o FSS e ver quem do grupo está ali e quem está ao vivo, e
+entrar com um clique. O servidor é uma VM grátis e pequena, e o número de
+grupos deve ser limitado por quem roda o servidor.
+
+**Decisão.**
+- **Grupo = chave de acesso** (`FSS1-…`, ADR-019). Quem tem a chave é membro; o
+  convite é a própria chave. O nome do grupo fica no arquivo de chaves do
+  servidor, depois da chave. Só o dono do servidor cria grupos
+  (`fluxo-sinal --nova-chave … --nome …`): o número de grupos é o de chaves.
+- Com o FSS aberto, cada membro manda `Presence` a cada 4 s (assinado com a
+  chave), e o servidor responde `Members`, a lista do grupo daquela chave, em
+  páginas de até 8 que nunca passam do tamanho do pedido (1200 bytes). Online
+  é quem mandou há menos de 15 s.
+- Cada membro é um número de 64 bits sorteado por FSS instalado, e manda uma
+  **nota** cifrada com o segredo da chave (ChaCha20-Poly1305, com o número
+  como dado autenticado): o apelido e, compartilhando, o código da sala. O
+  servidor guarda e repassa, mas não lê o apelido nem o código; não consegue
+  entrar na sala de ninguém nem trocar a nota de um membro pela de outro.
+- No app, uma lista à direita, no jeito do Discord: online (●, vermelho para
+  ao vivo, com **Assistir**) e offline. Assistir entra na sala do código da
+  nota, pelo caminho de sempre.
+- Limites: 50 membros por grupo; quem some por 12 h sai da lista. A lista fica
+  só na memória do servidor (volta sozinha depois de reiniciar, conforme cada
+  um manda o próximo `Presence`).
+
+**Consequências.**
+- ➕ Sem colar código: abre o FSS, vê quem está ao vivo e clica.
+- ➕ Quase nada de servidor: ~1,2 KB a cada 4 s por FSS aberto; a VM grátis
+  aguenta milhares. O que pesa continua sendo o repasse de vídeo.
+- ➕ Sem conta nem senha: a chave que todos já usam vira o convite.
+- ➖ Tirar alguém do grupo é trocar a chave do grupo (todos colam a nova).
+- ➖ O servidor sabe quem está online (número e IP), mas não o nome.
+- 🔁 Vários grupos no mesmo FSS, tirar membro sem trocar a chave, ver quem
+  assiste quem, lista gravada em disco no servidor.
+
+---
+
 ## Modelo
 
 ```markdown

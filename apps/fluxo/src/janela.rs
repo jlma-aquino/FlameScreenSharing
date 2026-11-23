@@ -22,6 +22,7 @@ use crate::comandos::{
     RESOLUCOES,
 };
 use crate::config::{self, Configuracoes, CODECS, ENCODERS, MBPS};
+use crate::grupo::{self, Grupo};
 use crate::lugar;
 use crate::processo::{caminho_do_programa, Aviso, Processo};
 use crate::saida::{ler, Evento};
@@ -303,6 +304,10 @@ pub struct Janela {
     novo_conexao: String,
     novo_destino: String,
     novo_codigo: String,
+    /// O grupo da chave: quem está online e quem compartilha.
+    grupo: Option<Grupo>,
+    /// Por que não deu para entrar no grupo (chave inválida, por exemplo).
+    erro_grupo: Option<String>,
 }
 
 impl Janela {
@@ -341,6 +346,148 @@ impl Janela {
             novo_conexao: String::new(),
             novo_destino: String::new(),
             novo_codigo: String::new(),
+            grupo: None,
+            erro_grupo: None,
+        }
+    }
+
+    /// Mantém o grupo igual à chave das configurações e conta a ele o apelido
+    /// e a sala que este FSS está compartilhando.
+    fn atualizar_grupo(&mut self, ctx: &egui::Context) {
+        let chave = grupo::normalizar(&self.cfg.chave);
+        if self.grupo.as_ref().map(Grupo::chave) != Some(chave.as_str()) {
+            self.grupo = None;
+            self.erro_grupo = None;
+            if !chave.is_empty() {
+                match Grupo::iniciar(&chave, self.cfg.membro, ctx.clone()) {
+                    Ok(g) => self.grupo = Some(g),
+                    Err(e) => self.erro_grupo = Some(e),
+                }
+            }
+        }
+        let sala = self
+            .sessoes
+            .iter()
+            .find(|s| s.host && s.modo == Modo::Sala && s.rodando())
+            .and_then(|s| s.sala.clone());
+        if let Some(g) = &self.grupo {
+            g.status(&self.cfg.apelido_efetivo(), sala.as_deref());
+        }
+    }
+
+    /// A lista do grupo, à direita, no jeito do Discord: quem está online, quem
+    /// está ao vivo (com o botão para assistir) e quem está offline.
+    fn painel_grupo(&mut self, ctx: &egui::Context, p: &Paleta) {
+        let Some(g) = &self.grupo else {
+            return;
+        };
+        if ctx.screen_rect().width() < 720.0 {
+            return;
+        }
+        let estado = g.ver();
+        let assistindo: Vec<String> = self
+            .sessoes
+            .iter()
+            .filter(|s| !s.host && s.rodando())
+            .filter_map(|s| s.sala_assistida.clone())
+            .collect();
+        let mut entrar: Option<String> = None;
+        egui::SidePanel::right("grupo")
+            .resizable(false)
+            .exact_width(230.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(p.painel)
+                    .inner_margin(Margin::symmetric(14, 12)),
+            )
+            .show(ctx, |ui| {
+                let nome = estado.nome.clone().unwrap_or_else(|| "Grupo".to_string());
+                ui.label(RichText::new(nome).size(17.0).strong().color(p.texto));
+                let (situacao, cor) = match (&estado.erro, estado.conectado) {
+                    (Some(_), _) => ("sem conexão com o servidor", p.perigo),
+                    (None, true) => ("conectado", p.sucesso),
+                    (None, false) => ("conectando…", p.texto_fraco),
+                };
+                ui.label(RichText::new(situacao).size(12.0).color(cor))
+                    .on_hover_text(estado.erro.clone().unwrap_or_default());
+                ui.add_space(10.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let online: Vec<&fluxo_net::GroupMember> =
+                        estado.membros.iter().filter(|m| m.online).collect();
+                    let offline: Vec<&fluxo_net::GroupMember> =
+                        estado.membros.iter().filter(|m| !m.online).collect();
+                    ui.label(
+                        RichText::new(format!("ONLINE — {}", online.len()))
+                            .size(11.0)
+                            .strong()
+                            .color(p.texto_fraco),
+                    );
+                    ui.add_space(4.0);
+                    for m in &online {
+                        let ao_vivo = m.room.is_some();
+                        ui.horizontal(|ui| {
+                            let bolinha = if ao_vivo { p.perigo } else { p.sucesso };
+                            ui.label(RichText::new("●").color(bolinha));
+                            let nome = if m.me {
+                                format!("{} (você)", m.nick)
+                            } else {
+                                m.nick.clone()
+                            };
+                            ui.label(RichText::new(nome).color(p.texto));
+                        });
+                        if let (Some(sala), false) = (&m.room, m.me) {
+                            ui.horizontal(|ui| {
+                                ui.add_space(18.0);
+                                ui.label(RichText::new("ao vivo").size(12.0).strong().color(p.perigo));
+                                let ja = assistindo.iter().any(|a| a == sala);
+                                let botao = if ja {
+                                    botao_desligado(p, "Assistindo", self.tema.raio)
+                                } else {
+                                    botao_comum("▶ Assistir", self.tema.raio)
+                                };
+                                if ui.add_enabled(!ja, botao).clicked() {
+                                    entrar = Some(sala.clone());
+                                }
+                            });
+                        } else if ao_vivo {
+                            ui.horizontal(|ui| {
+                                ui.add_space(18.0);
+                                ui.label(RichText::new("compartilhando").size(12.0).color(p.perigo));
+                            });
+                        }
+                        ui.add_space(2.0);
+                    }
+                    if !offline.is_empty() {
+                        ui.add_space(10.0);
+                        ui.label(
+                            RichText::new(format!("OFFLINE — {}", offline.len()))
+                                .size(11.0)
+                                .strong()
+                                .color(p.texto_fraco),
+                        );
+                        ui.add_space(4.0);
+                        for m in &offline {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("●").color(p.borda));
+                                ui.label(RichText::new(&m.nick).color(p.texto_fraco));
+                            });
+                        }
+                    }
+                    if estado.conectado && online.len() <= 1 {
+                        ui.add_space(12.0);
+                        ui.label(
+                            RichText::new(
+                                "Só você por aqui. Quem tiver a mesma chave aparece nesta lista ao abrir o FSS.",
+                            )
+                            .size(12.0)
+                            .color(p.texto_fraco),
+                        );
+                    }
+                });
+            });
+        if let Some(sala) = entrar {
+            self.assistir.sala = sala;
+            self.iniciar_cliente(ctx, Modo::Sala);
         }
     }
 
@@ -1460,9 +1607,10 @@ impl Janela {
         titulo_campo(
             ui,
             p,
-            "Chave do servidor",
-            "As salas precisam de um servidor onde os dois PCs se encontram (o vídeo não passa por ele). \
-             Quem roda o servidor gera uma chave e manda junto com o programa; cole aqui.",
+            "Chave do grupo",
+            "A chave é o convite do grupo: quem cola a mesma chave aparece na lista do grupo, e as salas \
+             passam pelo servidor dela (o vídeo não passa por ele). Quem roda o servidor gera a chave e manda \
+             junto com o programa; cole aqui.",
         );
         ui.add(
             egui::TextEdit::multiline(&mut self.cfg.chave)
@@ -1486,10 +1634,31 @@ impl Janela {
                 }
             }
         }
+        if let Some(e) = &self.erro_grupo {
+            ui.colored_label(p.perigo, format!("Grupo: {e}"));
+        }
         ui.label(
             RichText::new("Quem compartilha e quem assiste precisam da mesma chave.")
                 .size(13.0)
                 .color(p.texto_fraco),
+        );
+        ui.add_space(16.0);
+        titulo_campo(
+            ui,
+            p,
+            "Seu nome no grupo",
+            "Como os outros do grupo veem você na lista. Vazio: o nome do seu usuário do Windows.",
+        );
+        let padrao = {
+            let mut c = self.cfg.clone();
+            c.apelido.clear();
+            c.apelido_efetivo()
+        };
+        ui.add(
+            egui::TextEdit::singleline(&mut self.cfg.apelido)
+                .hint_text(padrao)
+                .char_limit(fluxo_net::MAX_NICK)
+                .desired_width(280.0),
         );
         ui.add_space(16.0);
         titulo_campo(
@@ -1934,6 +2103,7 @@ impl eframe::App for Janela {
             }
         }
         self.instalar_se_puder();
+        self.atualizar_grupo(ctx);
         let p = self.paleta(ctx);
 
         self.barra_de_cima(ctx, &p);
@@ -1947,6 +2117,7 @@ impl eframe::App for Janela {
             if self.atual.is_some() {
                 self.barra_de_baixo(ctx, &p);
             }
+            self.painel_grupo(ctx, &p);
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()

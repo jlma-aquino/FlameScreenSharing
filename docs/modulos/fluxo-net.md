@@ -266,6 +266,21 @@ entre os dois: prova o fluxo, não o furo de um NAT de verdade):
 
 O servidor só aparece no começo: depois do `Found`, nada mais passa por ele.
 
+## Grupos (`grupo.rs`, ADR-022)
+
+`GroupClient` manda `Presence` ao servidor da chave a cada 4 s
+(`PRESENCE_EVERY`), ou logo que o apelido ou a sala mudam, e monta a lista com
+as páginas de `Members`. As notas que não abrem com a chave (forjadas ou de
+outro grupo) são descartadas. Sem threads: quem usa chama `poll` (o socket
+não bloqueia). O servidor (`SignalServer::with_groups`) guarda os membros de
+cada chave na memória (`MAX_MEMBERS` 50, esquecidos depois de
+`MEMBER_FORGET` 12 h; online até `MEMBER_ONLINE` 15 s).
+
+Testado (`grupo.rs`): dois membros do mesmo grupo se veem, com o código da
+sala de quem compartilha e sem ele ao parar; um terceiro, de outra chave, não
+vê ninguém; 20 membros vêm em 3 páginas. No servidor: grupo cheio responde e
+não aceita mais ninguém, presença sem chave é ignorada.
+
 ## Sem servidor: código de conexão (STUN público)
 
 Formato e sequência: [PROTOCOLO.md](../PROTOCOLO.md), seção 2.3; decisão:

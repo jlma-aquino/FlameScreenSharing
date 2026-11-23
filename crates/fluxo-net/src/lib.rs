@@ -51,6 +51,7 @@ mod bitrate;
 mod clock;
 mod conexao;
 mod delay;
+mod grupo;
 mod history;
 mod internet;
 mod limite;
@@ -74,6 +75,7 @@ pub use bitrate::{BitrateChange, BitrateController, NetworkReport, DEFAULT_QUEUE
 pub use clock::{clock_diff_us, clock_us};
 pub use conexao::{CodeError, ConnectionCode, ReplyCode};
 pub use fluxo_crypto::ServerKey;
+pub use grupo::{GroupClient, GroupMember, GROUP_STALE, MAX_NICK};
 pub use internet::Internet;
 pub use observar::{PairingEvent, PairingObserver};
 pub use receiver::{
@@ -84,7 +86,10 @@ pub use recovery::{FrameAction, Recovery, RecoveryRequest};
 pub use rtt::RttStats;
 pub use segredos::{args_with_secrets, read_secret_args, SECRETS_FROM_STDIN};
 pub use sender::{SenderConfig, SenderStats, VideoSender, PUNCH_TTL, RELAY_AFTER};
-pub use signal::{SignalEvent, SignalServer, MAX_PER_ROOM, MAX_RELAYED, RELAY_TTL, ROOM_TTL};
+pub use signal::{
+    SignalEvent, SignalServer, MAX_MEMBERS, MAX_PER_ROOM, MAX_RELAYED, MEMBER_FORGET, MEMBER_ONLINE,
+    PRESENCE_EVERY, RELAY_TTL, ROOM_TTL,
+};
 pub use stun::{discover_public_addr, probe_nat, PublicAddr, StunAnswer, STUN_SERVERS};
 pub use upnp::{find_gateway, is_private_v4, open_port, Gateway, PortMapping, UpnpOutcome, UPNP_LEASE};
 // Flags que acompanham cada frame (`send_frame_with_flags`, `CompletedFrame`).

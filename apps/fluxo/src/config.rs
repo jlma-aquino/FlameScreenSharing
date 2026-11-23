@@ -66,6 +66,10 @@ pub struct Configuracoes {
     // Conexão
     /// Chave de acesso ao servidor das salas (`FSS1-…`), como colada.
     pub chave: String,
+    /// Como os outros do grupo veem você (vazio: o nome do usuário do Windows).
+    pub apelido: String,
+    /// Número deste FSS no grupo, sorteado na primeira vez (não identifica a pessoa).
+    pub membro: u64,
 
     // Sobre
     /// Ao abrir, procura versão nova e, achando, baixa e instala sozinho.
@@ -92,6 +96,8 @@ impl Default for Configuracoes {
             sempre_no_topo: false,
             upnp: false,
             chave: String::new(),
+            apelido: String::new(),
+            membro: 0,
             atualizar_sozinho: true,
         }
     }
@@ -112,12 +118,33 @@ pub fn caminho() -> Option<PathBuf> {
 }
 
 impl Configuracoes {
-    /// As do arquivo, ou as padrão se ainda não houver.
+    /// As do arquivo, ou as padrão se ainda não houver. Sem número de
+    /// membro, sorteia um (a janela grava na primeira mudança).
     pub fn carregar() -> Self {
-        caminho()
+        let mut c: Self = caminho()
             .and_then(|c| std::fs::read_to_string(c).ok())
             .map(|t| Self::de_texto(&t))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        while c.membro == 0 {
+            let mut b = [0u8; 8];
+            if fluxo_crypto::random_bytes(&mut b).is_err() {
+                break;
+            }
+            c.membro = u64::from_be_bytes(b);
+            // Grava já: o número precisa ser o mesmo da próxima vez que o FSS abrir.
+            let _ = c.salvar();
+        }
+        c
+    }
+
+    /// O apelido para o grupo: o escolhido ou, sem ele, o nome do usuário do Windows.
+    pub fn apelido_efetivo(&self) -> String {
+        match self.apelido.trim() {
+            "" => std::env::var("USERNAME")
+                .or_else(|_| std::env::var("USER"))
+                .unwrap_or_else(|_| "Sem nome".to_string()),
+            a => a.to_string(),
+        }
     }
 
     pub fn salvar(&self) -> std::io::Result<()> {
@@ -150,6 +177,8 @@ impl Configuracoes {
              sempre_no_topo = {}\n\
              upnp = {}\n\
              chave = {}\n\
+             apelido = {}\n\
+             membro = {:016x}\n\
              atualizacoes = {}\n",
             self.aparencia.chave(),
             self.monitor,
@@ -172,6 +201,8 @@ impl Configuracoes {
             sim(self.sempre_no_topo),
             sim(self.upnp),
             self.chave.split_whitespace().collect::<String>(),
+            self.apelido.trim(),
+            self.membro,
             sim(self.atualizar_sozinho),
         )
     }
@@ -226,6 +257,8 @@ impl Configuracoes {
                 "sempre_no_topo" => c.sempre_no_topo = sim(v).unwrap_or(c.sempre_no_topo),
                 "upnp" => c.upnp = sim(v).unwrap_or(c.upnp),
                 "chave" => c.chave = v.to_string(),
+                "apelido" => c.apelido = v.to_string(),
+                "membro" => c.membro = u64::from_str_radix(v, 16).unwrap_or(c.membro),
                 "atualizacoes" => c.atualizar_sozinho = sim(v).unwrap_or(c.atualizar_sozinho),
                 _ => {}
             }
@@ -258,6 +291,8 @@ mod tests {
             sempre_no_topo: true,
             upnp: true,
             chave: "FSS1-ABCDE-FGHJK".into(),
+            apelido: "Ana Lúcia".into(),
+            membro: 0x0123_4567_89ab_cdef,
             atualizar_sozinho: false,
         };
         assert_eq!(Configuracoes::de_texto(&c.para_texto()), c);

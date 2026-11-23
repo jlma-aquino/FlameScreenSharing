@@ -22,7 +22,7 @@ mod manifesto;
 
 use std::fmt;
 
-pub use chave::{ServerKey, KEY_TAG_LEN};
+pub use chave::{ServerKey, KEY_TAG_LEN, NOTE_OVERHEAD};
 pub use cifra::{Opener, Sealer, TAG_LEN};
 pub use codigo::{PairingCode, ALFABETO, BITS_DA_SALA};
 pub use handshake::{respond, HostHandshake, Session, INIT_LEN, REPLY_LEN};

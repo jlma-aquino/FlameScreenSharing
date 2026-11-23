@@ -22,6 +22,12 @@
 //! uma delas ([`ServerKey`]); o resto é ignorado em silêncio, sem resposta
 //! (quem não tem a chave não usa o servidor nem o faz responder a terceiros).
 //!
+//! **Grupos** (ADR-022): cada chave é um grupo, com um nome
+//! ([`SignalServer::with_groups`]). Quem manda `Presence` assinado com a chave
+//! entra na lista do grupo, e recebe de volta a lista (`Members`), com a nota
+//! cifrada de cada um. A lista fica só na memória: some ao reiniciar e volta
+//! conforme cada um manda o próximo `Presence`.
+//!
 //! [`PairingCode::room`]: fluxo_crypto::PairingCode::room
 
 use std::collections::HashMap;
@@ -30,7 +36,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use fluxo_crypto::ServerKey;
-use fluxo_proto::{PacketHeader, PacketKind, SignalMessage};
+use fluxo_proto::{MemberEntry, PacketHeader, PacketKind, SignalMessage, MEMBERS_PER_PAGE};
 
 use crate::{clock_us, is_transient};
 
@@ -52,6 +58,26 @@ pub const RELAY_TTL: Duration = Duration::from_secs(30);
 
 /// Endereços em repasse ao mesmo tempo (dois por par).
 pub const MAX_RELAYED: usize = 128;
+
+/// Membros por grupo, no máximo (os seguintes recebem a lista, mas não entram nela).
+pub const MAX_MEMBERS: usize = 50;
+
+/// Um membro sem `Presence` por este tempo sai da lista do grupo.
+pub const MEMBER_FORGET: Duration = Duration::from_secs(12 * 3600);
+
+/// Sem `Presence` por este tempo, o membro conta como offline (o FSS manda
+/// a cada [`PRESENCE_EVERY`]).
+pub const MEMBER_ONLINE: Duration = Duration::from_secs(15);
+
+/// De quanto em quanto tempo o FSS aberto avisa o grupo que está ali.
+pub const PRESENCE_EVERY: Duration = Duration::from_secs(4);
+
+/// Um membro de um grupo, como o servidor vê: o número e a nota cifrada.
+struct Membro {
+    numero: u64,
+    nota: Vec<u8>,
+    visto: Instant,
+}
 
 /// Um lado de um par repassado.
 struct Repasse {
@@ -82,6 +108,13 @@ pub enum SignalEvent {
     },
     /// Pacote sem assinatura de uma chave aceita (servidor com chaves): ignorado.
     Ignored { from: SocketAddr },
+    /// Um membro apareceu (ou voltou a ficar online) no grupo.
+    Member {
+        group: String,
+        member: u64,
+        from: SocketAddr,
+        online: usize,
+    },
 }
 
 struct Cliente {
@@ -98,6 +131,10 @@ pub struct SignalServer {
     salas: HashMap<u32, Vec<Cliente>>,
     /// Vazia: servidor aberto (atende qualquer um).
     chaves: Vec<ServerKey>,
+    /// O nome do grupo de cada chave (mesma ordem).
+    nomes: Vec<String>,
+    /// Membros de cada grupo, pelo número da chave.
+    grupos: HashMap<usize, Vec<Membro>>,
     /// Pacotes ignorados por não virem assinados com uma das chaves.
     ignorados: u64,
     /// Pares repassados, pelos dois endereços.
@@ -109,10 +146,33 @@ pub struct SignalServer {
 impl SignalServer {
     /// Servidor que só atende pedidos assinados com uma destas chaves.
     pub fn with_keys(chaves: Vec<ServerKey>) -> Self {
+        let grupos = chaves
+            .into_iter()
+            .map(|k| {
+                let nome = format!("Grupo {}", k.id());
+                (k, nome)
+            })
+            .collect();
+        Self::with_groups(grupos)
+    }
+
+    /// Servidor com grupos: cada chave e o nome do grupo dela.
+    pub fn with_groups(grupos: Vec<(ServerKey, String)>) -> Self {
+        let (chaves, nomes) = grupos.into_iter().unzip();
         Self {
             chaves,
+            nomes,
             ..Self::default()
         }
+    }
+
+    /// Membros na lista de cada grupo (online ou não), pelo nome.
+    pub fn members(&self) -> Vec<(String, usize)> {
+        self.nomes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), self.grupos.get(&i).map_or(0, Vec::len)))
+            .collect()
     }
 
     /// Pacotes ignorados até agora por falta de chave válida.
@@ -157,10 +217,15 @@ impl SignalServer {
             sala.retain(|c| agora.duration_since(c.visto) < ROOM_TTL);
         }
         self.salas.retain(|_, sala| !sala.is_empty());
-        let datagrama = match self.chaves.is_empty() {
-            true => datagrama,
-            false => match self.chaves.iter().find_map(|k| k.verify(datagrama)) {
-                Some(pedido) => pedido,
+        let (grupo, datagrama) = match self.chaves.is_empty() {
+            true => (None, datagrama),
+            false => match self
+                .chaves
+                .iter()
+                .enumerate()
+                .find_map(|(i, k)| k.verify(datagrama).map(|p| (i, p)))
+            {
+                Some((i, pedido)) => (Some(i), pedido),
                 None => {
                     self.ignorados += 1;
                     return (Vec::new(), Some(SignalEvent::Ignored { from: de }));
@@ -284,8 +349,73 @@ impl SignalServer {
                     }),
                 )
             }
+            SignalMessage::Presence { member, page, note } => {
+                // Servidor aberto não tem grupos (nem segredo para as notas).
+                let Some(g) = grupo else {
+                    return (Vec::new(), None);
+                };
+                let membros = self.grupos.entry(g).or_default();
+                membros.retain(|m| agora.duration_since(m.visto) < MEMBER_FORGET);
+                let mut evento = None;
+                let cheio = membros.len() >= MAX_MEMBERS;
+                match membros.iter_mut().find(|m| m.numero == member) {
+                    Some(m) => {
+                        let voltou = agora.duration_since(m.visto) >= MEMBER_ONLINE;
+                        m.nota = note;
+                        m.visto = agora;
+                        if voltou {
+                            evento = Some(member);
+                        }
+                    }
+                    None if !cheio => {
+                        membros.push(Membro {
+                            numero: member,
+                            nota: note,
+                            visto: agora,
+                        });
+                        membros.sort_by_key(|m| m.numero);
+                        evento = Some(member);
+                    }
+                    // Grupo cheio: recebe a lista, mas não entra nela.
+                    None => {}
+                }
+                let paginas = membros.len().div_ceil(MEMBERS_PER_PAGE).max(1);
+                let pagina = (page as usize).min(paginas - 1);
+                let lista = membros
+                    .iter()
+                    .skip(pagina * MEMBERS_PER_PAGE)
+                    .take(MEMBERS_PER_PAGE)
+                    .map(|m| MemberEntry {
+                        member: m.numero,
+                        idle_s: agora.duration_since(m.visto).as_secs().min(u16::MAX as u64) as u16,
+                        note: m.nota.clone(),
+                    })
+                    .collect();
+                let online = membros
+                    .iter()
+                    .filter(|m| agora.duration_since(m.visto) < MEMBER_ONLINE)
+                    .count();
+                let nome = self.nomes.get(g).cloned().unwrap_or_default();
+                let r = resposta(
+                    h.frame_id,
+                    &SignalMessage::Members {
+                        name: nome.clone(),
+                        page: pagina as u8,
+                        pages: paginas as u8,
+                        members: lista,
+                    },
+                );
+                let evento = evento.map(|member| SignalEvent::Member {
+                    group: nome,
+                    member,
+                    from: de,
+                    online,
+                });
+                (vec![(de, r)], evento)
+            }
             // Respostas não são pedidos: alguém mandando coisa errada.
-            SignalMessage::Registered { .. }
+            SignalMessage::Members { .. }
+            | SignalMessage::Registered { .. }
             | SignalMessage::Found { .. }
             | SignalMessage::NotFound
             | SignalMessage::RoomTaken
@@ -346,6 +476,56 @@ mod tests {
     fn ler(p: &[u8]) -> (u32, SignalMessage) {
         let (h, payload) = PacketHeader::decode(p).unwrap();
         (h.frame_id, SignalMessage::from_bytes(payload).unwrap())
+    }
+
+    fn presenca(membro: u64) -> Vec<u8> {
+        pedido(
+            0,
+            SignalMessage::Presence {
+                member: membro,
+                page: 0,
+                note: vec![1, 2, 3],
+            },
+        )
+    }
+
+    #[test]
+    fn grupo_cheio_responde_mas_nao_aceita_mais_ninguem() {
+        let chave = ServerKey::generate("203.0.113.10:3478").unwrap();
+        let mut s = SignalServer::with_groups(vec![(chave.clone(), "Amigos".into())]);
+        let t = Instant::now();
+        for i in 0..MAX_MEMBERS as u64 + 5 {
+            let (r, _) = s.handle(&chave.signed(&presenca(i)), a("200.0.0.1:1000"), t);
+            assert_eq!(r.len(), 1, "todo membro recebe a lista");
+            assert!(
+                r[0].1.len() <= chave.signed(&presenca(i)).len(),
+                "resposta não maior que o pedido"
+            );
+            match ler(&r[0].1).1 {
+                SignalMessage::Members { name, pages, .. } => {
+                    assert_eq!(name, "Amigos");
+                    assert!(pages as usize <= MAX_MEMBERS.div_ceil(MEMBERS_PER_PAGE));
+                }
+                outra => panic!("{outra:?}"),
+            }
+        }
+        assert_eq!(s.members(), vec![("Amigos".to_string(), MAX_MEMBERS)]);
+        // Quem some por 12 h sai da lista e abre lugar.
+        let depois = t + MEMBER_FORGET + Duration::from_secs(1);
+        s.handle(&chave.signed(&presenca(999)), a("200.0.0.1:1000"), depois);
+        assert_eq!(s.members(), vec![("Amigos".to_string(), 1)]);
+    }
+
+    #[test]
+    fn presenca_sem_chave_ou_em_servidor_aberto_e_ignorada() {
+        let chave = ServerKey::generate("203.0.113.10:3478").unwrap();
+        let mut s = SignalServer::with_groups(vec![(chave, "Amigos".into())]);
+        let (r, ev) = s.handle(&presenca(1), a("200.0.0.1:1000"), Instant::now());
+        assert!(r.is_empty());
+        assert!(matches!(ev, Some(SignalEvent::Ignored { .. })));
+        let mut aberto = SignalServer::default();
+        let (r, ev) = aberto.handle(&presenca(1), a("200.0.0.1:1000"), Instant::now());
+        assert!(r.is_empty() && ev.is_none());
     }
 
     #[test]

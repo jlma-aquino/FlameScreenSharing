@@ -14,6 +14,11 @@
 //!
 //! Endereço: família (1 byte: 4 ou 6), IP (4 ou 16 bytes), porta (u16 BE).
 //!
+//! **Grupos** (ADR-022): com o FSS aberto, cada membro manda `Presence` de
+//! tempos em tempos, com a sua nota cifrada (apelido e, compartilhando, o
+//! código da sala); o servidor responde `Members`, a lista do grupo da chave
+//! que assinou o pedido, em páginas que nunca passam do tamanho do pedido.
+//!
 //! [`PacketKind::Signal`]: crate::PacketKind::Signal
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -36,6 +41,32 @@ const NOT_FOUND: u8 = 5;
 const ROOM_TAKEN: u8 = 6;
 const RELAY_BIND: u8 = 7;
 const RELAY_READY: u8 = 8;
+const PRESENCE: u8 = 9;
+const MEMBERS: u8 = 10;
+
+/// Tamanho do payload de `Presence` (completado com zeros). As páginas de
+/// `Members` cabem nele: o servidor nunca responde mais do que recebe.
+pub const PRESENCE_LEN: usize = 1200;
+
+/// Maior nota de um membro (cifrada), em bytes.
+pub const MAX_NOTE: usize = 120;
+
+/// Maior nome de grupo, em bytes (UTF-8; o excedente é cortado).
+pub const MAX_GROUP_NAME: usize = 32;
+
+/// Membros por página de `Members`.
+pub const MEMBERS_PER_PAGE: usize = 8;
+
+/// Um membro na lista do grupo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberEntry {
+    /// Número sorteado por cada FSS instalado (não identifica a pessoa).
+    pub member: u64,
+    /// Segundos desde o último `Presence` dele (até 65535).
+    pub idle_s: u16,
+    /// Nota cifrada com o segredo do grupo (o servidor não lê).
+    pub note: Vec<u8>,
+}
 
 /// Uma mensagem de sinalização.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +93,16 @@ pub enum SignalMessage {
     RelayBind { room: u32 },
     /// Servidor → host: repasse ligado; mande ao servidor o que iria ao cliente.
     RelayReady,
+    /// Membro → servidor: "estou aqui", com a nota e a página da lista que
+    /// quer de volta.
+    Presence { member: u64, page: u8, note: Vec<u8> },
+    /// Servidor → membro: uma página da lista do grupo.
+    Members {
+        name: String,
+        page: u8,
+        pages: u8,
+        members: Vec<MemberEntry>,
+    },
 }
 
 impl SignalMessage {
@@ -95,6 +136,33 @@ impl SignalMessage {
                 b.resize(REQUEST_LEN, 0);
             }
             Self::RelayReady => b.push(RELAY_READY),
+            Self::Presence { member, page, note } => {
+                b.push(PRESENCE);
+                b.extend_from_slice(&member.to_be_bytes());
+                b.push(*page);
+                write_note(&mut b, note);
+                b.resize(b.len().max(PRESENCE_LEN), 0);
+            }
+            Self::Members {
+                name,
+                page,
+                pages,
+                members,
+            } => {
+                b.push(MEMBERS);
+                b.push(*page);
+                b.push(*pages);
+                let nome = cortar(name, MAX_GROUP_NAME);
+                b.push(nome.len() as u8);
+                b.extend_from_slice(nome.as_bytes());
+                let lista = &members[..members.len().min(MEMBERS_PER_PAGE)];
+                b.push(lista.len() as u8);
+                for m in lista {
+                    b.extend_from_slice(&m.member.to_be_bytes());
+                    b.extend_from_slice(&m.idle_s.to_be_bytes());
+                    write_note(&mut b, &m.note);
+                }
+            }
         }
         b
     }
@@ -130,6 +198,43 @@ impl SignalMessage {
                 }
             }
             RELAY_READY => Self::RelayReady,
+            PRESENCE => {
+                if b.len() < PRESENCE_LEN {
+                    return Err(ProtoError::BadSignal);
+                }
+                Self::Presence {
+                    member: r.u64()?,
+                    page: r.u8()?,
+                    note: r.note()?,
+                }
+            }
+            MEMBERS => {
+                let page = r.u8()?;
+                let pages = r.u8()?;
+                let n = r.u8()? as usize;
+                let name = std::str::from_utf8(r.take(n)?)
+                    .map_err(|_| ProtoError::BadSignal)?
+                    .to_string();
+                let quantos = r.u8()? as usize;
+                if quantos > MEMBERS_PER_PAGE {
+                    return Err(ProtoError::BadSignal);
+                }
+                let members = (0..quantos)
+                    .map(|_| {
+                        Ok(MemberEntry {
+                            member: r.u64()?,
+                            idle_s: r.u16()?,
+                            note: r.note()?,
+                        })
+                    })
+                    .collect::<Result<_, ProtoError>>()?;
+                Self::Members {
+                    name,
+                    page,
+                    pages,
+                    members,
+                }
+            }
             _ => return Err(ProtoError::BadSignal),
         };
         Ok(msg)
@@ -148,6 +253,21 @@ fn write_addr(b: &mut Vec<u8>, a: &SocketAddr) {
         }
     }
     b.extend_from_slice(&a.port().to_be_bytes());
+}
+
+fn write_note(b: &mut Vec<u8>, note: &[u8]) {
+    let note = &note[..note.len().min(MAX_NOTE)];
+    b.push(note.len() as u8);
+    b.extend_from_slice(note);
+}
+
+/// `s` cortado em até `max` bytes, sem partir um caractere.
+fn cortar(s: &str, max: usize) -> &str {
+    let mut fim = s.len().min(max);
+    while !s.is_char_boundary(fim) {
+        fim -= 1;
+    }
+    &s[..fim]
 }
 
 fn write_list(b: &mut Vec<u8>, list: &[SocketAddr]) {
@@ -172,6 +292,25 @@ impl Reader<'_> {
 
     fn u8(&mut self) -> Result<u8, ProtoError> {
         Ok(self.take(1)?[0])
+    }
+
+    fn u16(&mut self) -> Result<u16, ProtoError> {
+        let b = self.take(2)?;
+        Ok(u16::from_be_bytes([b[0], b[1]]))
+    }
+
+    fn u64(&mut self) -> Result<u64, ProtoError> {
+        Ok(u64::from_be_bytes(
+            self.take(8)?.try_into().map_err(|_| ProtoError::BadSignal)?,
+        ))
+    }
+
+    fn note(&mut self) -> Result<Vec<u8>, ProtoError> {
+        let n = self.u8()? as usize;
+        if n > MAX_NOTE {
+            return Err(ProtoError::BadSignal);
+        }
+        Ok(self.take(n)?.to_vec())
     }
 
     fn addr(&mut self) -> Result<SocketAddr, ProtoError> {
@@ -227,6 +366,28 @@ mod tests {
             SignalMessage::RoomTaken,
             SignalMessage::RelayBind { room: 0x12345 },
             SignalMessage::RelayReady,
+            SignalMessage::Presence {
+                member: 0x0123_4567_89AB_CDEF,
+                page: 2,
+                note: vec![7; 40],
+            },
+            SignalMessage::Members {
+                name: "Amigos da Flame".into(),
+                page: 1,
+                pages: 3,
+                members: vec![
+                    MemberEntry {
+                        member: 1,
+                        idle_s: 4,
+                        note: vec![1, 2, 3],
+                    },
+                    MemberEntry {
+                        member: u64::MAX,
+                        idle_s: u16::MAX,
+                        note: vec![],
+                    },
+                ],
+            },
         ];
         for m in msgs {
             assert_eq!(SignalMessage::from_bytes(&m.to_bytes()).unwrap(), m);
@@ -248,6 +409,60 @@ mod tests {
         .to_bytes();
         assert_eq!(pedido.len(), REQUEST_LEN);
         assert!(resposta.len() < REQUEST_LEN);
+    }
+
+    #[test]
+    fn pagina_cheia_de_membros_cabe_no_pedido_de_presenca() {
+        let pedido = SignalMessage::Presence {
+            member: 1,
+            page: 0,
+            note: vec![],
+        }
+        .to_bytes();
+        let cheia = SignalMessage::Members {
+            name: "x".repeat(MAX_GROUP_NAME + 10),
+            page: 0,
+            pages: 1,
+            members: vec![
+                MemberEntry {
+                    member: 9,
+                    idle_s: 9,
+                    note: vec![9; MAX_NOTE + 5],
+                };
+                MEMBERS_PER_PAGE + 2
+            ],
+        }
+        .to_bytes();
+        assert_eq!(pedido.len(), PRESENCE_LEN);
+        assert!(cheia.len() < PRESENCE_LEN, "{} bytes", cheia.len());
+        match SignalMessage::from_bytes(&cheia).unwrap() {
+            SignalMessage::Members { name, members, .. } => {
+                assert_eq!(name.len(), MAX_GROUP_NAME);
+                assert_eq!(members.len(), MEMBERS_PER_PAGE);
+                assert!(members.iter().all(|m| m.note.len() == MAX_NOTE));
+            }
+            outra => panic!("{outra:?}"),
+        }
+        // Nome cortado sem partir um caractere de vários bytes.
+        let acentos = SignalMessage::Members {
+            name: "é".repeat(40),
+            page: 0,
+            pages: 1,
+            members: vec![],
+        };
+        assert!(SignalMessage::from_bytes(&acentos.to_bytes()).is_ok());
+    }
+
+    #[test]
+    fn presenca_curta_e_recusada() {
+        let mut p = SignalMessage::Presence {
+            member: 1,
+            page: 0,
+            note: vec![1; 10],
+        }
+        .to_bytes();
+        p.truncate(PRESENCE_LEN - 1);
+        assert_eq!(SignalMessage::from_bytes(&p), Err(ProtoError::BadSignal));
     }
 
     #[test]

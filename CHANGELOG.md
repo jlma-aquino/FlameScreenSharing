@@ -5,6 +5,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Adicionado
+- **Grupos**, no jeito dos servidores do Discord (ADR-022): a chave `FSS1-…`
+  passa a ser o convite de um grupo. Com o FSS aberto, uma lista à direita
+  mostra quem do grupo está online e quem está ao vivo, com um botão
+  **Assistir** que entra na sala sem colar código. O apelido e o código da
+  sala vão cifrados: o servidor não lê. Nome no grupo em Configurações >
+  Conexão. No servidor, o nome do grupo vem depois da chave no arquivo
+  (`fluxo-sinal --nova-chave … --nome …`).
+
 ## [0.3.1] — 2026-11-16
 
 ### Adicionado

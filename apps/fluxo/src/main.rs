@@ -10,6 +10,7 @@
 mod atualizacao;
 mod comandos;
 mod config;
+mod grupo;
 mod janela;
 mod lugar;
 mod processo;
