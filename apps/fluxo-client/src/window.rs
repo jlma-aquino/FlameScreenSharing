@@ -96,8 +96,11 @@ impl Window {
                 hInstance: instance.into(),
                 hCursor: LoadCursorW(None, IDC_ARROW)?,
                 // O ícone do FSS, embutido no executável (recurso 1, ver build.rs).
-                hIcon: LoadIconW(Some(instance.into()), windows::core::PCWSTR(std::ptr::without_provenance(1)))
-                    .unwrap_or_default(),
+                hIcon: LoadIconW(
+                    Some(instance.into()),
+                    windows::core::PCWSTR(std::ptr::without_provenance(1)),
+                )
+                .unwrap_or_default(),
                 // Fundo preto: sem clarão branco antes do primeiro frame.
                 hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
                 lpszClassName: CLASS,

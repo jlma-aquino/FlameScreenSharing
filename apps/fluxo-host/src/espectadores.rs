@@ -33,6 +33,8 @@ struct Espectador {
     abr: Option<BitrateController>,
     /// Máscara de codecs que ele decodifica.
     codecs: u8,
+    /// Apelido já anunciado (o cliente manda pacotes Name).
+    nome: Option<String>,
 }
 
 /// Quem está assistindo. Tudo por `&self`: a thread de áudio usa junto com o
@@ -70,8 +72,21 @@ impl Espectadores {
             tx,
             abr,
             codecs,
+            nome: None,
         });
         l.len()
+    }
+
+    /// Espectadores cujo apelido chegou ou mudou desde a última chamada.
+    pub fn nomes_novos(&self) -> Vec<(u32, String)> {
+        let mut novos = Vec::new();
+        for e in self.lista().iter_mut() {
+            if let Some(n) = e.tx.client_name().filter(|n| e.nome.as_ref() != Some(n)) {
+                e.nome = Some(n.clone());
+                novos.push((e.numero, n));
+            }
+        }
+        novos
     }
 
     pub fn quantos(&self) -> usize {

@@ -121,6 +121,8 @@ struct Sessao {
     assistindo: usize,
     /// Host: números de quem está assistindo (para expulsar).
     espectadores: Vec<u32>,
+    /// Host: o apelido de cada espectador que mandou (FSS com grupo).
+    nomes: std::collections::HashMap<u32, String>,
     transmitindo: bool,
     /// Cliente: o vídeo chegou (codec e decoder).
     recebendo: Option<String>,
@@ -174,6 +176,7 @@ impl Sessao {
             respostas: Vec::new(),
             assistindo: 0,
             espectadores: Vec::new(),
+            nomes: std::collections::HashMap::new(),
             transmitindo: false,
             recebendo: None,
             relatorio: None,
@@ -220,6 +223,10 @@ impl Sessao {
                 Evento::Saiu { numero, total } => {
                     self.assistindo = total;
                     self.espectadores.retain(|n| *n != numero);
+                    self.nomes.remove(&numero);
+                }
+                Evento::NomeEspectador { numero, nome } => {
+                    self.nomes.insert(numero, nome);
                 }
                 Evento::NaoConectou { numero, motivo } => {
                     self.respostas.retain(|(n, _)| *n != numero);
@@ -370,8 +377,19 @@ impl Janela {
             .iter()
             .find(|s| s.host && s.modo == Modo::Sala && s.rodando())
             .and_then(|s| s.sala.clone());
+        // A sala que está assistindo (a primeira, se forem várias): os outros
+        // do grupo veem quem assiste quem.
+        let assistindo = self
+            .sessoes
+            .iter()
+            .find(|s| !s.host && s.modo == Modo::Sala && s.rodando())
+            .and_then(|s| s.sala_assistida.clone());
         if let Some(g) = &self.grupo {
-            g.status(&self.cfg.apelido_efetivo(), sala.as_deref());
+            g.status(
+                &self.cfg.apelido_efetivo(),
+                sala.as_deref(),
+                assistindo.as_deref(),
+            );
         }
     }
 
@@ -435,6 +453,25 @@ impl Janela {
                             };
                             ui.label(RichText::new(nome).color(p.texto));
                         });
+                        // Quem está assistindo este membro (pela nota de cada um).
+                        if let Some(sala) = &m.room {
+                            let quem: Vec<&str> = estado
+                                .membros
+                                .iter()
+                                .filter(|o| o.online && o.watching.as_ref() == Some(sala))
+                                .map(|o| o.nick.as_str())
+                                .collect();
+                            if !quem.is_empty() {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.add_space(18.0);
+                                    ui.label(
+                                        RichText::new(format!("assistindo: {}", quem.join(", ")))
+                                            .size(12.0)
+                                            .color(p.texto_fraco),
+                                    );
+                                });
+                            }
+                        }
                         if let (Some(sala), false) = (&m.room, m.me) {
                             ui.horizontal(|ui| {
                                 ui.add_space(18.0);
@@ -1138,7 +1175,10 @@ impl Janela {
                 ui.label(RichText::new("Assistindo").strong().color(p.texto));
                 for n in &s.espectadores {
                     ui.horizontal(|ui| {
-                        ui.label(format!("Espectador {n}"));
+                        match s.nomes.get(n) {
+                            Some(nome) => ui.label(RichText::new(nome).color(p.texto)),
+                            None => ui.label(format!("Espectador {n}")),
+                        };
                         if ui
                             .small_button("Expulsar")
                             .on_hover_text(

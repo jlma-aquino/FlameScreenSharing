@@ -128,7 +128,9 @@ struct Cliente {
 /// Estado do servidor: as salas com clientes esperando.
 #[derive(Default)]
 pub struct SignalServer {
-    salas: HashMap<u32, Vec<Cliente>>,
+    /// Salas por grupo (a chave que assinou) e número: quem é de outro grupo
+    /// não entra, mesmo sabendo o código (ADR-022).
+    salas: HashMap<(Option<usize>, u32), Vec<Cliente>>,
     /// Vazia: servidor aberto (atende qualquer um).
     chaves: Vec<ServerKey>,
     /// O nome do grupo de cada chave (mesma ordem).
@@ -249,7 +251,7 @@ impl SignalServer {
         };
         match msg {
             SignalMessage::Register { room, locals } => {
-                let sala = self.salas.entry(room).or_default();
+                let sala = self.salas.entry((grupo, room)).or_default();
                 let novo = match sala.iter().position(|c| c.endereco == de) {
                     Some(i) => {
                         sala[i].locais = locals;
@@ -278,7 +280,7 @@ impl SignalServer {
                 // O que já é deste host; senão, o mais antigo sem dono (ou
                 // cujo dono sumiu).
                 let livre = |c: &Cliente| c.host.is_none_or(|(_, t)| agora.duration_since(t) >= POSSE);
-                let escolhido = self.salas.get_mut(&room).and_then(|sala| {
+                let escolhido = self.salas.get_mut(&(grupo, room)).and_then(|sala| {
                     let i = sala
                         .iter()
                         .position(|c| c.host.is_some_and(|(h, _)| h == de))
@@ -313,7 +315,7 @@ impl SignalServer {
             SignalMessage::RelayBind { room } => {
                 // Só entre este socket do host e o cliente que o servidor
                 // entregou a ele nesta sala.
-                let cliente = self.salas.get(&room).and_then(|sala| {
+                let cliente = self.salas.get(&(grupo, room)).and_then(|sala| {
                     sala.iter()
                         .find(|c| c.host.is_some_and(|(h, _)| h == de))
                         .map(|c| c.endereco)
@@ -526,6 +528,38 @@ mod tests {
         let mut aberto = SignalServer::default();
         let (r, ev) = aberto.handle(&presenca(1), a("200.0.0.1:1000"), Instant::now());
         assert!(r.is_empty() && ev.is_none());
+    }
+
+    #[test]
+    fn sala_so_para_quem_e_do_mesmo_grupo() {
+        let amigos = ServerKey::generate("203.0.113.10:3478").unwrap();
+        let outros = ServerKey::generate("203.0.113.10:3478").unwrap();
+        let mut s = SignalServer::with_groups(vec![
+            (amigos.clone(), "Amigos".into()),
+            (outros.clone(), "Outros".into()),
+        ]);
+        let t = Instant::now();
+        let registro = pedido(
+            1,
+            SignalMessage::Register {
+                room: 42,
+                locals: vec![],
+            },
+        );
+        s.handle(&amigos.signed(&registro), a("200.0.0.1:9000"), t);
+        let procura = pedido(
+            2,
+            SignalMessage::Lookup {
+                room: 42,
+                locals: vec![],
+            },
+        );
+        // Outro grupo, mesmo código: sala vazia.
+        let (r, _) = s.handle(&outros.signed(&procura), a("201.0.0.2:5000"), t);
+        assert_eq!(ler(&r[0].1).1, SignalMessage::NotFound);
+        // Mesmo grupo: acha.
+        let (r, _) = s.handle(&amigos.signed(&procura), a("201.0.0.2:5000"), t);
+        assert!(matches!(ler(&r[0].1).1, SignalMessage::Found { .. }));
     }
 
     #[test]

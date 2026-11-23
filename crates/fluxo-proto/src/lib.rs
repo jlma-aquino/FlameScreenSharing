@@ -42,8 +42,8 @@ pub use feedback::{Feedback, FEEDBACK_LEN};
 pub use fragment::Fragmenter;
 pub use packet::{
     prepare_seal, stamp_send_time, PacketHeader, PacketKind, ProtoError, VideoCodec, FLAG_CODEC_MASK,
-    FLAG_ENCRYPTED, FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START, HEADER_LEN, MAGIC, PONG_LEN,
-    PROTOCOL_VERSION,
+    FLAG_ENCRYPTED, FLAG_KEYFRAME, FLAG_REFRESH_END, FLAG_REFRESH_START, HEADER_LEN, MAGIC, MAX_NAME_LEN,
+    PONG_LEN, PROTOCOL_VERSION,
 };
 pub use reassembly::{CompletedFrame, Reassembler, ReassemblerConfig, ReassemblerStats};
 pub use signal::{MemberEntry, SignalMessage, MAX_GROUP_NAME, MAX_NOTE, MEMBERS_PER_PAGE, PRESENCE_LEN};

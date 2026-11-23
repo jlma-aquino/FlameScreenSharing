@@ -422,6 +422,8 @@ pub(crate) struct Shared {
     /// Codecs que o cliente decodifica (máscara de `VideoCodec::bit`; 0 =
     /// ainda não disse).
     codecs_cliente: std::sync::atomic::AtomicU8,
+    /// Apelido que o cliente mandou (pacotes Name).
+    nome_cliente: Mutex<Option<String>>,
     /// Pacotes de vídeo/paridade que tentamos mandar (inclui os descartados
     /// pelas simulações), contados um a um na hora em que saem: base da
     /// conta de perda.
@@ -607,6 +609,7 @@ impl VideoSender {
             keyframe_requested: AtomicBool::new(false),
             refresh_requested: AtomicBool::new(false),
             codecs_cliente: std::sync::atomic::AtomicU8::new(0),
+            nome_cliente: Mutex::new(None),
             sent_history: Mutex::new(SentHistory::default()),
             loss_window: Mutex::new(LossWindow::default()),
             report: Mutex::new(None),
@@ -719,6 +722,11 @@ impl VideoSender {
                 m => return Some(m),
             }
         }
+    }
+
+    /// O apelido de quem assiste, se ele mandou (FSS com grupo).
+    pub fn client_name(&self) -> Option<String> {
+        self.shared.nome_cliente.lock().ok()?.clone()
     }
 
     /// `true` (uma vez) se o cliente perdeu algo e pediu para limpar a
@@ -1218,6 +1226,20 @@ fn on_packet(
             if let Some(&m) = payload.first() {
                 // Bit 0 (H.264) sempre: um cliente sem nenhum codec não existe.
                 shared.codecs_cliente.store(m | 1, Ordering::Relaxed);
+            }
+        }
+        PacketKind::Name => {
+            // Só texto de uma linha: o host imprime o nome para a janela ler.
+            if let Ok(nome) = std::str::from_utf8(payload) {
+                let limpo: String = nome.chars().filter(|c| !c.is_control()).collect();
+                let limpo = limpo.trim();
+                if !limpo.is_empty() {
+                    if let Ok(mut n) = shared.nome_cliente.lock() {
+                        if n.as_deref() != Some(limpo) {
+                            *n = Some(limpo.to_string());
+                        }
+                    }
+                }
             }
         }
     }

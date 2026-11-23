@@ -51,8 +51,14 @@ compartilhando numa sala, o código dela. O apelido fica em Configurações >
 Conexão ("Seu nome no grupo"; vazio: o usuário do Windows), e cada FSS tem um
 número sorteado na primeira vez (`membro` nas configurações).
 
+Embaixo de quem está ao vivo aparece quem está assistindo (`assistindo: Ana,
+Bia`), pela sala assistida que cada um conta ao grupo. A sala só aceita quem é
+do grupo (o servidor separa as salas por chave). Quem compartilha vê, no
+cartão Assistindo, o nome de cada espectador (o cliente recebe `--apelido`) e
+o botão Expulsar.
+
 Testado com um servidor local e duas janelas com configurações separadas: as
-duas entraram no grupo e ficaram online.
+duas entraram no grupo e ficaram online, e uma assistiu à outra pelo Assistir.
 
 ## Várias sessões
 

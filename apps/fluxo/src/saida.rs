@@ -22,6 +22,8 @@ pub enum Evento {
     Conectou { numero: u32, total: usize },
     /// Host: `numero` saiu ou caiu.
     Saiu { numero: u32, total: usize },
+    /// Host: o apelido de quem assiste (FSS com grupo).
+    NomeEspectador { numero: u32, nome: String },
     /// Host: não deu para parear com `numero`; o resto segue.
     NaoConectou { numero: u32, motivo: String },
     /// Host: a transmissão começou.
@@ -81,6 +83,15 @@ pub fn ler(linha: &str) -> Evento {
     // "Espectador 2 conectou (2 no total)", "Espectador 2 saiu (1 no total)",
     // "Espectador 2 não conectou: motivo"
     if let Some(resto) = t.strip_prefix("Espectador ") {
+        // "Espectador 2: Ana"
+        if let Some((n, nome)) = resto.split_once(": ") {
+            if let Ok(numero) = n.parse() {
+                return Evento::NomeEspectador {
+                    numero,
+                    nome: nome.trim().to_string(),
+                };
+            }
+        }
         if let Some((n, depois)) = resto.split_once(' ') {
             if let Ok(numero) = n.parse() {
                 if let Some(motivo) = depois.strip_prefix("não conectou: ") {
@@ -408,6 +419,17 @@ mod tests {
 
     #[test]
     fn expulso_e_saida() {
+        assert_eq!(
+            ler("Espectador 2 expulso (1 no total)"),
+            Evento::Saiu { numero: 2, total: 1 }
+        );
+        assert_eq!(
+            ler("Espectador 3: Ana Lúcia"),
+            Evento::NomeEspectador {
+                numero: 3,
+                nome: "Ana Lúcia".into()
+            }
+        );
         assert_eq!(
             ler("Espectador 2 expulso (1 no total)"),
             Evento::Saiu { numero: 2, total: 1 }

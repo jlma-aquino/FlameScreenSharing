@@ -149,6 +149,12 @@ Testado com o Discord aberto: tela ("menos o Discord"), `--com-discord`
 ("menos o som do FSS"), troca para a janela do Bloco de Notas ("só o
 programa da janela") e de volta para a tela; a janela minimizada foi recusada.
 
+## Nome de quem assiste
+
+Com grupo, o cliente manda o apelido (pacote `Name`). O host imprime
+`Espectador N: nome` quando o nome chega ou muda (conferido a cada relatório),
+e a janela troca "Espectador N" pelo nome. `expulsar N` continua pelo número.
+
 ## Comandos ao vivo
 
 Também pela entrada padrão (são os botões da barra da janela), com a

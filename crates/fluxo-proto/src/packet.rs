@@ -176,7 +176,14 @@ pub enum PacketKind {
     /// Cliente → host: os codecs que o cliente decodifica (payload: 1 byte,
     /// máscara de [`VideoCodec::bit`]). Repetido de tempos em tempos. Cifrado.
     Caps = 14,
+    /// Cliente → host: o apelido de quem assiste (payload: UTF-8, até
+    /// [`MAX_NAME_LEN`] bytes), para quem compartilha saber quem é. Repetido
+    /// junto com os Caps. Cifrado. Hosts antigos ignoram.
+    Name = 15,
 }
+
+/// Maior apelido num pacote [`PacketKind::Name`], em bytes.
+pub const MAX_NAME_LEN: usize = 32;
 
 impl PacketKind {
     fn from_u8(v: u8) -> Option<Self> {
@@ -194,6 +201,7 @@ impl PacketKind {
             11 => Some(Self::Cursor),
             13 => Some(Self::Audio),
             14 => Some(Self::Caps),
+            15 => Some(Self::Name),
             _ => None,
         }
     }
@@ -369,6 +377,12 @@ impl PacketHeader {
         };
         if let Some(declared) = esperado.filter(|&e| e != actual) {
             return Err(ProtoError::LengthMismatch { declared, actual });
+        }
+        if self.kind == PacketKind::Name && actual > MAX_NAME_LEN {
+            return Err(ProtoError::LengthMismatch {
+                declared: MAX_NAME_LEN,
+                actual,
+            });
         }
         if self.kind == PacketKind::Parity
             && (self.frag_count == 0

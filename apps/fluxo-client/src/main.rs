@@ -122,6 +122,7 @@ Opções:
   --volume V      volume do som do host, 0 a 100 (padrão 100; só do Fluxo)
   --saida-som N   toca na saída de som N (padrão: a do Windows; lista em fluxo-bench audio)
   --sem-painel    começa sem o painel de estatísticas sobre a imagem (F2 mostra)
+  --apelido NOME  mostra a quem compartilha quem está assistindo
   --gpu N         decodifica e desenha na placa de vídeo N (num notebook com duas
                   placas, a dedicada; a lista aparece em fluxo-bench listar)
   --janela X,Y,L,A  posição e tamanho da janela (externos, em pixels de tela); ao
@@ -141,6 +142,8 @@ struct Opts {
     porta_flexivel: bool,
     /// Placa de vídeo do decode e do desenho (índice do DXGI).
     gpu: Option<usize>,
+    /// Apelido mandado a quem compartilha (FSS com grupo).
+    apelido: Option<String>,
     vsync: bool,
     segundos: f64,
     largura: u32,
@@ -173,6 +176,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         porta: 9000,
         porta_flexivel: false,
         gpu: None,
+        apelido: None,
         vsync: false,
         segundos: 0.0,
         largura: 1280,
@@ -219,6 +223,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--sem-painel" => o.sem_painel = true,
             "--portatil" => o.portatil = true,
             "--gpu" => o.gpu = Some(valor()?.parse().map_err(|_| "gpu: use o número da placa")?),
+            "--apelido" => o.apelido = Some(valor()?.clone()),
             "--janela" => o.janela = Some(ler_janela(valor()?)?),
             "--help" | "-h" | "ajuda" => return Err(String::new()),
             outro => return Err(format!("opção desconhecida: {outro}")),
@@ -366,6 +371,7 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
                 .map(|_| fluxo_net::PairingObserver::print_to_terminal()),
             // O host escolhe o codec entre os que este PC decodifica.
             codecs: codecs_aqui(o),
+            name: o.apelido.clone(),
             ..ReceiverConfig::default()
         },
     )?;

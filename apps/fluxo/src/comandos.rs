@@ -200,6 +200,10 @@ impl Assistir {
         if let Some(n) = c.gpu {
             a.extend(["--gpu".to_string(), n.to_string()]);
         }
+        // Com grupo, quem compartilha vê o seu nome na lista de quem assiste.
+        if !c.chave.trim().is_empty() {
+            a.extend(["--apelido".to_string(), c.apelido_efetivo()]);
+        }
         if let Some(n) = c.tocar_em {
             a.extend(["--saida-som".to_string(), n.to_string()]);
         }
@@ -407,6 +411,7 @@ mod tests {
         let k = chave();
         let com_chave = Configuracoes {
             chave: k.clone(),
+            apelido: "Ana".into(),
             ..padrao()
         };
         let a = Assistir {
@@ -421,7 +426,9 @@ mod tests {
                 "--chave",
                 k.as_str(),
                 "--volume",
-                "100"
+                "100",
+                "--apelido",
+                "Ana"
             ]
         );
         // Sala sem chave, ou com a chave errada: explica.
@@ -460,6 +467,8 @@ mod tests {
                 k.as_str(),
                 "--volume",
                 "30",
+                "--apelido",
+                "Ana",
                 "--saida-som",
                 "1",
                 "--sem-painel",
@@ -479,6 +488,7 @@ mod tests {
         let k = chave();
         let cfg = Configuracoes {
             chave: k.clone(),
+            apelido: "Ana".into(),
             ..padrao()
         };
         let codigo = codigo_valido();
@@ -488,7 +498,10 @@ mod tests {
         };
         let (comuns, linhas) = separar_segredos("client", a.args(&cfg).unwrap());
         assert!(!comuns.iter().any(|x| x.contains(&k) || x.contains(&codigo)));
-        assert_eq!(comuns, ["--volume", "100", "--segredos-pela-entrada"]);
+        assert_eq!(
+            comuns,
+            ["--volume", "100", "--apelido", "Ana", "--segredos-pela-entrada"]
+        );
         assert_eq!(
             linhas,
             [format!("--sala {codigo}"), format!("--chave {k}"), "fim".into()]

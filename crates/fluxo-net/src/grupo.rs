@@ -38,36 +38,47 @@ pub struct GroupMember {
     pub nick: String,
     /// Compartilhando agora: o código da sala para entrar.
     pub room: Option<String>,
+    /// Assistindo agora: o código da sala de quem.
+    pub watching: Option<String>,
     /// Mandou presença há menos de [`MEMBER_ONLINE`].
     pub online: bool,
     /// É este FSS.
     pub me: bool,
 }
 
-/// O que este FSS conta ao grupo: apelido e sala.
-fn nota(apelido: &str, sala: Option<&str>) -> Vec<u8> {
-    let apelido = cortar(apelido.trim(), MAX_NICK);
-    let sala = cortar(sala.unwrap_or_default(), 32);
-    let mut n = vec![NOTA_V1, apelido.len() as u8];
-    n.extend_from_slice(apelido.as_bytes());
-    n.push(sala.len() as u8);
-    n.extend_from_slice(sala.as_bytes());
+/// O que este FSS conta ao grupo: apelido, a sala que compartilha e a que
+/// assiste. A sala assistida vai no fim: notas sem ela (de versões antigas)
+/// continuam valendo, e versões antigas ignoram o que sobra.
+fn nota(apelido: &str, sala: Option<&str>, assistindo: Option<&str>) -> Vec<u8> {
+    let mut n = vec![NOTA_V1];
+    for (texto, max) in [
+        (apelido.trim(), MAX_NICK),
+        (sala.unwrap_or_default(), 16),
+        (assistindo.unwrap_or_default(), 16),
+    ] {
+        let texto = cortar(texto, max);
+        n.push(texto.len() as u8);
+        n.extend_from_slice(texto.as_bytes());
+    }
     n
 }
 
-/// Lê uma nota aberta: (apelido, sala).
-fn ler_nota(n: &[u8]) -> Option<(String, Option<String>)> {
-    let (&versao, resto) = n.split_first()?;
+/// Lê uma nota aberta: (apelido, sala, sala assistida).
+fn ler_nota(n: &[u8]) -> Option<(String, Option<String>, Option<String>)> {
+    let (&versao, mut resto) = n.split_first()?;
     if versao != NOTA_V1 {
         return None;
     }
-    let (&tam, resto) = resto.split_first()?;
-    let apelido = std::str::from_utf8(resto.get(..tam as usize)?).ok()?.to_string();
-    let resto = &resto[tam as usize..];
-    let (&tam, resto) = resto.split_first()?;
-    let sala = std::str::from_utf8(resto.get(..tam as usize)?).ok()?;
-    let sala = (!sala.is_empty()).then(|| sala.to_string());
-    Some((apelido, sala))
+    let mut campo = || -> Option<Option<String>> {
+        let (&tam, depois) = resto.split_first()?;
+        let texto = std::str::from_utf8(depois.get(..tam as usize)?).ok()?;
+        resto = &depois[tam as usize..];
+        Some((!texto.is_empty()).then(|| texto.to_string()))
+    };
+    let apelido = campo()?.unwrap_or_default();
+    let sala = campo()?;
+    let assistindo = campo().flatten();
+    Some((apelido, sala, assistindo))
 }
 
 fn cortar(s: &str, max: usize) -> &str {
@@ -86,6 +97,7 @@ pub struct GroupClient {
     membro: u64,
     apelido: String,
     sala: Option<String>,
+    assistindo: Option<String>,
     nota: Vec<u8>,
     /// Mudou o apelido ou a sala: avisar já.
     sujo: bool,
@@ -120,6 +132,7 @@ impl GroupClient {
             membro,
             apelido: String::new(),
             sala: None,
+            assistindo: None,
             nota: Vec::new(),
             sujo: true,
             enviado: None,
@@ -131,11 +144,17 @@ impl GroupClient {
         })
     }
 
-    /// O que contar ao grupo: o apelido e, compartilhando, o código da sala.
-    pub fn set_status(&mut self, apelido: &str, sala: Option<&str>) {
-        if self.apelido != apelido || self.sala.as_deref() != sala || self.nota.is_empty() {
+    /// O que contar ao grupo: o apelido, o código da sala que compartilha e o
+    /// da que assiste.
+    pub fn set_status(&mut self, apelido: &str, sala: Option<&str>, assistindo: Option<&str>) {
+        if self.apelido != apelido
+            || self.sala.as_deref() != sala
+            || self.assistindo.as_deref() != assistindo
+            || self.nota.is_empty()
+        {
             self.apelido = apelido.to_string();
             self.sala = sala.map(str::to_string);
+            self.assistindo = assistindo.map(str::to_string);
             self.sujo = true;
         }
     }
@@ -164,10 +183,10 @@ impl GroupClient {
             .is_none_or(|t| agora.duration_since(t) >= PRESENCE_EVERY);
         if self.sujo || hora {
             if self.sujo {
-                match self
-                    .chave
-                    .seal_note(self.membro, &nota(&self.apelido, self.sala.as_deref()))
-                {
+                match self.chave.seal_note(
+                    self.membro,
+                    &nota(&self.apelido, self.sala.as_deref(), self.assistindo.as_deref()),
+                ) {
                     Ok(n) if n.len() <= MAX_NOTE => self.nota = n,
                     _ => self.nota.clear(),
                 }
@@ -234,7 +253,8 @@ impl GroupClient {
             *vista = true;
         }
         for m in members {
-            let Some((nick, room)) = self.chave.open_note(m.member, &m.note).and_then(|n| ler_nota(&n))
+            let Some((nick, room, watching)) =
+                self.chave.open_note(m.member, &m.note).and_then(|n| ler_nota(&n))
             else {
                 continue;
             };
@@ -245,6 +265,7 @@ impl GroupClient {
                     member: m.member,
                     nick,
                     room: room.filter(|_| online),
+                    watching: watching.filter(|_| online),
                     online,
                     me: m.member == self.membro,
                 },
@@ -278,11 +299,19 @@ mod tests {
     #[test]
     fn nota_de_ida_e_volta() {
         assert_eq!(
-            ler_nota(&nota("Ana", Some("K7M4-QX9P"))),
-            Some(("Ana".into(), Some("K7M4-QX9P".into())))
+            ler_nota(&nota("Ana", Some("K7M4-QX9P"), None)),
+            Some(("Ana".into(), Some("K7M4-QX9P".into()), None))
         );
-        assert_eq!(ler_nota(&nota("  Bia ", None)), Some(("Bia".into(), None)));
-        assert_eq!(ler_nota(&nota(&"é".repeat(40), None)).unwrap().0.len(), 32);
+        assert_eq!(
+            ler_nota(&nota("  Bia ", None, Some("K7M4-QX9P"))),
+            Some(("Bia".into(), None, Some("K7M4-QX9P".into())))
+        );
+        assert_eq!(ler_nota(&nota(&"é".repeat(40), None, None)).unwrap().0.len(), 32);
+        // Nota da primeira versão (sem a sala assistida) continua valendo.
+        assert_eq!(
+            ler_nota(&[NOTA_V1, 3, b'C', b'a', b'i', 0]),
+            Some(("Cai".into(), None, None))
+        );
         assert_eq!(ler_nota(&[]), None);
         assert_eq!(ler_nota(&[2, 0, 0]), None);
     }
@@ -323,9 +352,9 @@ mod tests {
         let mut ana = GroupClient::connect(amigos.clone(), 1).unwrap();
         let mut bia = GroupClient::connect(amigos.clone(), 2).unwrap();
         let mut caio = GroupClient::connect(outros, 3).unwrap();
-        ana.set_status("Ana", Some("K7M4-QX9P"));
-        bia.set_status("Bia", None);
-        caio.set_status("Caio", None);
+        ana.set_status("Ana", Some("K7M4-QX9P"), None);
+        bia.set_status("Bia", None, Some("K7M4-QX9P"));
+        caio.set_status("Caio", None, None);
         let viram = ate(&mut [&mut ana, &mut bia, &mut caio], |c| {
             c[0].members().len() == 2 && c[1].members().len() == 2 && c[2].members().len() == 1
         });
@@ -336,10 +365,13 @@ mod tests {
         assert_eq!(ana_vista.room.as_deref(), Some("K7M4-QX9P"));
         assert!(ana_vista.online && !ana_vista.me);
         assert!(bia.members().iter().any(|m| m.me && m.nick == "Bia"));
+        // Ana vê que Bia está assistindo a sala dela.
+        let bia_vista = ana.members().iter().find(|m| m.nick == "Bia").unwrap();
+        assert_eq!(bia_vista.watching.as_deref(), Some("K7M4-QX9P"));
         assert!(caio.members().iter().all(|m| m.nick == "Caio"));
 
         // Ana parou de compartilhar: ela vê na hora, e Bia na próxima rodada dela (até 4 s).
-        ana.set_status("Ana", None);
+        ana.set_status("Ana", None, None);
         let parou = ate(&mut [&mut ana, &mut bia], |c| {
             c.iter()
                 .all(|x| x.members().len() == 2 && x.members().iter().all(|m| m.room.is_none()))
@@ -362,7 +394,7 @@ mod tests {
         let mut todos: Vec<GroupClient> = (0..20u64)
             .map(|i| {
                 let mut c = GroupClient::connect(chave.clone(), 100 + i).unwrap();
-                c.set_status(&format!("Membro {i}"), None);
+                c.set_status(&format!("Membro {i}"), None, None);
                 c
             })
             .collect();

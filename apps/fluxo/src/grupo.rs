@@ -29,6 +29,7 @@ struct Compartilhado {
     /// O que contar ao grupo: apelido e sala.
     apelido: String,
     sala: Option<String>,
+    assistindo: Option<String>,
 }
 
 /// Presença num grupo, enquanto existir (some ao trocar a chave ou fechar).
@@ -63,12 +64,13 @@ impl Grupo {
         &self.chave
     }
 
-    /// Conta ao grupo o apelido e, compartilhando, a sala.
-    pub fn status(&self, apelido: &str, sala: Option<&str>) {
+    /// Conta ao grupo o apelido, a sala que compartilha e a que assiste.
+    pub fn status(&self, apelido: &str, sala: Option<&str>, assistindo: Option<&str>) {
         if let Ok(mut d) = self.dados.lock() {
-            if d.apelido != apelido || d.sala.as_deref() != sala {
+            if d.apelido != apelido || d.sala.as_deref() != sala || d.assistindo.as_deref() != assistindo {
                 d.apelido = apelido.to_string();
                 d.sala = sala.map(str::to_string);
+                d.assistindo = assistindo.map(str::to_string);
             }
         }
     }
@@ -113,11 +115,11 @@ fn rodar(
             }
         }
         if let Some(c) = cliente.as_mut() {
-            let (apelido, sala) = match dados.lock() {
-                Ok(d) => (d.apelido.clone(), d.sala.clone()),
+            let (apelido, sala, assistindo) = match dados.lock() {
+                Ok(d) => (d.apelido.clone(), d.sala.clone(), d.assistindo.clone()),
                 Err(_) => break,
             };
-            c.set_status(&apelido, sala.as_deref());
+            c.set_status(&apelido, sala.as_deref(), assistindo.as_deref());
             let agora = Instant::now();
             let mudou = c.poll(agora);
             let agora_conectado = c.connected(agora);

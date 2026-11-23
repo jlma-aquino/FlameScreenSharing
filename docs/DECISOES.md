@@ -689,6 +689,14 @@ grupos deve ser limitado por quem roda o servidor.
 - No app, uma lista à direita, no jeito do Discord: online (●, vermelho para
   ao vivo, com **Assistir**) e offline. Assistir entra na sala do código da
   nota, pelo caminho de sempre.
+- **A sala é do grupo**: o servidor guarda cada sala pelo grupo da chave que
+  assinou o pedido. Quem é de outro grupo do mesmo servidor não acha a sala,
+  mesmo sabendo o código; qualquer um do grupo entra pelo Assistir.
+- **Quem compartilha sabe quem assiste**: o cliente manda o apelido ao host
+  num pacote `Name` (tipo 15, cifrado, junto com os Caps); o host imprime
+  `Espectador N: nome`, e a janela mostra a lista com o nome e Expulsar. A
+  nota de cada membro também diz a sala que ele assiste, então todos do grupo
+  veem embaixo de quem está ao vivo quem está assistindo.
 - Limites: 50 membros por grupo; quem some por 12 h sai da lista. A lista fica
   só na memória do servidor (volta sozinha depois de reiniciar, conforme cada
   um manda o próximo `Presence`).

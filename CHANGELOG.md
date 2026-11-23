@@ -13,6 +13,11 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
   sala vão cifrados: o servidor não lê. Nome no grupo em Configurações >
   Conexão. No servidor, o nome do grupo vem depois da chave no arquivo
   (`fluxo-sinal --nova-chave … --nome …`).
+- **Sala do grupo**: quem compartilha num grupo pode ser assistido por
+  qualquer um do grupo, e só por quem é do grupo (o servidor separa as salas
+  por chave).
+- **Quem está assistindo**: quem compartilha vê o nome de cada espectador, com
+  o botão Expulsar, e todos do grupo veem quem assiste quem na lista.
 
 ## [0.3.1] — 2026-11-16
 

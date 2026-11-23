@@ -253,10 +253,14 @@ cliente                       servidor                        host
   `Members`; páginas além da primeira são pedidas logo em seguida. Nota: até
   120 bytes (tamanho u8 e os bytes), `nonce (12) ‖ ChaCha20-Poly1305(chave =
   HMAC-SHA256(segredo, "fluxo grupo nota v1"), AAD = membro (u64 BE))` sobre
-  `versão (1) ‖ tamanho ‖ apelido ‖ tamanho ‖ código da sala` (vazio: não está
-  compartilhando). O servidor não abre a nota. Online: parado há menos de
+  `versão (1) ‖ tamanho ‖ apelido ‖ tamanho ‖ código da sala ‖ tamanho ‖ sala
+  assistida` (vazio: não está compartilhando / assistindo; a sala assistida
+  pode faltar, em notas antigas). O servidor não abre a nota. Online: parado há menos de
   15 s. No máximo 50 membros por grupo; quem passa disso recebe a lista, mas
   não entra nela. Servidor aberto (`--aberto`) ignora `Presence`.
+- **Sala do grupo:** com chaves, a sala é guardada pelo par (chave que
+  assinou, número da sala). Register e Lookup assinados com chaves diferentes
+  não se encontram, nem o RelayBind.
 - **Limites:** sem o repasse, NAT simétrico dos dois lados (porta nova a
   cada destino) não fura. O servidor deve ficar fora da
   rede do cliente; na mesma rede, o endereço "público" visto é o local.
@@ -380,6 +384,13 @@ O host escolhe o codec por sessão, entre os que o cliente decodifica:
 - O que o cliente anuncia: H.264 sempre (decoder da Microsoft, vem no
   Windows); HEVC e AV1 só com a extensão da Microsoft Store instalada
   ("HEVC Video Extensions", "AV1 Video Extension").
+
+### Name (`kind = 15`) — apelido de quem assiste
+
+Cliente → host, cifrado, junto com cada Caps: o apelido (UTF-8, até 32 bytes),
+para quem compartilha saber quem está assistindo (grupos, ADR-022). O host
+guarda o último por espectador, sem caracteres de controle. Hosts antigos não
+conhecem o tipo e ignoram o pacote.
 
 ### Reservado: Input (`kind = 12`)
 

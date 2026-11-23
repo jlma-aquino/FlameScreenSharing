@@ -203,6 +203,12 @@ tela e gera nova captura: o host passa a codificar na frequência do monitor
 (até ~165 fps), não nos 60 do `--fps`. Ver a pendência de limite de fps no
 roadmap.
 
+## Apelido (`--apelido NOME`)
+
+Manda o apelido a quem compartilha, cifrado, junto com os Caps (pacote
+`Name`, até 32 bytes), para ele saber quem está assistindo. A janela passa o
+nome do grupo quando há chave.
+
 ## Placa de vídeo (`--gpu N`)
 
 Decodifica e desenha na placa N (`fluxo_decode::create_device_on`); os codecs

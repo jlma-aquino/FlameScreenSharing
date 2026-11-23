@@ -66,6 +66,9 @@ pub struct ReceiverConfig {
     /// [`VideoCodec::bit`](fluxo_proto::VideoCodec::bit)), mandados ao host
     /// junto com cada ping. Padrão: só H.264.
     pub codecs: u8,
+    /// Apelido de quem assiste, mandado ao host junto com os Caps (para quem
+    /// compartilha saber quem é). `None`: não manda.
+    pub name: Option<String>,
 }
 
 /// Intervalo dos pedidos de [`ReceiverConfig::keepalive_to`].
@@ -95,6 +98,7 @@ impl Default for ReceiverConfig {
             keepalive_to: None,
             on_pairing: None,
             codecs: 1,
+            name: None,
         }
     }
 }
@@ -671,6 +675,16 @@ fn recv_loop(
                     .control(0, clock_us())
                     .encode_with_payload(&[cfg.codecs]);
                 let _ = caps.map(|pkt| shared.enviar(&socket, pkt, p));
+                if let Some(nome) = cfg.name.as_deref() {
+                    let mut fim = nome.len().min(fluxo_proto::MAX_NAME_LEN);
+                    while !nome.is_char_boundary(fim) {
+                        fim -= 1;
+                    }
+                    let pkt = PacketKind::Name
+                        .control(0, clock_us())
+                        .encode_with_payload(&nome.as_bytes()[..fim]);
+                    let _ = pkt.map(|pkt| shared.enviar(&socket, pkt, p));
+                }
                 ping_id = ping_id.wrapping_add(1);
                 next_ping = Instant::now() + cfg.ping_interval;
             }
@@ -841,7 +855,8 @@ fn recv_loop(
             | PacketKind::PairReply
             | PacketKind::Signal
             | PacketKind::Punch
-            | PacketKind::Caps => {}
+            | PacketKind::Caps
+            | PacketKind::Name => {}
             PacketKind::Cursor => on_cursor(payload, &socket, from, &shared),
             PacketKind::Audio => {
                 let received_us = clock_us();

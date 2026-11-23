@@ -1221,6 +1221,9 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             keyframe_novo = true;
         }
         if inicio.elapsed() >= proximo_relatorio {
+            for (numero, nome) in tx.nomes_novos() {
+                println!("Espectador {numero}: {nome}");
+            }
             for (numero, quantos) in tx.remover_silenciosos(espectadores::SILENCIO_MAXIMO) {
                 println!("Espectador {numero} saiu ({quantos} no total)");
                 ocupados.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);

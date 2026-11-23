@@ -355,7 +355,10 @@ mod tests {
         let b = ServerKey::generate("203.0.113.10:3478").unwrap();
         let nota = a.seal_note(7, b"Ana|K7M4-QX9P").unwrap();
         assert_eq!(nota.len(), 13 + NOTE_OVERHEAD);
-        assert_eq!(a.open_note(7, &nota).as_deref(), Some(b"Ana|K7M4-QX9P".as_slice()));
+        assert_eq!(
+            a.open_note(7, &nota).as_deref(),
+            Some(b"Ana|K7M4-QX9P".as_slice())
+        );
         assert_eq!(a.open_note(8, &nota), None, "nota de outro membro");
         assert_eq!(b.open_note(7, &nota), None, "outro grupo");
         let mut alterada = nota.clone();
