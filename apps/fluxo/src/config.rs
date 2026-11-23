@@ -66,6 +66,8 @@ pub struct Configuracoes {
     // Conexão
     /// Chave de acesso ao servidor das salas (`FSS1-…`), como colada.
     pub chave: String,
+    /// Convite do grupo (`FSSG-…`), como colado. Vazio: sem grupo.
+    pub grupo: String,
     /// Como os outros do grupo veem você (vazio: o nome do usuário do Windows).
     pub apelido: String,
     /// Número deste FSS no grupo, sorteado na primeira vez (não identifica a pessoa).
@@ -96,6 +98,7 @@ impl Default for Configuracoes {
             sempre_no_topo: false,
             upnp: false,
             chave: String::new(),
+            grupo: String::new(),
             apelido: String::new(),
             membro: 0,
             atualizar_sozinho: true,
@@ -177,6 +180,7 @@ impl Configuracoes {
              sempre_no_topo = {}\n\
              upnp = {}\n\
              chave = {}\n\
+             grupo = {}\n\
              apelido = {}\n\
              membro = {:016x}\n\
              atualizacoes = {}\n",
@@ -201,6 +205,7 @@ impl Configuracoes {
             sim(self.sempre_no_topo),
             sim(self.upnp),
             self.chave.split_whitespace().collect::<String>(),
+            self.grupo.split_whitespace().collect::<String>(),
             self.apelido.trim(),
             self.membro,
             sim(self.atualizar_sozinho),
@@ -257,6 +262,7 @@ impl Configuracoes {
                 "sempre_no_topo" => c.sempre_no_topo = sim(v).unwrap_or(c.sempre_no_topo),
                 "upnp" => c.upnp = sim(v).unwrap_or(c.upnp),
                 "chave" => c.chave = v.to_string(),
+                "grupo" => c.grupo = v.to_string(),
                 "apelido" => c.apelido = v.to_string(),
                 "membro" => c.membro = u64::from_str_radix(v, 16).unwrap_or(c.membro),
                 "atualizacoes" => c.atualizar_sozinho = sim(v).unwrap_or(c.atualizar_sozinho),
@@ -291,6 +297,7 @@ mod tests {
             sempre_no_topo: true,
             upnp: true,
             chave: "FSS1-ABCDE-FGHJK".into(),
+            grupo: "FSSG-ABCDE-FGHJK".into(),
             apelido: "Ana Lúcia".into(),
             membro: 0x0123_4567_89ab_cdef,
             atualizar_sozinho: false,

@@ -361,12 +361,15 @@ impl Janela {
     /// Mantém o grupo igual à chave das configurações e conta a ele o apelido
     /// e a sala que este FSS está compartilhando.
     fn atualizar_grupo(&mut self, ctx: &egui::Context) {
-        let chave = grupo::normalizar(&self.cfg.chave);
-        if self.grupo.as_ref().map(Grupo::chave) != Some(chave.as_str()) {
+        let tem_grupo = !self.cfg.chave.trim().is_empty() && !self.cfg.grupo.trim().is_empty();
+        let chave = grupo::identidade(&self.cfg.chave, &self.cfg.grupo);
+        if self.grupo.as_ref().map(Grupo::chave) != Some(chave.as_str())
+            && (tem_grupo || self.grupo.is_some() || self.erro_grupo.is_some())
+        {
             self.grupo = None;
             self.erro_grupo = None;
-            if !chave.is_empty() {
-                match Grupo::iniciar(&chave, self.cfg.membro, ctx.clone()) {
+            if tem_grupo {
+                match Grupo::iniciar(&self.cfg.chave, &self.cfg.grupo, self.cfg.membro, ctx.clone()) {
                     Ok(g) => self.grupo = Some(g),
                     Err(e) => self.erro_grupo = Some(e),
                 }
@@ -1654,10 +1657,9 @@ impl Janela {
         titulo_campo(
             ui,
             p,
-            "Chave do grupo",
-            "A chave é o convite do grupo: quem cola a mesma chave aparece na lista do grupo, e as salas \
-             passam pelo servidor dela (o vídeo não passa por ele). Quem roda o servidor gera a chave e manda \
-             junto com o programa; cole aqui.",
+            "Chave do servidor",
+            "As salas precisam de um servidor onde os dois PCs se encontram (o vídeo não passa por ele). \
+             Quem roda o servidor gera uma chave e manda junto com o programa; cole aqui.",
         );
         ui.add(
             egui::TextEdit::multiline(&mut self.cfg.chave)
@@ -1689,6 +1691,31 @@ impl Janela {
                 .size(13.0)
                 .color(p.texto_fraco),
         );
+        ui.add_space(16.0);
+        titulo_campo(
+            ui,
+            p,
+            "Convite do grupo",
+            "Com o convite, você vê quem do grupo está online e quem está ao vivo, e entra nas salas do \
+             grupo com um clique. Só quem é do grupo acha essas salas. Quem roda o servidor gera o convite.",
+        );
+        ui.add(
+            egui::TextEdit::multiline(&mut self.cfg.grupo)
+                .hint_text("FSSG-…")
+                .font(egui::FontId::monospace(14.0))
+                .desired_rows(1)
+                .desired_width(f32::INFINITY),
+        );
+        if !self.cfg.grupo.trim().is_empty() {
+            match crate::comandos::ler_grupo(&self.cfg.grupo) {
+                Ok(_) => {
+                    ui.colored_label(p.sucesso, "Convite válido");
+                }
+                Err(e) => {
+                    ui.colored_label(p.perigo, e);
+                }
+            }
+        }
         ui.add_space(16.0);
         titulo_campo(
             ui,

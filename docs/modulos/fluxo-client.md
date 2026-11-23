@@ -203,6 +203,11 @@ tela e gera nova captura: o host passa a codificar na frequência do monitor
 (até ~165 fps), não nos 60 do `--fps`. Ver a pendência de limite de fps no
 roadmap.
 
+## Grupo (`--grupo FSSG-…`)
+
+Com o convite do grupo, `--sala` procura a sala do grupo (a mesma que o host do
+grupo abre). A janela passa o convite pela entrada, com os outros segredos.
+
 ## Apelido (`--apelido NOME`, `--membro HEX`)
 
 Manda o número do membro no grupo e o apelido a quem compartilha, cifrados,

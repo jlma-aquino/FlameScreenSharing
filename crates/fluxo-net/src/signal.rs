@@ -22,10 +22,11 @@
 //! uma delas ([`ServerKey`]); o resto é ignorado em silêncio, sem resposta
 //! (quem não tem a chave não usa o servidor nem o faz responder a terceiros).
 //!
-//! **Grupos** (ADR-022): cada chave é um grupo, com um nome
-//! ([`SignalServer::with_groups`]). Quem manda `Presence` assinado com a chave
-//! entra na lista do grupo, e recebe de volta a lista (`Members`), com a nota
-//! cifrada de cada um. A lista fica só na memória: some ao reiniciar e volta
+//! **Grupos** (ADR-022): separados das chaves. Cada grupo tem um número, um
+//! nome e a chave de conferência do convite ([`SignalServer::with_groups`]).
+//! Quem manda `Presence` (assinado com uma chave do servidor) com a prova do
+//! convite entra na lista do grupo e recebe de volta a lista (`Members`), com
+//! a nota cifrada de cada um. O servidor não tem o convite: não lê as notas. A lista fica só na memória: some ao reiniciar e volta
 //! conforme cada um manda o próximo `Presence`.
 //!
 //! [`PairingCode::room`]: fluxo_crypto::PairingCode::room
@@ -35,7 +36,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use fluxo_crypto::ServerKey;
+use fluxo_crypto::{GroupKey, ServerKey};
 use fluxo_proto::{MemberEntry, PacketHeader, PacketKind, SignalMessage, MEMBERS_PER_PAGE};
 
 use crate::{clock_us, is_transient};
@@ -133,10 +134,10 @@ pub struct SignalServer {
     salas: HashMap<(Option<usize>, u32), Vec<Cliente>>,
     /// Vazia: servidor aberto (atende qualquer um).
     chaves: Vec<ServerKey>,
-    /// O nome do grupo de cada chave (mesma ordem).
-    nomes: Vec<String>,
-    /// Membros de cada grupo, pelo número da chave.
-    grupos: HashMap<usize, Vec<Membro>>,
+    /// Grupos: número → (chave de conferência do convite, nome).
+    nomes: HashMap<u32, ([u8; 32], String)>,
+    /// Membros de cada grupo, pelo número do grupo.
+    grupos: HashMap<u32, Vec<Membro>>,
     /// Pacotes ignorados por não virem assinados com uma das chaves.
     ignorados: u64,
     /// Pares repassados, pelos dois endereços.
@@ -148,33 +149,31 @@ pub struct SignalServer {
 impl SignalServer {
     /// Servidor que só atende pedidos assinados com uma destas chaves.
     pub fn with_keys(chaves: Vec<ServerKey>) -> Self {
-        let grupos = chaves
-            .into_iter()
-            .map(|k| {
-                let nome = format!("Grupo {}", k.id());
-                (k, nome)
-            })
-            .collect();
-        Self::with_groups(grupos)
-    }
-
-    /// Servidor com grupos: cada chave e o nome do grupo dela.
-    pub fn with_groups(grupos: Vec<(ServerKey, String)>) -> Self {
-        let (chaves, nomes) = grupos.into_iter().unzip();
         Self {
             chaves,
-            nomes,
             ..Self::default()
         }
     }
 
+    /// Mais os grupos: número, chave de conferência do convite
+    /// ([`GroupKey::auth_key`]) e nome.
+    pub fn with_groups(mut self, grupos: Vec<(u32, [u8; 32], String)>) -> Self {
+        self.nomes = grupos
+            .into_iter()
+            .map(|(id, auth, nome)| (id, (auth, nome)))
+            .collect();
+        self
+    }
+
     /// Membros na lista de cada grupo (online ou não), pelo nome.
     pub fn members(&self) -> Vec<(String, usize)> {
-        self.nomes
+        let mut l: Vec<(String, usize)> = self
+            .nomes
             .iter()
-            .enumerate()
-            .map(|(i, n)| (n.clone(), self.grupos.get(&i).map_or(0, Vec::len)))
-            .collect()
+            .map(|(id, (_, n))| (n.clone(), self.grupos.get(id).map_or(0, Vec::len)))
+            .collect();
+        l.sort();
+        l
     }
 
     /// Pacotes ignorados até agora por falta de chave válida.
@@ -351,11 +350,24 @@ impl SignalServer {
                     }),
                 )
             }
-            SignalMessage::Presence { member, page, note } => {
-                // Servidor aberto não tem grupos (nem segredo para as notas).
-                let Some(g) = grupo else {
+            SignalMessage::Presence {
+                member,
+                page,
+                group: g,
+                tag,
+                note,
+            } => {
+                // Só com a prova do convite atual do grupo (convite trocado: o
+                // antigo para de valer). Servidor aberto também precisa dela.
+                let _ = grupo;
+                let prova = [member.to_be_bytes().as_slice(), &note].concat();
+                let valido = self
+                    .nomes
+                    .get(&g)
+                    .is_some_and(|(auth, _)| GroupKey::verify_with(auth, &prova, &tag));
+                if !valido {
                     return (Vec::new(), None);
-                };
+                }
                 let membros = self.grupos.entry(g).or_default();
                 membros.retain(|m| agora.duration_since(m.visto) < MEMBER_FORGET);
                 let mut evento = None;
@@ -397,7 +409,7 @@ impl SignalServer {
                     .iter()
                     .filter(|m| agora.duration_since(m.visto) < MEMBER_ONLINE)
                     .count();
-                let nome = self.nomes.get(g).cloned().unwrap_or_default();
+                let nome = self.nomes.get(&g).map(|(_, n)| n.clone()).unwrap_or_default();
                 let r = resposta(
                     h.frame_id,
                     &SignalMessage::Members {
@@ -480,27 +492,40 @@ mod tests {
         (h.frame_id, SignalMessage::from_bytes(payload).unwrap())
     }
 
-    fn presenca(membro: u64) -> Vec<u8> {
+    fn presenca(grupo: &GroupKey, membro: u64) -> Vec<u8> {
+        let nota = vec![1, 2, 3];
+        let prova = [membro.to_be_bytes().as_slice(), &nota].concat();
         pedido(
             0,
             SignalMessage::Presence {
                 member: membro,
                 page: 0,
-                note: vec![1, 2, 3],
+                group: grupo.id(),
+                tag: grupo.tag(&prova),
+                note: nota,
             },
         )
+    }
+
+    fn servidor_com(chave: &ServerKey, grupo: &GroupKey, nome: &str) -> SignalServer {
+        SignalServer::with_keys(vec![chave.clone()]).with_groups(vec![(
+            grupo.id(),
+            grupo.auth_key(),
+            nome.into(),
+        )])
     }
 
     #[test]
     fn grupo_cheio_responde_mas_nao_aceita_mais_ninguem() {
         let chave = ServerKey::generate("203.0.113.10:3478").unwrap();
-        let mut s = SignalServer::with_groups(vec![(chave.clone(), "Amigos".into())]);
+        let g = GroupKey::generate().unwrap();
+        let mut s = servidor_com(&chave, &g, "Amigos");
         let t = Instant::now();
         for i in 0..MAX_MEMBERS as u64 + 5 {
-            let (r, _) = s.handle(&chave.signed(&presenca(i)), a("200.0.0.1:1000"), t);
+            let (r, _) = s.handle(&chave.signed(&presenca(&g, i)), a("200.0.0.1:1000"), t);
             assert_eq!(r.len(), 1, "todo membro recebe a lista");
             assert!(
-                r[0].1.len() <= chave.signed(&presenca(i)).len(),
+                r[0].1.len() <= chave.signed(&presenca(&g, i)).len(),
                 "resposta não maior que o pedido"
             );
             match ler(&r[0].1).1 {
@@ -514,30 +539,50 @@ mod tests {
         assert_eq!(s.members(), vec![("Amigos".to_string(), MAX_MEMBERS)]);
         // Quem some por 12 h sai da lista e abre lugar.
         let depois = t + MEMBER_FORGET + Duration::from_secs(1);
-        s.handle(&chave.signed(&presenca(999)), a("200.0.0.1:1000"), depois);
+        s.handle(&chave.signed(&presenca(&g, 999)), a("200.0.0.1:1000"), depois);
         assert_eq!(s.members(), vec![("Amigos".to_string(), 1)]);
     }
 
     #[test]
-    fn presenca_sem_chave_ou_em_servidor_aberto_e_ignorada() {
+    fn presenca_sem_chave_ou_com_convite_antigo_e_ignorada() {
         let chave = ServerKey::generate("203.0.113.10:3478").unwrap();
-        let mut s = SignalServer::with_groups(vec![(chave, "Amigos".into())]);
-        let (r, ev) = s.handle(&presenca(1), a("200.0.0.1:1000"), Instant::now());
+        let g = GroupKey::generate().unwrap();
+        let mut s = servidor_com(&chave, &g, "Amigos");
+        // Sem a chave do servidor.
+        let (r, ev) = s.handle(&presenca(&g, 1), a("200.0.0.1:1000"), Instant::now());
         assert!(r.is_empty());
         assert!(matches!(ev, Some(SignalEvent::Ignored { .. })));
-        let mut aberto = SignalServer::default();
-        let (r, ev) = aberto.handle(&presenca(1), a("200.0.0.1:1000"), Instant::now());
-        assert!(r.is_empty() && ev.is_none());
+        // Com a chave, mas o convite foi trocado: o antigo não entra.
+        let antigo = g.clone();
+        let novo = GroupKey::with_id(g.id()).unwrap();
+        let mut s = servidor_com(&chave, &novo, "Amigos");
+        let (r, _) = s.handle(
+            &chave.signed(&presenca(&antigo, 1)),
+            a("200.0.0.1:1000"),
+            Instant::now(),
+        );
+        assert!(r.is_empty());
+        let (r, _) = s.handle(
+            &chave.signed(&presenca(&novo, 1)),
+            a("200.0.0.1:1000"),
+            Instant::now(),
+        );
+        assert_eq!(r.len(), 1);
+        // Grupo que o servidor não conhece.
+        let outro = GroupKey::generate().unwrap();
+        let (r, _) = s.handle(
+            &chave.signed(&presenca(&outro, 1)),
+            a("200.0.0.1:1000"),
+            Instant::now(),
+        );
+        assert!(r.is_empty());
     }
 
     #[test]
     fn sala_so_para_quem_e_do_mesmo_grupo() {
         let amigos = ServerKey::generate("203.0.113.10:3478").unwrap();
         let outros = ServerKey::generate("203.0.113.10:3478").unwrap();
-        let mut s = SignalServer::with_groups(vec![
-            (amigos.clone(), "Amigos".into()),
-            (outros.clone(), "Outros".into()),
-        ]);
+        let mut s = SignalServer::with_keys(vec![amigos.clone(), outros.clone()]);
         let t = Instant::now();
         let registro = pedido(
             1,

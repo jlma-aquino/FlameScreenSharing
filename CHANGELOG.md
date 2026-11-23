@@ -6,16 +6,15 @@ Versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
-- **Grupos**, no jeito dos servidores do Discord (ADR-022): a chave `FSS1-…`
-  passa a ser o convite de um grupo. Com o FSS aberto, uma lista à direita
-  mostra quem do grupo está online e quem está ao vivo, com um botão
-  **Assistir** que entra na sala sem colar código. O apelido e o código da
-  sala vão cifrados: o servidor não lê. Nome no grupo em Configurações >
-  Conexão. No servidor, o nome do grupo vem depois da chave no arquivo
-  (`fluxo-sinal --nova-chave … --nome …`).
+- **Grupos**, no jeito dos servidores do Discord (ADR-022): com o **convite do
+  grupo** (`FSSG-…`, em Configurações > Conexão, separado da chave do servidor),
+  uma lista à direita mostra quem do grupo está online e quem está ao vivo, com
+  um botão **Assistir** que entra na sala sem colar código. O apelido e as
+  salas vão cifrados: o servidor não lê. Quem roda o servidor cria grupos
+  (`fluxo-sinal --novo-grupo NOME`) e troca o convite para tirar alguém
+  (`--novo-convite`), sem mexer na chave do servidor.
 - **Sala do grupo**: quem compartilha num grupo pode ser assistido por
-  qualquer um do grupo, e só por quem é do grupo (o servidor separa as salas
-  por chave).
+  qualquer um do grupo, e só por quem é do grupo (a sala sai do convite).
 - **Quem está assistindo**: quem compartilha vê o nome de cada espectador, com
   o botão Expulsar, e todos do grupo veem quem assiste quem na lista.
 - **Expulsar** agora fecha o vídeo de quem sai, com um aviso (antes ficava

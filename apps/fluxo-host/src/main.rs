@@ -41,6 +41,8 @@ Opções:
   --sala                abre uma sala: mostra um código, e quem assiste entra com ele
                         (fluxo-client --sala CÓDIGO), sem responder nada. Precisa
                         do servidor: --chave; --codigo fixa o código
+  --grupo FSSG-…        convite do grupo: a sala passa a ser a do grupo, e só quem
+                        tem o convite a acha (a mesma no cliente)
   --chave FSS1-…        chave de acesso ao servidor de sinalização (quem roda o
                         fluxo-sinal gera com --nova-chave): o endereço dele e o
                         segredo que assina os pedidos
@@ -126,6 +128,8 @@ struct Opts {
     sinal: Option<String>,
     /// Chave de acesso ao servidor (endereço + segredo que assina os pedidos).
     chave: Option<fluxo_net::ServerKey>,
+    /// Convite do grupo: a sala é a do grupo (só quem é do grupo acha).
+    grupo: Option<fluxo_net::GroupKey>,
     /// Sala: quem assiste entra com o código, pelo servidor.
     sala: bool,
     /// Código de conexão do cliente (sem servidor): pareamento + endereço dele.
@@ -193,6 +197,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         destino: String::new(),
         sinal: None,
         chave: None,
+        grupo: None,
         sala: false,
         conexao: None,
         ttl_furo: fluxo_net::PUNCH_TTL,
@@ -231,6 +236,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--destino" => o.destino = valor()?.clone(),
             "--sinal" => o.sinal = Some(valor()?.clone()),
             "--chave" => o.chave = Some(fluxo_net::ServerKey::parse(valor()?).map_err(|e| e.to_string())?),
+            "--grupo" => o.grupo = Some(fluxo_net::GroupKey::parse(valor()?).map_err(|e| e.to_string())?),
             "--sala" => o.sala = true,
             "--ttl-furo" => o.ttl_furo = valor()?.parse().map_err(|_| "ttl-furo inválido")?,
             "--sem-audio" => o.sem_audio = true,
@@ -745,6 +751,7 @@ fn run(o: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         // pelo chat.
         pairing_timeout: Duration::from_secs(if o.conexao.is_some() { 300 } else { 30 }),
         signal_key: o.chave.clone(),
+        group: o.grupo.clone(),
         ..SenderConfig::for_bitrate(bitrate_bps)
     };
     let servidor = o

@@ -662,7 +662,7 @@ registros, os amigos de hoje chegavam por portas sempre diferentes.
 
 ---
 
-## ADR-022 — Grupos: cada chave é um grupo
+## ADR-022 — Grupos, com convite separado da chave do servidor
 
 **Status:** Aceito (2026-11-23)
 
@@ -670,51 +670,54 @@ registros, os amigos de hoje chegavam por portas sempre diferentes.
 pelo Discord ou pelo WhatsApp. A ideia é algo no jeito dos servidores do
 Discord: abrir o FSS e ver quem do grupo está ali e quem está ao vivo, e
 entrar com um clique. O servidor é uma VM grátis e pequena, e o número de
-grupos deve ser limitado por quem roda o servidor.
+grupos deve ser limitado por quem roda o servidor. A primeira versão usava a
+própria chave do servidor como grupo; trocar a chave para tirar alguém do grupo
+mexia no acesso de todos ao servidor, então o convite virou outra coisa.
 
 **Decisão.**
-- **Grupo = chave de acesso** (`FSS1-…`, ADR-019). Quem tem a chave é membro; o
-  convite é a própria chave. O nome do grupo fica no arquivo de chaves do
-  servidor, depois da chave. Só o dono do servidor cria grupos
-  (`fluxo-sinal --nova-chave … --nome …`): o número de grupos é o de chaves.
+- **Chave do servidor** (`FSS1-…`, ADR-019): continua a mesma para todos; dá
+  acesso ao servidor (salas por código, repasse).
+- **Convite do grupo** (`FSSG-…`, `fluxo_crypto::GroupKey`): número do grupo e
+  segredo. Só quem roda o servidor cria (`fluxo-sinal --novo-grupo NOME`), o
+  que limita o número de grupos. O servidor guarda, no arquivo de grupos, o
+  número, o nome e só a **chave de conferência** derivada do segredo: confere
+  quem é do grupo, mas não abre as notas nem calcula as salas.
+- **Tirar alguém do grupo**: `fluxo-sinal --novo-convite GRUPO` troca o
+  segredo e mantém o número e o nome; quem ficou com o convite antigo some do
+  grupo e não acha mais as salas dele. A chave do servidor não muda.
 - Com o FSS aberto, cada membro manda `Presence` a cada 4 s (assinado com a
-  chave), e o servidor responde `Members`, a lista do grupo daquela chave, em
-  páginas de até 8 que nunca passam do tamanho do pedido (1200 bytes). Online
-  é quem mandou há menos de 15 s.
+  chave do servidor, com a prova do convite sobre membro ‖ nota), e o servidor
+  responde `Members`, a lista do grupo, em páginas de até 8 que nunca passam do
+  tamanho do pedido (1200 bytes). Online é quem mandou há menos de 15 s.
 - Cada membro é um número de 64 bits sorteado por FSS instalado, e manda uma
-  **nota** cifrada com o segredo da chave (ChaCha20-Poly1305, com o número
-  como dado autenticado): o apelido e, compartilhando, o código da sala. O
-  servidor guarda e repassa, mas não lê o apelido nem o código; não consegue
-  entrar na sala de ninguém nem trocar a nota de um membro pela de outro.
+  **nota** cifrada com o segredo do convite (ChaCha20-Poly1305, com o número
+  como dado autenticado): o apelido, a sala que compartilha e a que assiste. O
+  servidor guarda e repassa, mas não lê.
+- **A sala é do grupo**: com o convite, o número da sala no servidor sai de
+  HMAC(segredo, código) em vez de SHA-256(código). Quem não é do grupo, mesmo
+  com o código, procura outra sala; qualquer um do grupo entra pelo Assistir.
 - No app, uma lista à direita, no jeito do Discord: online (●, vermelho para
-  ao vivo, com **Assistir**) e offline. Assistir entra na sala do código da
-  nota, pelo caminho de sempre.
-- **A sala é do grupo**: o servidor guarda cada sala pelo grupo da chave que
-  assinou o pedido. Quem é de outro grupo do mesmo servidor não acha a sala,
-  mesmo sabendo o código; qualquer um do grupo entra pelo Assistir.
-- **Quem compartilha sabe quem assiste**: o cliente manda o apelido ao host
-  num pacote `Name` (tipo 15, cifrado, junto com os Caps); o host imprime
-  `Espectador N: nome`, e a janela mostra a lista com o nome e Expulsar. A
-  nota de cada membro também diz a sala que ele assiste, então todos do grupo
-  veem embaixo de quem está ao vivo quem está assistindo.
+  ao vivo, com **Assistir** e quem está assistindo) e offline.
+- **Quem compartilha sabe quem assiste**: o cliente manda o número do membro e
+  o apelido ao host num pacote `Name` (tipo 15, cifrado); a janela mostra a
+  lista com o nome e o menu Expulsar.
 - **Expulsar de verdade**: o host manda `Kick` (tipo 16, cifrado) e o vídeo de
-  quem sai fecha com o aviso. Bloquear por um tempo é pelo número do membro no
-  grupo (vai no `Name`), não pelo IP: pessoas na mesma casa ou no repassador
-  não são bloqueadas juntas. Quem altera o próprio FSS consegue mudar o número
-  e voltar; para tirar de vez, troca-se a chave do grupo.
+  quem sai fecha com o aviso. Bloquear por um tempo é pelo número do membro,
+  não pelo IP: pessoas na mesma casa ou no repassador não são bloqueadas
+  juntas. Quem altera o próprio FSS consegue mudar o número e voltar; para
+  tirar de vez, troca-se o convite.
 - Limites: 50 membros por grupo; quem some por 12 h sai da lista. A lista fica
-  só na memória do servidor (volta sozinha depois de reiniciar, conforme cada
-  um manda o próximo `Presence`).
+  só na memória do servidor (volta sozinha depois de reiniciar).
 
 **Consequências.**
 - ➕ Sem colar código: abre o FSS, vê quem está ao vivo e clica.
-- ➕ Quase nada de servidor: ~1,2 KB a cada 4 s por FSS aberto; a VM grátis
-  aguenta milhares. O que pesa continua sendo o repasse de vídeo.
-- ➕ Sem conta nem senha: a chave que todos já usam vira o convite.
-- ➖ Tirar alguém do grupo é trocar a chave do grupo (todos colam a nova).
+- ➕ Quase nada de servidor: ~1,2 KB a cada 4 s por FSS aberto.
+- ➕ Tirar alguém do grupo não mexe na chave do servidor de ninguém.
+- ➕ O servidor não lê apelidos nem salas: guarda só a conferência do convite.
+- ➖ Trocar o convite pede que os que ficam colem o novo.
 - ➖ O servidor sabe quem está online (número e IP), mas não o nome.
-- 🔁 Vários grupos no mesmo FSS, tirar membro sem trocar a chave, ver quem
-  assiste quem, lista gravada em disco no servidor.
+- 🔁 Vários grupos no mesmo FSS (o convite já é separado da chave), lista
+  gravada em disco no servidor.
 
 ---
 

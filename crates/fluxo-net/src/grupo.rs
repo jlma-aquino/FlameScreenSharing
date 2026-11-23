@@ -1,6 +1,7 @@
 //! Presença no grupo: [`GroupClient`].
 //!
-//! Com o FSS aberto, o cliente manda `Presence` ao servidor da chave a cada
+//! Com o FSS aberto, o cliente manda `Presence` ao servidor da chave (com a
+//! prova do convite do grupo, [`GroupKey`]) a cada
 //! [`PRESENCE_EVERY`] (ou logo que o apelido ou a sala mudam) e monta a lista
 //! do grupo com as páginas de `Members` que voltam. A nota de cada membro
 //! (apelido e, compartilhando, o código da sala) vai cifrada com o segredo
@@ -15,7 +16,7 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
-use fluxo_crypto::ServerKey;
+use fluxo_crypto::{GroupKey, ServerKey};
 use fluxo_proto::{PacketHeader, PacketKind, SignalMessage, MAX_NOTE};
 
 use crate::clock_us;
@@ -94,6 +95,7 @@ pub struct GroupClient {
     socket: UdpSocket,
     servidor: SocketAddr,
     chave: ServerKey,
+    grupo: GroupKey,
     membro: u64,
     apelido: String,
     sala: Option<String>,
@@ -113,7 +115,7 @@ pub struct GroupClient {
 impl GroupClient {
     /// Liga ao servidor da chave (resolve o endereço; pode demorar se for
     /// um nome). `membro` é o número deste FSS (guardado nas configurações).
-    pub fn connect(chave: ServerKey, membro: u64) -> io::Result<Self> {
+    pub fn connect(chave: ServerKey, grupo: GroupKey, membro: u64) -> io::Result<Self> {
         let servidor = chave
             .server()
             .to_socket_addrs()?
@@ -129,6 +131,7 @@ impl GroupClient {
             socket,
             servidor,
             chave,
+            grupo,
             membro,
             apelido: String::new(),
             sala: None,
@@ -183,7 +186,7 @@ impl GroupClient {
             .is_none_or(|t| agora.duration_since(t) >= PRESENCE_EVERY);
         if self.sujo || hora {
             if self.sujo {
-                match self.chave.seal_note(
+                match self.grupo.seal_note(
                     self.membro,
                     &nota(&self.apelido, self.sala.as_deref(), self.assistindo.as_deref()),
                 ) {
@@ -209,9 +212,12 @@ impl GroupClient {
     }
 
     fn pedir(&self, pagina: u8) {
+        let prova = [self.membro.to_be_bytes().as_slice(), &self.nota].concat();
         let msg = SignalMessage::Presence {
             member: self.membro,
             page: pagina,
+            group: self.grupo.id(),
+            tag: self.grupo.tag(&prova),
             note: self.nota.clone(),
         };
         let Ok(pacote) = PacketKind::Signal
@@ -254,7 +260,7 @@ impl GroupClient {
         }
         for m in members {
             let Some((nick, room, watching)) =
-                self.chave.open_note(m.member, &m.note).and_then(|n| ler_nota(&n))
+                self.grupo.open_note(m.member, &m.note).and_then(|n| ler_nota(&n))
             else {
                 continue;
             };
@@ -335,23 +341,30 @@ mod tests {
     fn membros_do_grupo_se_veem_e_outro_grupo_nao() {
         let servidor = UdpSocket::bind("127.0.0.1:0").unwrap();
         let endereco = servidor.local_addr().unwrap().to_string();
-        let amigos = ServerKey::generate(&endereco).unwrap();
-        let outros = ServerKey::generate(&endereco).unwrap();
+        // Uma chave de servidor para todos; dois grupos com convites próprios.
+        let chave = ServerKey::generate(&endereco).unwrap();
+        let amigos = GroupKey::generate().unwrap();
+        let outros = GroupKey::generate().unwrap();
         let parar = Arc::new(AtomicBool::new(false));
         let t = {
-            let (parar, grupos) = (
+            let (parar, chaves, grupos) = (
                 parar.clone(),
+                vec![chave.clone()],
                 vec![
-                    (amigos.clone(), "Amigos".to_string()),
-                    (outros.clone(), "Outros".to_string()),
+                    (amigos.id(), amigos.auth_key(), "Amigos".to_string()),
+                    (outros.id(), outros.auth_key(), "Outros".to_string()),
                 ],
             );
-            std::thread::spawn(move || SignalServer::with_groups(grupos).run(&servidor, &parar, |_| {}))
+            std::thread::spawn(move || {
+                SignalServer::with_keys(chaves)
+                    .with_groups(grupos)
+                    .run(&servidor, &parar, |_| {})
+            })
         };
 
-        let mut ana = GroupClient::connect(amigos.clone(), 1).unwrap();
-        let mut bia = GroupClient::connect(amigos.clone(), 2).unwrap();
-        let mut caio = GroupClient::connect(outros, 3).unwrap();
+        let mut ana = GroupClient::connect(chave.clone(), amigos.clone(), 1).unwrap();
+        let mut bia = GroupClient::connect(chave.clone(), amigos.clone(), 2).unwrap();
+        let mut caio = GroupClient::connect(chave, outros, 3).unwrap();
         ana.set_status("Ana", Some("K7M4-QX9P"), None);
         bia.set_status("Bia", None, Some("K7M4-QX9P"));
         caio.set_status("Caio", None, None);
@@ -386,14 +399,23 @@ mod tests {
         let servidor = UdpSocket::bind("127.0.0.1:0").unwrap();
         let endereco = servidor.local_addr().unwrap().to_string();
         let chave = ServerKey::generate(&endereco).unwrap();
+        let grupo = GroupKey::generate().unwrap();
         let parar = Arc::new(AtomicBool::new(false));
         let t = {
-            let (parar, grupos) = (parar.clone(), vec![(chave.clone(), "Grande".to_string())]);
-            std::thread::spawn(move || SignalServer::with_groups(grupos).run(&servidor, &parar, |_| {}))
+            let (parar, chaves, grupos) = (
+                parar.clone(),
+                vec![chave.clone()],
+                vec![(grupo.id(), grupo.auth_key(), "Grande".to_string())],
+            );
+            std::thread::spawn(move || {
+                SignalServer::with_keys(chaves)
+                    .with_groups(grupos)
+                    .run(&servidor, &parar, |_| {})
+            })
         };
         let mut todos: Vec<GroupClient> = (0..20u64)
             .map(|i| {
-                let mut c = GroupClient::connect(chave.clone(), 100 + i).unwrap();
+                let mut c = GroupClient::connect(chave.clone(), grupo.clone(), 100 + i).unwrap();
                 c.set_status(&format!("Membro {i}"), None, None);
                 c
             })

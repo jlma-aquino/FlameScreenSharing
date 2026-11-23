@@ -129,9 +129,13 @@ impl Compartilhar {
 }
 
 /// `--chave`: a sala precisa da chave do servidor (Configurações > Conexão).
+/// Com o convite do grupo, `--grupo` também: a sala passa a ser a do grupo.
 fn chave_do_servidor(a: &mut Vec<String>, c: &Configuracoes) -> Result<(), String> {
     let k = ler_chave(&c.chave)?;
     a.extend(["--chave".to_string(), k.to_string()]);
+    if let Some(g) = ler_grupo(&c.grupo)? {
+        a.extend(["--grupo".to_string(), g.to_string()]);
+    }
     Ok(())
 }
 
@@ -141,6 +145,16 @@ pub fn ler_chave(texto: &str) -> Result<ServerKey, String> {
         return Err("Falta a chave do servidor: cole em Configurações > Conexão a chave que quem roda o servidor mandou.".into());
     }
     ServerKey::parse(texto).map_err(|e| format!("Chave do servidor: {e}"))
+}
+
+/// O convite do grupo colado (vazio: sem grupo).
+pub fn ler_grupo(texto: &str) -> Result<Option<fluxo_net::GroupKey>, String> {
+    if texto.trim().is_empty() {
+        return Ok(None);
+    }
+    fluxo_net::GroupKey::parse(texto)
+        .map(Some)
+        .map_err(|e| format!("Convite do grupo: {e}"))
 }
 
 /// `192.168.0.5` vira `192.168.0.5:9000`; quem já tem porta (ou é IPv6 entre
@@ -201,7 +215,7 @@ impl Assistir {
             a.extend(["--gpu".to_string(), n.to_string()]);
         }
         // Com grupo, quem compartilha vê o seu nome na lista de quem assiste.
-        if !c.chave.trim().is_empty() {
+        if self.modo == Modo::Sala && !c.grupo.trim().is_empty() {
             a.extend(["--apelido".to_string(), c.apelido_efetivo()]);
             a.extend(["--membro".to_string(), format!("{:x}", c.membro)]);
         }
@@ -244,8 +258,8 @@ pub fn linha_espectador_rede(destino: &str, codigo: &str) -> Result<String, Stri
 /// host, `--sala` não tem valor (o código é ele quem sorteia).
 fn secreta(programa: &str, opcao: &str) -> bool {
     match programa {
-        "client" => matches!(opcao, "--chave" | "--sala" | "--codigo"),
-        _ => matches!(opcao, "--chave" | "--codigo" | "--conexao"),
+        "client" => matches!(opcao, "--chave" | "--grupo" | "--sala" | "--codigo"),
+        _ => matches!(opcao, "--chave" | "--grupo" | "--codigo" | "--conexao"),
     }
 }
 
@@ -428,10 +442,6 @@ mod tests {
                 k.as_str(),
                 "--volume",
                 "100",
-                "--apelido",
-                "Ana",
-                "--membro",
-                "0"
             ]
         );
         // Sala sem chave, ou com a chave errada: explica.
@@ -470,10 +480,6 @@ mod tests {
                 k.as_str(),
                 "--volume",
                 "30",
-                "--apelido",
-                "Ana",
-                "--membro",
-                "0",
                 "--saida-som",
                 "1",
                 "--sem-painel",
@@ -486,6 +492,45 @@ mod tests {
             ..Default::default()
         };
         assert!(!r.args(&cfg).unwrap().iter().any(|x| x == "--chave"));
+    }
+
+    #[test]
+    fn com_convite_a_sala_e_do_grupo_e_vai_o_apelido() {
+        let k = chave();
+        let g = fluxo_net::GroupKey::generate().unwrap().to_string();
+        let cfg = Configuracoes {
+            chave: k.clone(),
+            grupo: g.clone(),
+            apelido: "Ana".into(),
+            membro: 0xab,
+            ..padrao()
+        };
+        let codigo = codigo_valido();
+        let a = Assistir {
+            sala: codigo.clone(),
+            ..Default::default()
+        };
+        let (comuns, linhas) = separar_segredos("client", a.args(&cfg).unwrap());
+        assert!(
+            !comuns.iter().any(|x| x.contains(&g)),
+            "o convite não vai na linha de comando"
+        );
+        assert!(comuns.windows(2).any(|w| w == ["--apelido", "Ana"]));
+        assert!(comuns.windows(2).any(|w| w == ["--membro", "ab"]));
+        assert!(linhas.contains(&format!("--grupo {g}")));
+        // Host também.
+        let h = Compartilhar {
+            modo: Modo::Sala,
+            ..Default::default()
+        };
+        let (_, linhas) = separar_segredos("host", h.args(&cfg).unwrap());
+        assert!(linhas.contains(&format!("--grupo {g}")));
+        // Convite errado: explica.
+        let errado = Configuracoes {
+            grupo: "FSSG-ERRADO".into(),
+            ..cfg
+        };
+        assert!(a.args(&errado).unwrap_err().contains("Convite do grupo"));
     }
 
     #[test]
@@ -503,18 +548,7 @@ mod tests {
         };
         let (comuns, linhas) = separar_segredos("client", a.args(&cfg).unwrap());
         assert!(!comuns.iter().any(|x| x.contains(&k) || x.contains(&codigo)));
-        assert_eq!(
-            comuns,
-            [
-                "--volume",
-                "100",
-                "--apelido",
-                "Ana",
-                "--membro",
-                "0",
-                "--segredos-pela-entrada"
-            ]
-        );
+        assert_eq!(comuns, ["--volume", "100", "--segredos-pela-entrada"]);
         assert_eq!(
             linhas,
             [format!("--sala {codigo}"), format!("--chave {k}"), "fim".into()]

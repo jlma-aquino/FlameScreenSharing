@@ -54,6 +54,9 @@ pub struct ReceiverConfig {
     pub signal_server: Option<SocketAddr>,
     /// Chave do servidor: o registro sai assinado com ela (`None`: servidor aberto).
     pub signal_key: Option<fluxo_crypto::ServerKey>,
+    /// Convite do grupo: registra na sala do grupo (a mesma que o host do
+    /// grupo procura).
+    pub group: Option<fluxo_crypto::GroupKey>,
     /// Servidor STUN que viu o nosso endereço público
     /// ([`PublicAddr::server`](crate::PublicAddr::server)). Enquanto nenhum
     /// host chegar, um pedido STUN a cada 15 s mantém vivo o mapeamento do
@@ -96,6 +99,7 @@ impl Default for ReceiverConfig {
             pairing_code: None,
             signal_server: None,
             signal_key: None,
+            group: None,
             keepalive_to: None,
             on_pairing: None,
             codecs: 1,
@@ -536,10 +540,11 @@ impl Sinalizacao {
         servidor: SocketAddr,
         codigo: &PairingCode,
         chave: Option<&fluxo_crypto::ServerKey>,
+        grupo: Option<&fluxo_crypto::GroupKey>,
         socket: &Portas,
     ) -> Self {
         let msg = SignalMessage::Register {
-            room: codigo.room(),
+            room: grupo.map_or_else(|| codigo.room(), |g| g.room(codigo)),
             locals: crate::local_candidates(socket.v4(), socket.v6()),
         };
         let registro = PacketKind::Signal
@@ -629,6 +634,7 @@ fn recv_loop(
             servidor,
             codigo,
             cfg.signal_key.as_ref(),
+            cfg.group.as_ref(),
             &socket,
         )),
         _ => None,

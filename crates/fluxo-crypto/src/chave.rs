@@ -9,11 +9,6 @@
 //!
 //! O endereço não é segredo (aparece na rede de quem usa); quem protege o
 //! servidor é a assinatura.
-//!
-//! Cada chave também é um **grupo** (ADR-022): quem tem a chave é membro. O
-//! apelido de cada um e o código da sala de quem está compartilhando vão numa
-//! **nota** cifrada com o segredo ([`ServerKey::seal_note`]): o servidor guarda
-//! e repassa a nota aos outros membros, mas não lê.
 
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -37,12 +32,6 @@ const ALFABETO: &[u8; 32] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 /// Separa a assinatura dos pedidos de qualquer outro uso do segredo.
 const CONTEXTO: &[u8] = b"fluxo sinal v1";
-
-/// Separa a cifra das notas do grupo da assinatura dos pedidos.
-const CONTEXTO_NOTA: &[u8] = b"fluxo grupo nota v1";
-
-/// Bytes que a cifra acrescenta a uma nota: nonce (12) e tag (16).
-pub const NOTE_OVERHEAD: usize = 12 + 16;
 
 /// Endereço do servidor dentro da chave: IP (compacto) ou nome.
 const IPV4: u8 = 4;
@@ -144,54 +133,6 @@ impl ServerKey {
         self.mac(pedido).verify_truncated_left(tag).ok().map(|_| pedido)
     }
 
-    /// Cifra uma nota do membro `membro` para os outros membros do grupo
-    /// (ChaCha20-Poly1305, nonce sorteado). O número do membro vai como dado
-    /// autenticado: o servidor não consegue pôr a nota de um em outro.
-    pub fn seal_note(&self, membro: u64, nota: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-        let mut nonce = [0u8; 12];
-        crate::random_bytes(&mut nonce)?;
-        let cifra = chacha20poly1305::ChaCha20Poly1305::new(&self.chave_da_nota().into());
-        let corpo = cifra
-            .encrypt(
-                &nonce.into(),
-                Payload {
-                    msg: nota,
-                    aad: &membro.to_be_bytes(),
-                },
-            )
-            .map_err(|_| CryptoError::Seal)?;
-        Ok([nonce.as_slice(), &corpo].concat())
-    }
-
-    /// Abre a nota do membro `membro`; `None` se ela não foi cifrada com
-    /// esta chave para ele (forjada, de outro grupo ou alterada).
-    pub fn open_note(&self, membro: u64, nota: &[u8]) -> Option<Vec<u8>> {
-        use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-        if nota.len() < NOTE_OVERHEAD {
-            return None;
-        }
-        let (nonce, corpo) = nota.split_at(12);
-        let nonce: [u8; 12] = nonce.try_into().ok()?;
-        let cifra = chacha20poly1305::ChaCha20Poly1305::new(&self.chave_da_nota().into());
-        cifra
-            .decrypt(
-                &nonce.into(),
-                Payload {
-                    msg: corpo,
-                    aad: &membro.to_be_bytes(),
-                },
-            )
-            .ok()
-    }
-
-    fn chave_da_nota(&self) -> [u8; 32] {
-        let mut m = <Hmac<Sha256> as Mac>::new_from_slice(&self.segredo)
-            .expect("HMAC aceita qualquer tamanho de chave");
-        m.update(CONTEXTO_NOTA);
-        m.finalize().into_bytes().into()
-    }
-
     /// Identificação curta para registros (não revela o segredo).
     pub fn id(&self) -> String {
         let h = Sha256::digest([CONTEXTO, b" id".as_slice(), &self.segredo].concat());
@@ -255,7 +196,7 @@ impl fmt::Debug for ServerKey {
     }
 }
 
-fn base32(bytes: &[u8]) -> String {
+pub(crate) fn base32(bytes: &[u8]) -> String {
     let mut s = String::new();
     let (mut acumulado, mut bits) = (0u32, 0u32);
     for &b in bytes {
@@ -272,7 +213,7 @@ fn base32(bytes: &[u8]) -> String {
     s
 }
 
-fn de_base32(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn de_base32(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let (mut acumulado, mut bits) = (0u32, 0u32);
     for c in s.bytes() {
@@ -347,26 +288,6 @@ mod tests {
         assert_eq!(a.verify(&alterado), None);
         assert_eq!(a.verify(&[0u8; 5]), None);
         assert_eq!(a.verify(pedido), None);
-    }
-
-    #[test]
-    fn nota_so_abre_com_a_chave_e_o_membro_certos() {
-        let a = ServerKey::generate("203.0.113.10:3478").unwrap();
-        let b = ServerKey::generate("203.0.113.10:3478").unwrap();
-        let nota = a.seal_note(7, b"Ana|K7M4-QX9P").unwrap();
-        assert_eq!(nota.len(), 13 + NOTE_OVERHEAD);
-        assert_eq!(
-            a.open_note(7, &nota).as_deref(),
-            Some(b"Ana|K7M4-QX9P".as_slice())
-        );
-        assert_eq!(a.open_note(8, &nota), None, "nota de outro membro");
-        assert_eq!(b.open_note(7, &nota), None, "outro grupo");
-        let mut alterada = nota.clone();
-        alterada[20] ^= 1;
-        assert_eq!(a.open_note(7, &alterada), None);
-        assert_eq!(a.open_note(7, &[0u8; 10]), None);
-        // Nonce novo a cada vez: a mesma nota não se repete.
-        assert_ne!(a.seal_note(7, b"x").unwrap(), a.seal_note(7, b"x").unwrap());
     }
 
     #[test]

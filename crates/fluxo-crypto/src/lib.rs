@@ -17,14 +17,16 @@
 mod chave;
 mod cifra;
 mod codigo;
+mod grupo;
 mod handshake;
 mod manifesto;
 
 use std::fmt;
 
-pub use chave::{ServerKey, KEY_TAG_LEN, NOTE_OVERHEAD};
+pub use chave::{ServerKey, KEY_TAG_LEN};
 pub use cifra::{Opener, Sealer, TAG_LEN};
 pub use codigo::{PairingCode, ALFABETO, BITS_DA_SALA};
+pub use grupo::{GroupKey, GROUP_TAG_LEN, NOTE_OVERHEAD};
 pub use handshake::{respond, HostHandshake, Session, INIT_LEN, REPLY_LEN};
 pub use manifesto::{de_hex, hex, update_public_key, UpdateManifest, UPDATE_PUBLIC_KEY_LEN};
 
@@ -35,6 +37,8 @@ pub enum CryptoError {
     InvalidCode,
     /// A chave do servidor não confere (copiada errada, ou não é uma chave).
     InvalidKey,
+    /// O convite do grupo não confere (copiado errado, ou não é um convite).
+    InvalidGroup,
     /// O gerador aleatório do sistema falhou.
     Random(String),
     /// Mensagem de pareamento malformada.
@@ -62,6 +66,7 @@ impl fmt::Display for CryptoError {
                 f,
                 "chave do servidor inválida (confira se copiou inteira: FSS1-…)"
             ),
+            Self::InvalidGroup => write!(f, "convite do grupo inválido (confira se copiou inteiro: FSSG-…)"),
             Self::Random(e) => write!(f, "gerador aleatório do sistema falhou: {e}"),
             Self::Handshake => write!(f, "mensagem de pareamento inválida"),
             Self::WrongCode => write!(f, "o código de pareamento não confere"),

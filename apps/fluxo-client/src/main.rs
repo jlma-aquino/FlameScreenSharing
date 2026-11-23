@@ -96,6 +96,8 @@ Uso:
 Opções:
   --sala CÓDIGO   entra na sala de quem compartilha (fluxo-host --sala mostra o
                   código), pelo servidor da --chave
+  --grupo FSSG-…  convite do grupo: entra na sala do grupo (o mesmo de quem
+                  compartilha)
   --chave FSS1-…  chave de acesso ao servidor de sinalização (a mesma de quem
                   compartilha): o endereço dele e o segredo que assina os pedidos
   --segredos-pela-entrada
@@ -157,6 +159,8 @@ struct Opts {
     sinal: Option<String>,
     /// Chave de acesso ao servidor (endereço + segredo que assina os pedidos).
     chave: Option<fluxo_net::ServerKey>,
+    /// Convite do grupo: a sala é a do grupo (só quem é do grupo acha).
+    grupo: Option<fluxo_net::GroupKey>,
     /// Código da sala de quem compartilha.
     sala: Option<String>,
     internet: bool,
@@ -190,6 +194,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         sem_cifra: false,
         sinal: None,
         chave: None,
+        grupo: None,
         sala: None,
         internet: false,
         usar_upnp: false,
@@ -218,6 +223,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--sem-cifra" if cfg!(debug_assertions) => o.sem_cifra = true,
             "--sinal" => o.sinal = Some(valor()?.clone()),
             "--chave" => o.chave = Some(fluxo_net::ServerKey::parse(valor()?).map_err(|e| e.to_string())?),
+            "--grupo" => o.grupo = Some(fluxo_net::GroupKey::parse(valor()?).map_err(|e| e.to_string())?),
             "--sala" => o.sala = Some(valor()?.clone()),
             "--internet" => o.internet = true,
             "--usar-upnp" => o.usar_upnp = true,
@@ -373,6 +379,7 @@ fn preparar(o: &Opts) -> Result<Preparado, Box<dyn std::error::Error>> {
             pairing_code: codigo.clone(),
             signal_server: servidor,
             signal_key: o.chave.clone(),
+            group: o.grupo.clone(),
             keepalive_to: keepalive,
             on_pairing: internet
                 .as_ref()

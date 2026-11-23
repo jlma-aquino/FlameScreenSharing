@@ -149,6 +149,11 @@ Testado com o Discord aberto: tela ("menos o Discord"), `--com-discord`
 ("menos o som do FSS"), troca para a janela do Bloco de Notas ("só o
 programa da janela") e de volta para a tela; a janela minimizada foi recusada.
 
+## Grupo (`--grupo FSSG-…`)
+
+Com o convite do grupo, a sala aberta com `--sala` é a do grupo: só quem tem
+o mesmo convite a acha, mesmo sabendo o código (ADR-022).
+
 ## Nome de quem assiste e expulsar
 
 Com grupo, o cliente manda o número do membro e o apelido (pacote `Name`). O

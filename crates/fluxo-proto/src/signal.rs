@@ -93,9 +93,16 @@ pub enum SignalMessage {
     RelayBind { room: u32 },
     /// Servidor → host: repasse ligado; mande ao servidor o que iria ao cliente.
     RelayReady,
-    /// Membro → servidor: "estou aqui", com a nota e a página da lista que
-    /// quer de volta.
-    Presence { member: u64, page: u8, note: Vec<u8> },
+    /// Membro → servidor: "estou aqui" no grupo `group`, com a prova de que
+    /// tem o convite (`tag`, sobre membro ‖ nota), a nota e a página da lista
+    /// que quer de volta.
+    Presence {
+        member: u64,
+        page: u8,
+        group: u32,
+        tag: [u8; 16],
+        note: Vec<u8>,
+    },
     /// Servidor → membro: uma página da lista do grupo.
     Members {
         name: String,
@@ -136,10 +143,18 @@ impl SignalMessage {
                 b.resize(REQUEST_LEN, 0);
             }
             Self::RelayReady => b.push(RELAY_READY),
-            Self::Presence { member, page, note } => {
+            Self::Presence {
+                member,
+                page,
+                group,
+                tag,
+                note,
+            } => {
                 b.push(PRESENCE);
                 b.extend_from_slice(&member.to_be_bytes());
                 b.push(*page);
+                b.extend_from_slice(&group.to_be_bytes());
+                b.extend_from_slice(tag);
                 write_note(&mut b, note);
                 b.resize(b.len().max(PRESENCE_LEN), 0);
             }
@@ -205,6 +220,8 @@ impl SignalMessage {
                 Self::Presence {
                     member: r.u64()?,
                     page: r.u8()?,
+                    group: u32::from_be_bytes(r.take(4)?.try_into().map_err(|_| ProtoError::BadSignal)?),
+                    tag: r.take(16)?.try_into().map_err(|_| ProtoError::BadSignal)?,
                     note: r.note()?,
                 }
             }
@@ -369,6 +386,8 @@ mod tests {
             SignalMessage::Presence {
                 member: 0x0123_4567_89AB_CDEF,
                 page: 2,
+                group: 0xDEAD_BEEF,
+                tag: [5; 16],
                 note: vec![7; 40],
             },
             SignalMessage::Members {
@@ -416,6 +435,8 @@ mod tests {
         let pedido = SignalMessage::Presence {
             member: 1,
             page: 0,
+            group: 1,
+            tag: [0; 16],
             note: vec![],
         }
         .to_bytes();
@@ -458,6 +479,8 @@ mod tests {
         let mut p = SignalMessage::Presence {
             member: 1,
             page: 0,
+            group: 1,
+            tag: [0; 16],
             note: vec![1; 10],
         }
         .to_bytes();

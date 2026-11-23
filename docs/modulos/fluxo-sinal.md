@@ -56,22 +56,23 @@ Quem usa cola a chave nas configurações do FSS (Conexão), ou passa
 
 ## Grupos (ADR-022)
 
-Cada chave é um grupo. O nome vem depois da chave, na mesma linha do arquivo:
+Separados das chaves: a chave do servidor (`--chaves`) dá acesso ao servidor;
+o convite de um grupo (`FSSG-…`) dá acesso ao grupo. O arquivo de grupos
+(`--grupos ARQUIVO`) tem uma linha por grupo: número, chave de conferência e
+nome. O servidor não guarda o convite: confere quem é do grupo, mas não lê os
+apelidos nem calcula as salas.
 
-```text
-# 203.0.113.5:3478 (id 4c0684dd)
-FSS1-XXXXX-…  Amigos da Flame
+```bash
+# Criar um grupo (mostra o convite, que vai para quem é do grupo)
+fluxo-sinal --novo-grupo "Amigos da Flame" --grupos /etc/fluxo-sinal/grupos
+# Tirar alguém: convite novo para o mesmo grupo (pelo nome ou pelo número)
+fluxo-sinal --novo-convite "Amigos da Flame" --grupos /etc/fluxo-sinal/grupos
+# Depois de mudar o arquivo, reinicie
 ```
 
-Sem nome, aparece `Grupo <id>`. `--nova-chave ENDEREÇO --nome "Amigos"` já grava
-com o nome. Quem abre o FSS com a chave entra na lista do grupo e o registro
-mostra `grupo Amigos: membro 6e65 online de <IP> (2 online)` (uma vez por
-entrada; quem fica 15 s sem avisar e volta aparece de novo). O servidor não vê
-o apelido nem o código da sala (vão cifrados com o segredo da chave). A lista
-fica só na memória: depois de reiniciar, ela se refaz em segundos.
-
-Para tirar alguém do grupo: gere outra chave para o grupo, troque a linha no
-arquivo, reinicie e mande a nova aos que ficam.
+Quem tem o convite antigo some do grupo e não acha mais as salas dele, mas
+continua usando o servidor com a chave (salas por código). O registro mostra
+`grupo Amigos: membro 6e65 online de <IP> (2 online)` a cada entrada.
 
 ## Repasse
 

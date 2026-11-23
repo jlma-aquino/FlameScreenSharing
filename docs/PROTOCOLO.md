@@ -195,7 +195,7 @@ cliente                       servidor                        host
   | 6 | RoomTaken | servidor → cliente | — (sala cheia: 8 esperando) |
   | 7 | RelayBind | host → servidor | sala (u32); completado com zeros até 100 bytes |
   | 8 | RelayReady | servidor → host | — (repasse ligado) |
-  | 9 | Presence | membro → servidor | membro (u64), página (u8), nota; completado com zeros até 1200 bytes |
+  | 9 | Presence | membro → servidor | membro (u64), página (u8), grupo (u32), prova (16 bytes), nota; completado com zeros até 1200 bytes |
   | 10 | Members | servidor → membro | página, páginas, nome do grupo (até 32 bytes), até 8 membros: número (u64), segundos parado (u16), nota |
 
   Endereço: família (1 byte, 4 ou 6), IP (4 ou 16 bytes), porta (u16).
@@ -248,19 +248,24 @@ cliente                       servidor                        host
   dois para o outro. O host passa a mandar o PairInit também ao servidor; o
   primeiro caminho que responder vale. O conteúdo segue cifrado de ponta a
   ponta. Par sem pacotes por 30 s é desfeito; no máximo 64 pares.
-- **Grupos** (ADR-022): cada chave é um grupo. `Presence` (assinado) a cada
-  4 s põe o membro na lista do grupo da chave que assinou e pede uma página de
+- **Grupos** (ADR-022): o grupo vem do convite (`FSSG-…`), separado da chave.
+  `Presence` (assinado com a chave do servidor) leva o número do grupo e a
+  prova do convite: `HMAC-SHA256(conferência, membro ‖ nota)` truncado em 16
+  bytes, onde `conferência = HMAC-SHA256(segredo, "fluxo grupo auth v1")` é o
+  que o servidor guarda. Sem prova válida, é ignorado. A cada 4 s ele põe o
+  membro na lista do grupo e pede uma página de
   `Members`; páginas além da primeira são pedidas logo em seguida. Nota: até
   120 bytes (tamanho u8 e os bytes), `nonce (12) ‖ ChaCha20-Poly1305(chave =
-  HMAC-SHA256(segredo, "fluxo grupo nota v1"), AAD = membro (u64 BE))` sobre
+  HMAC-SHA256(segredo do convite, "fluxo grupo nota v1"), AAD = membro (u64 BE))` sobre
   `versão (1) ‖ tamanho ‖ apelido ‖ tamanho ‖ código da sala ‖ tamanho ‖ sala
   assistida` (vazio: não está compartilhando / assistindo; a sala assistida
   pode faltar, em notas antigas). O servidor não abre a nota. Online: parado há menos de
   15 s. No máximo 50 membros por grupo; quem passa disso recebe a lista, mas
   não entra nela. Servidor aberto (`--aberto`) ignora `Presence`.
-- **Sala do grupo:** com chaves, a sala é guardada pelo par (chave que
-  assinou, número da sala). Register e Lookup assinados com chaves diferentes
-  não se encontram, nem o RelayBind.
+- **Sala do grupo:** com o convite, host e cliente usam como sala os 20 bits
+  mais altos de `HMAC-SHA256(HMAC-SHA256(segredo, "fluxo grupo sala v1"),
+  código)`. Quem não tem o convite calcula outra sala. O servidor também separa
+  as salas pela chave que assinou o pedido.
 - **Limites:** sem o repasse, NAT simétrico dos dois lados (porta nova a
   cada destino) não fura. O servidor deve ficar fora da
   rede do cliente; na mesma rede, o endereço "público" visto é o local.

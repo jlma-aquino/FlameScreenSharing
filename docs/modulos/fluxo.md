@@ -42,7 +42,8 @@ ela roda o [fluxo-host](fluxo-host.md) e o [fluxo-client](fluxo-client.md) da
 
 ## Grupo (`src/grupo.rs`, ADR-022)
 
-A chave das configurações é o convite do grupo. Com ela, uma lista à direita
+Configurações > Conexão tem a chave do servidor e, separado, o **convite do
+grupo** (`FSSG-…`). Com os dois, uma lista à direita
 (janela com 720 px ou mais), no jeito do Discord: o nome do grupo, **ONLINE**
 (● verde, ou vermelho para quem está ao vivo, com **▶ Assistir**) e
 **OFFLINE**. Assistir entra na sala de quem compartilha sem colar código. Uma

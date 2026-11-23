@@ -74,7 +74,7 @@ use std::fmt;
 pub use bitrate::{BitrateChange, BitrateController, NetworkReport, DEFAULT_QUEUE_LIMIT_MS, START_KBPS};
 pub use clock::{clock_diff_us, clock_us};
 pub use conexao::{CodeError, ConnectionCode, ReplyCode};
-pub use fluxo_crypto::ServerKey;
+pub use fluxo_crypto::{GroupKey, ServerKey};
 pub use grupo::{GroupClient, GroupMember, GROUP_STALE, MAX_NICK};
 pub use internet::Internet;
 pub use observar::{PairingEvent, PairingObserver};

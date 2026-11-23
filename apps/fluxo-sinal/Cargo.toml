@@ -9,3 +9,5 @@ license.workspace = true
 # Só fluxo-net: roda em qualquer sistema (a ideia é um servidor Linux barato).
 [dependencies]
 fluxo-net = { workspace = true }
+# O convite dos grupos (FSSG-…) e o hex do arquivo de grupos.
+fluxo-crypto = { workspace = true }

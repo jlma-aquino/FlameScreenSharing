@@ -72,6 +72,9 @@ pub struct SenderConfig {
     /// Chave do servidor de sinalização: a procura sai assinada com ela
     /// (servidor com chaves ignora pedido sem assinatura). `None`: servidor aberto.
     pub signal_key: Option<fluxo_crypto::ServerKey>,
+    /// Convite do grupo: a sala no servidor passa a ser a do grupo (quem não
+    /// tem o convite não a acha, mesmo com o código).
+    pub group: Option<fluxo_crypto::GroupKey>,
 }
 
 /// Tamanho da "fila do roteador" da banda simulada, em frames (~66 ms a 60 fps).
@@ -97,6 +100,7 @@ impl SenderConfig {
             on_pairing: None,
             punch_ttl: None,
             signal_key: None,
+            group: None,
         }
     }
 }
@@ -160,6 +164,7 @@ impl Tentativa {
 /// pede o repasse pelo servidor; o caminho direto continua tentando junto.
 pub const RELAY_AFTER: Duration = Duration::from_secs(3);
 
+#[allow(clippy::too_many_arguments)]
 fn parear(
     socket: &Portas,
     codigo: &PairingCode,
@@ -168,8 +173,10 @@ fn parear(
     observar: Option<&PairingObserver>,
     mut ttl_normal: Option<u32>,
     chave: Option<&fluxo_crypto::ServerKey>,
+    grupo: Option<&fluxo_crypto::GroupKey>,
 ) -> Result<(Session, SocketAddr), NetError> {
     let mut t = Tentativa::nova(codigo)?;
+    let sala = grupo.map_or_else(|| codigo.room(), |g| g.room(codigo));
     let (mut candidatos, servidor) = match *rota {
         Rota::Direta(ref peers) => (peers.clone(), None),
         Rota::Sinal(servidor) => (Vec::new(), Some(servidor)),
@@ -180,7 +187,7 @@ fn parear(
                 .control(t.id, clock_us())
                 .encode_with_payload(
                     &SignalMessage::Lookup {
-                        room: codigo.room(),
+                        room: sala,
                         locals: crate::local_candidates(socket.v4(), socket.v6()),
                     }
                     .to_bytes(),
@@ -200,7 +207,7 @@ fn parear(
         Some(_) => Some(assinar(
             PacketKind::Signal
                 .control(t.id, clock_us())
-                .encode_with_payload(&SignalMessage::RelayBind { room: codigo.room() }.to_bytes())
+                .encode_with_payload(&SignalMessage::RelayBind { room: sala }.to_bytes())
                 .map_err(NetError::Proto)?,
         )),
         None => None,
@@ -571,6 +578,7 @@ impl VideoSender {
                     cfg.on_pairing.as_ref(),
                     ttl_normal,
                     cfg.signal_key.as_ref(),
+                    cfg.group.as_ref(),
                 );
                 if let (Some(normal), Some(v4)) = (ttl_normal, portas.v4()) {
                     v4.set_ttl(normal).map_err(NetError::io("configurar TTL"))?;

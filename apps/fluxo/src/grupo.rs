@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use fluxo_net::{GroupClient, GroupMember, ServerKey};
+use fluxo_net::{GroupClient, GroupKey, GroupMember, ServerKey};
 
 /// O que a janela mostra.
 #[derive(Debug, Clone, Default)]
@@ -40,26 +40,28 @@ pub struct Grupo {
 }
 
 impl Grupo {
-    /// Entra no grupo da chave `texto` (já conferida), como o membro `membro`.
-    pub fn iniciar(texto: &str, membro: u64, ctx: egui::Context) -> Result<Self, String> {
-        let chave = ServerKey::parse(texto).map_err(|e| e.to_string())?;
+    /// Entra no grupo do convite `convite`, pelo servidor da chave `texto`,
+    /// como o membro `membro`.
+    pub fn iniciar(texto: &str, convite: &str, membro: u64, ctx: egui::Context) -> Result<Self, String> {
+        let chave = ServerKey::parse(texto).map_err(|e| format!("chave do servidor: {e}"))?;
+        let grupo = GroupKey::parse(convite).map_err(|e| e.to_string())?;
         let dados = Arc::new(Mutex::new(Compartilhado::default()));
         let parar = Arc::new(AtomicBool::new(false));
         {
             let (dados, parar) = (dados.clone(), parar.clone());
             std::thread::Builder::new()
                 .name("fluxo-grupo".into())
-                .spawn(move || rodar(chave, membro, &dados, &parar, &ctx))
+                .spawn(move || rodar(chave, grupo, membro, &dados, &parar, &ctx))
                 .map_err(|e| e.to_string())?;
         }
         Ok(Self {
-            chave: normalizar(texto),
+            chave: identidade(texto, convite),
             dados,
             parar,
         })
     }
 
-    /// A chave deste grupo (sem espaços), para saber se a das configurações mudou.
+    /// A chave e o convite deste grupo (sem espaços), para saber se mudaram.
     pub fn chave(&self) -> &str {
         &self.chave
     }
@@ -86,13 +88,15 @@ impl Drop for Grupo {
     }
 }
 
-/// A chave sem espaços nem quebras de linha.
-pub fn normalizar(texto: &str) -> String {
-    texto.split_whitespace().collect()
+/// A chave e o convite sem espaços nem quebras de linha, juntos.
+pub fn identidade(chave: &str, convite: &str) -> String {
+    let limpo = |t: &str| t.split_whitespace().collect::<String>();
+    format!("{}|{}", limpo(chave), limpo(convite))
 }
 
 fn rodar(
     chave: ServerKey,
+    grupo: GroupKey,
     membro: u64,
     dados: &Mutex<Compartilhado>,
     parar: &AtomicBool,
@@ -104,7 +108,7 @@ fn rodar(
     while !parar.load(Ordering::Relaxed) {
         if cliente.is_none() && tentou.is_none_or(|t| t.elapsed() >= Duration::from_secs(10)) {
             tentou = Some(Instant::now());
-            match GroupClient::connect(chave.clone(), membro) {
+            match GroupClient::connect(chave.clone(), grupo.clone(), membro) {
                 Ok(c) => cliente = Some(c),
                 Err(e) => {
                     if let Ok(mut d) = dados.lock() {
