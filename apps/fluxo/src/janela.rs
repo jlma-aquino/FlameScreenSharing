@@ -619,7 +619,7 @@ impl Janela {
                         }
                     }
                     if ui
-                        .selectable_label(self.atual.is_none(), "＋ Começar outra")
+                        .selectable_label(self.atual.is_none(), "+ Começar outra")
                         .on_hover_text("Compartilhar enquanto assiste, ou assistir a mais alguém")
                         .clicked()
                     {
@@ -734,7 +734,8 @@ impl Janela {
                             if s.rodando() {
                                 let (texto, cor) = estado_curto(s, p);
                                 ui.add_space(8.0);
-                                ui.label(RichText::new(format!("● {texto}")).color(cor).size(13.0));
+                                bolinha_de_estado(ui, cor);
+                                ui.label(RichText::new(texto).color(cor).size(13.0));
                             }
                         }
                     },
