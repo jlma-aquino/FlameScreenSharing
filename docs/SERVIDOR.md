@@ -193,6 +193,10 @@ sudo netfilter-persistent save
    entrou no grupo ("conectado"), e o registro mostrou
    `grupo TTeam: membro d9ff online`. O serviço foi reiniciado de novo para o
    membro de teste não ficar na lista.
+5. Segundo grupo, **Sout Stream** (número `04a5a715`), com
+   `--novo-grupo "Sout Stream"` e `restart`: subiu com "2 grupo(s): TTeam
+   (42119204), Sout Stream (04a5a715)". Convite no PC de casa em
+   `.secrets\convite-sout-stream.txt`, fora do git.
 
 ## Chaves
 
